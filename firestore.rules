@@ -1,0 +1,36 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Perfil público mínimo: cualquier usuario autenticado puede LEER para
+    // resolver email -> uid en el flujo de gastos compartidos. Solo el dueño
+    // puede ESCRIBIR su propio doc.
+    match /users/{uid} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && request.auth.uid == uid;
+
+      // Datos privados del usuario (accounts, transactions, installments,
+      // categories, recurring, cycles, contacts): solo el dueño accede.
+      match /{document=**} {
+        allow read, write: if request.auth != null && request.auth.uid == uid;
+      }
+    }
+
+    // Gastos compartidos. El doc es accesible por owner + participantes.
+    // El accept/reject pasa siempre por una route handler (que escribe con
+    // Admin SDK) para evitar reglas complejas de validación parcial.
+    match /sharedExpenses/{id} {
+      allow read: if request.auth != null && (
+        resource.data.ownerUid == request.auth.uid ||
+        request.auth.uid in resource.data.participantUids
+      );
+      allow create: if request.auth != null
+        && request.resource.data.ownerUid == request.auth.uid;
+      allow update, delete: if request.auth != null
+        && resource.data.ownerUid == request.auth.uid;
+    }
+
+    // TODO: agregar reglas para accountShares y pendingApprovals (Fase 3).
+  }
+}
