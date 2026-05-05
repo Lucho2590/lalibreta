@@ -33,6 +33,7 @@ import {
 import { useAuth } from "@/hooks/use-auth";
 import { useAccounts } from "@/hooks/use-data";
 import { AccountForm } from "@/components/accounts/account-form";
+import { SharedWithMeSection } from "@/components/accounts/shared-with-me-section";
 import {
   deleteAccount,
   setAccountActive,
@@ -203,6 +204,8 @@ export default function AccountsPage() {
           </CardContent>
         </Card>
       )}
+
+      <SharedWithMeSection />
 
       <div className="space-y-3">
         {groups.map((acc) => {

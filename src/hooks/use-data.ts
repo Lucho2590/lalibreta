@@ -12,9 +12,11 @@ import { useAuth } from "./use-auth";
 import { useCollection } from "./use-collection";
 import type {
   Account,
+  AccountShare,
   Category,
   Contact,
   Installment,
+  PendingApproval,
   RecurringExpense,
   SharedExpense,
   Transaction,
@@ -134,6 +136,70 @@ export function useSharedAsParticipant() {
     [user],
   );
   return useCollection<SharedExpense>(q);
+}
+
+export function useAccountSharesAsOwner() {
+  const { user } = useAuth();
+  const q = useMemo(
+    () =>
+      user
+        ? query(
+            collection(db, "accountShares"),
+            where("ownerUid", "==", user.uid),
+            orderBy("createdAt", "desc"),
+          )
+        : null,
+    [user],
+  );
+  return useCollection<AccountShare>(q);
+}
+
+export function useAccountSharesAsGrantee() {
+  const { user } = useAuth();
+  const q = useMemo(
+    () =>
+      user
+        ? query(
+            collection(db, "accountShares"),
+            where("granteeUid", "==", user.uid),
+            where("status", "==", "active"),
+          )
+        : null,
+    [user],
+  );
+  return useCollection<AccountShare>(q);
+}
+
+export function usePendingApprovalsAsOwner() {
+  const { user } = useAuth();
+  const q = useMemo(
+    () =>
+      user
+        ? query(
+            collection(db, "pendingApprovals"),
+            where("ownerUid", "==", user.uid),
+            where("status", "==", "pending"),
+          )
+        : null,
+    [user],
+  );
+  return useCollection<PendingApproval>(q);
+}
+
+export function useApprovalsAsGrantee() {
+  const { user } = useAuth();
+  const q = useMemo(
+    () =>
+      user
+        ? query(
+            collection(db, "pendingApprovals"),
+            where("granteeUid", "==", user.uid),
+            orderBy("createdAt", "desc"),
+          )
+        : null,
+    [user],
+  );
+  return useCollection<PendingApproval>(q);
 }
 
 export function useTransactions() {

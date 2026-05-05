@@ -18,6 +18,7 @@ import {
 } from "@/lib/domain/balance";
 import { formatCurrency, formatMonth } from "@/lib/format";
 import { RecurringBanner } from "@/components/dashboard/recurring-banner";
+import { ApprovalsBanner } from "@/components/dashboard/approvals-banner";
 import { CategoryIcon } from "@/components/category-icon";
 import { AccountIcon, defaultIconForType } from "@/components/account-icon";
 
@@ -60,6 +61,7 @@ export default function Dashboard() {
         </div>
       </div>
 
+      <ApprovalsBanner />
       <RecurringBanner />
 
       <section className="grid gap-4 md:grid-cols-3">
