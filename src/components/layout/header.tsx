@@ -1,7 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { Handshake, LogOut, Repeat, Tag, Users, Wallet } from "lucide-react";
+import {
+  ClipboardCheck,
+  Handshake,
+  LogOut,
+  Repeat,
+  Tag,
+  Users,
+  Wallet,
+} from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
@@ -59,6 +67,9 @@ export function Header({ variant = "mobile" }: { variant?: "mobile" | "desktop" 
           </DropdownMenuItem>
           <DropdownMenuItem render={<Link href="/compartidas" />}>
             <Handshake className="mr-2 size-4" /> Compartidas
+          </DropdownMenuItem>
+          <DropdownMenuItem render={<Link href="/aprobaciones" />}>
+            <ClipboardCheck className="mr-2 size-4" /> Aprobaciones
           </DropdownMenuItem>
           <DropdownMenuItem render={<Link href="/contactos" />}>
             <Users className="mr-2 size-4" /> Contactos

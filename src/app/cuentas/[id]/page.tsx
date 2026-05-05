@@ -9,6 +9,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { useAccounts, useAllInstallments } from "@/hooks/use-data";
 import { useMonth } from "@/hooks/use-month";
 import { CardCycleEditor } from "@/components/accounts/card-cycle-editor";
+import { ShareAccountSection } from "@/components/accounts/share-account-section";
 import { formatCurrency, formatMonth } from "@/lib/format";
 import type { AccountType } from "@/lib/domain/types";
 
@@ -138,6 +139,8 @@ export default function AccountDetailPage({ params }: { params: Promise<{ id: st
           </CardContent>
         </Card>
       )}
+
+      <ShareAccountSection account={account} />
 
       <div className="grid gap-4 md:grid-cols-2">
         {account.type === "credit" && <CardCycleEditor account={account} />}

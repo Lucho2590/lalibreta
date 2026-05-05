@@ -37,6 +37,50 @@ export interface ShareParticipant {
 
 export type SharedExpenseStatus = "active" | "cancelled";
 
+// === Cuentas con extensión ===
+
+export interface AccountShare {
+  id: string;
+  ownerUid: string;
+  ownerEmail: string;
+  ownerDisplayName?: string | null;
+  accountId: string;
+  accountName: string;
+  accountIcon?: string | null;
+  accountType: AccountType;
+  granteeEmail: string;
+  granteeUid?: string | null;
+  granteeDisplayName?: string | null;
+  status: "active" | "revoked";
+  createdAt: Timestamp;
+  updatedAt?: Timestamp;
+}
+
+export type ApprovalStatus = "pending" | "approved" | "rejected";
+
+export interface PendingApproval {
+  id: string;
+  ownerUid: string;
+  ownerEmail: string;
+  granteeUid: string;
+  granteeEmail: string;
+  granteeDisplayName?: string | null;
+  accountId: string;
+  accountName: string;
+  shareId: string;
+  description: string;
+  totalAmount: number;
+  purchaseDate: Timestamp;
+  installments: number;
+  cardClosedAtPurchase: boolean;
+  status: ApprovalStatus;
+  approvedTransactionId?: string | null;
+  approvedCategoryId?: string | null;
+  rejectReason?: string | null;
+  createdAt: Timestamp;
+  respondedAt?: Timestamp | null;
+}
+
 export interface SharedExpense {
   id: string;
   ownerUid: string;

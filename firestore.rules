@@ -31,6 +31,24 @@ service cloud.firestore {
         && resource.data.ownerUid == request.auth.uid;
     }
 
-    // TODO: agregar reglas para accountShares y pendingApprovals (Fase 3).
+    // Compartir cuentas (extensión). Lectura para owner y grantee.
+    // Toda mutación pasa por route handlers con Admin SDK.
+    match /accountShares/{id} {
+      allow read: if request.auth != null && (
+        resource.data.ownerUid == request.auth.uid ||
+        resource.data.granteeUid == request.auth.uid
+      );
+      allow write: if false;
+    }
+
+    // Aprobaciones pendientes de gastos cargados por un grantee.
+    // Lectura para owner y grantee. Toda mutación por route handlers.
+    match /pendingApprovals/{id} {
+      allow read: if request.auth != null && (
+        resource.data.ownerUid == request.auth.uid ||
+        resource.data.granteeUid == request.auth.uid
+      );
+      allow write: if false;
+    }
   }
 }

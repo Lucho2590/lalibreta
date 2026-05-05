@@ -91,6 +91,103 @@ export const renderShareInviteEmail = (p: ShareInviteEmailParams) => {
   return { subject, html, text };
 };
 
+export interface AccountShareEmailParams {
+  to: string;
+  ownerName: string;
+  ownerEmail: string;
+  accountName: string;
+  appUrl: string;
+  recipientIsRegistered: boolean;
+}
+
+export const renderAccountShareEmail = (p: AccountShareEmailParams) => {
+  const url = p.recipientIsRegistered
+    ? `${p.appUrl}/cuentas`
+    : `${p.appUrl}/login?from=${encodeURIComponent("/cuentas")}`;
+  const subject = `${p.ownerName} te dio acceso a su cuenta "${p.accountName}"`;
+  const html = card(`
+    <h2 style="margin: 0 0 12px; font-size: 20px;">Te compartieron una cuenta</h2>
+    <p style="margin: 0 0 16px; font-size: 14px; line-height: 1.5; color: #52525b;">
+      <strong>${p.ownerName}</strong> (${p.ownerEmail}) te dio permiso para cargar gastos en su cuenta <strong>${p.accountName}</strong>.
+    </p>
+    <p style="margin: 0 0 16px; font-size: 14px; line-height: 1.5; color: #52525b;">
+      Cualquier gasto que cargues va a quedar pendiente de aprobación por el dueño antes de impactar.
+    </p>
+    ${button(url, p.recipientIsRegistered ? "Ver mis cuentas" : "Crear cuenta y entrar")}
+  `);
+  const text = `${p.ownerName} te dio acceso a su cuenta "${p.accountName}". Los gastos que cargues quedan pendientes de aprobación. Abrí: ${url}`;
+  return { subject, html, text };
+};
+
+export interface PendingApprovalSubmittedEmailParams {
+  to: string;
+  granteeName: string;
+  granteeEmail: string;
+  accountName: string;
+  description: string;
+  totalAmount: number;
+  installments: number;
+  date: Date;
+  appUrl: string;
+}
+
+export const renderPendingApprovalSubmittedEmail = (
+  p: PendingApprovalSubmittedEmailParams,
+) => {
+  const dateStr = new Intl.DateTimeFormat("es-AR", { dateStyle: "medium" }).format(p.date);
+  const url = `${p.appUrl}/aprobaciones`;
+  const subject = `${p.granteeName} cargó un gasto en "${p.accountName}"`;
+  const html = card(`
+    <h2 style="margin: 0 0 12px; font-size: 20px;">Tenés un gasto para aprobar</h2>
+    <p style="margin: 0 0 16px; font-size: 14px; line-height: 1.5; color: #52525b;">
+      <strong>${p.granteeName}</strong> (${p.granteeEmail}) cargó un gasto en tu cuenta <strong>${p.accountName}</strong> y necesita tu aprobación.
+    </p>
+    <div style="background: #f4f4f5; border-radius: 16px; padding: 16px; margin-bottom: 20px;">
+      <div style="font-size: 12px; color: #71717a; text-transform: uppercase; letter-spacing: 0.5px;">${p.description || "Gasto"}</div>
+      <div style="font-size: 24px; font-weight: 700; margin-top: 4px;">${formatARS(p.totalAmount)}</div>
+      <div style="font-size: 12px; color: #71717a; margin-top: 4px;">${dateStr}${p.installments > 1 ? ` · ${p.installments} cuotas` : ""}</div>
+    </div>
+    ${button(url, "Revisar y aprobar")}
+  `);
+  const text = `${p.granteeName} cargó un gasto en "${p.accountName}": ${formatARS(p.totalAmount)} · ${dateStr}. Revisá: ${url}`;
+  return { subject, html, text };
+};
+
+export interface ApprovalDecisionEmailParams {
+  to: string;
+  ownerName: string;
+  decision: "approved" | "rejected";
+  accountName: string;
+  description: string;
+  totalAmount: number;
+  rejectReason?: string | null;
+  appUrl: string;
+}
+
+export const renderApprovalDecisionEmail = (p: ApprovalDecisionEmailParams) => {
+  const verb = p.decision === "approved" ? "aprobó" : "rechazó";
+  const subject = `${p.ownerName} ${verb} tu gasto en "${p.accountName}"`;
+  const url = `${p.appUrl}/cuentas`;
+  const html = card(`
+    <h2 style="margin: 0 0 12px; font-size: 20px;">Gasto ${p.decision === "approved" ? "aprobado" : "rechazado"}</h2>
+    <p style="margin: 0 0 16px; font-size: 14px; line-height: 1.5; color: #52525b;">
+      <strong>${p.ownerName}</strong> ${verb} el gasto que cargaste en <strong>${p.accountName}</strong>.
+    </p>
+    <div style="background: #f4f4f5; border-radius: 16px; padding: 16px; margin-bottom: 20px;">
+      <div style="font-size: 12px; color: #71717a; text-transform: uppercase; letter-spacing: 0.5px;">${p.description || "Gasto"}</div>
+      <div style="font-size: 22px; font-weight: 700; margin-top: 4px;">${formatARS(p.totalAmount)}</div>
+      ${
+        p.decision === "rejected" && p.rejectReason
+          ? `<div style="margin-top: 8px; font-size: 12px; color: #71717a;">Motivo: ${p.rejectReason}</div>`
+          : ""
+      }
+    </div>
+    ${button(url, "Ir a la app")}
+  `);
+  const text = `${p.ownerName} ${verb} el gasto: ${p.description || "(sin descripción)"} — ${formatARS(p.totalAmount)}. Abrí: ${url}`;
+  return { subject, html, text };
+};
+
 export interface ShareResponseEmailParams {
   to: string;
   responderName: string;

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
+  ClipboardCheck,
   CreditCard,
   Handshake,
   Home,
@@ -28,6 +29,7 @@ const navItems = [
   { href: "/fijos", label: "Gastos fijos", icon: Repeat },
   { href: "/ingresos", label: "Ingresos", icon: Wallet },
   { href: "/compartidas", label: "Compartidas", icon: Handshake },
+  { href: "/aprobaciones", label: "Aprobaciones", icon: ClipboardCheck },
   { href: "/contactos", label: "Contactos", icon: Users },
   { href: "/categorias", label: "Categorías", icon: Tag },
 ] as const;
