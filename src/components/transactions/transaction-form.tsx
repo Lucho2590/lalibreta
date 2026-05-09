@@ -25,6 +25,7 @@ import { formatMonth } from "@/lib/format";
 import type { TransactionKind } from "@/lib/domain/types";
 import { ShareSection, type ShareSplit } from "./share-section";
 import { buildParticipantsList, createSharedExpense } from "@/lib/domain/shared";
+import { upsertContact } from "@/lib/domain/contacts";
 import { apiFetch } from "@/lib/api";
 
 const schema = z.object({
@@ -202,6 +203,18 @@ export function TransactionForm({
                 shareSplits.length === 1 ? "persona" : "personas"
               }`,
             );
+            // Guardar como contacto los splits que lo pidieron (best-effort).
+            const toSave = shareSplits.filter((s) => s.saveAsContact);
+            if (toSave.length > 0) {
+              Promise.allSettled(
+                toSave.map((s) =>
+                  upsertContact(user.uid, {
+                    email: s.email,
+                    displayName: s.displayName,
+                  }),
+                ),
+              ).catch((err) => console.warn("[upsertContact] error", err));
+            }
             // Disparamos invitación por mail (best effort).
             apiFetch("/api/shared/invite", {
               method: "POST",

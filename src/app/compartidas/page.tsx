@@ -23,15 +23,31 @@ export default function CompartidasPage() {
   const { data: participantSide, loading: l2 } = useSharedAsParticipant();
 
   // Eliminar duplicados (al ser owner también aparece como participant si
-  // está incluido en participantUids).
+  // está incluido en participantEmails).
   const participantOnly = useMemo(
     () => participantSide.filter((s) => s.ownerUid !== user?.uid),
     [participantSide, user?.uid],
   );
 
+  const sortByCreatedDesc = (list: SharedExpense[]) =>
+    [...list].sort(
+      (a, b) => b.createdAt.toMillis() - a.createdAt.toMillis(),
+    );
+  const ownerSorted = useMemo(() => sortByCreatedDesc(ownerSide), [ownerSide]);
+  const participantSorted = useMemo(
+    () => sortByCreatedDesc(participantOnly),
+    [participantOnly],
+  );
+
   const balances = useMemo(
-    () => computeBalances(user?.uid ?? "", ownerSide, participantOnly),
-    [ownerSide, participantOnly, user?.uid],
+    () =>
+      computeBalances(
+        user?.uid ?? "",
+        user?.email?.toLowerCase() ?? "",
+        ownerSide,
+        participantOnly,
+      ),
+    [ownerSide, participantOnly, user?.uid, user?.email],
   );
 
   const loading = l1 || l2;
@@ -127,16 +143,18 @@ export default function CompartidasPage() {
       {/* Compartidos por mí */}
       <Section
         title="Compartidos por vos"
-        items={ownerSide}
+        items={ownerSorted}
         currentUid={user?.uid ?? ""}
+        currentEmail={user?.email?.toLowerCase() ?? ""}
         viewerIsOwner
       />
 
       {/* Compartidos conmigo */}
       <Section
         title="Te compartieron"
-        items={participantOnly}
+        items={participantSorted}
         currentUid={user?.uid ?? ""}
+        currentEmail={user?.email?.toLowerCase() ?? ""}
         viewerIsOwner={false}
       />
 
@@ -163,11 +181,13 @@ function Section({
   title,
   items,
   currentUid,
+  currentEmail,
   viewerIsOwner,
 }: {
   title: string;
   items: SharedExpense[];
   currentUid: string;
+  currentEmail: string;
   viewerIsOwner: boolean;
 }) {
   if (items.length === 0) return null;
@@ -190,6 +210,7 @@ function Section({
                     <StatusChip
                       sharedExpense={s}
                       currentUid={currentUid}
+                      currentEmail={currentEmail}
                       viewerIsOwner={viewerIsOwner}
                     />
                   </div>
@@ -216,10 +237,12 @@ function Section({
 function StatusChip({
   sharedExpense,
   currentUid,
+  currentEmail,
   viewerIsOwner,
 }: {
   sharedExpense: SharedExpense;
   currentUid: string;
+  currentEmail: string;
   viewerIsOwner: boolean;
 }) {
   if (sharedExpense.status === "cancelled") {
@@ -253,7 +276,11 @@ function StatusChip({
       </span>
     );
   }
-  const me = sharedExpense.participants.find((p) => p.uid === currentUid);
+  const me =
+    sharedExpense.participants.find((p) => p.uid === currentUid) ??
+    sharedExpense.participants.find(
+      (p) => !p.uid && p.email.toLowerCase() === currentEmail,
+    );
   if (!me) return null;
   if (me.status === "accepted") {
     return (
@@ -284,6 +311,7 @@ interface PerPersonBalance {
 
 function computeBalances(
   currentUid: string,
+  currentEmail: string,
   asOwner: SharedExpense[],
   asParticipant: SharedExpense[],
 ) {
@@ -303,7 +331,11 @@ function computeBalances(
   // Cuando soy participant: si acepté, le debo mi monto al owner.
   for (const s of asParticipant) {
     if (s.status === "cancelled") continue;
-    const me = s.participants.find((p) => p.uid === currentUid);
+    const me =
+      s.participants.find((p) => p.uid === currentUid) ??
+      s.participants.find(
+        (p) => !p.uid && p.email.toLowerCase() === currentEmail,
+      );
     if (!me || me.status !== "accepted") continue;
     const key = s.ownerEmail;
     const cur = map.get(key) ?? { email: s.ownerEmail, displayName: s.ownerDisplayName ?? null, net: 0 };

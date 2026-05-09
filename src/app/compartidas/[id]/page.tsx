@@ -74,8 +74,13 @@ export default function SharedExpenseDetailPage({
   }
 
   const isOwner = data.ownerUid === user?.uid;
-  const me = data.participants.find((p) => p.uid === user?.uid);
-  const canRespond = !!me && me.status === "pending";
+  const myEmail = user?.email?.toLowerCase() ?? "";
+  const me =
+    data.participants.find((p) => p.uid === user?.uid) ??
+    data.participants.find(
+      (p) => !p.uid && p.email.toLowerCase() === myEmail,
+    );
+  const canRespond = !!me && me.status === "pending" && !isOwner;
 
   const respond = async (response: "accepted" | "rejected") => {
     setBusy(true);
@@ -219,7 +224,9 @@ export default function SharedExpenseDetailPage({
         </CardHeader>
         <CardContent className="space-y-2">
           {data.participants.map((p) => {
-            const isMe = p.uid && p.uid === user?.uid;
+            const isMe =
+              (p.uid && p.uid === user?.uid) ||
+              (!p.uid && p.email.toLowerCase() === myEmail);
             return (
               <div
                 key={p.email}
@@ -269,14 +276,49 @@ export default function SharedExpenseDetailPage({
         </div>
       )}
 
-      <Card className="rounded-2xl bg-muted/30">
-        <CardContent className="py-3 text-xs text-muted-foreground">
-          El gasto original se cargó completo en tu cuenta. Las aceptaciones de
-          los participantes solo afectan el balance &quot;te deben / le debés&quot;
-          de Compartidas — no impactan tus movimientos.
-        </CardContent>
-      </Card>
+      {isOwner && data.status !== "cancelled" && (
+        <OwnerProjection shared={data} />
+      )}
     </div>
+  );
+}
+
+function OwnerProjection({ shared }: { shared: SharedExpense }) {
+  const others = shared.participants.filter((p) => p.uid !== shared.ownerUid);
+  const acceptedSum = others
+    .filter((p) => p.status === "accepted")
+    .reduce((s, p) => s + p.amount, 0);
+  const pendingSum = others
+    .filter((p) => p.status === "pending")
+    .reduce((s, p) => s + p.amount, 0);
+  const total = shared.totalAmount;
+  const currentEffective = Math.max(0, total - acceptedSum);
+  const bestCase = Math.max(0, currentEffective - pendingSum);
+  const hasPending = pendingSum > 0;
+
+  return (
+    <Card className="rounded-2xl bg-muted/30">
+      <CardContent className="space-y-2 py-3 text-xs text-muted-foreground">
+        <div>
+          Tu cuenta refleja{" "}
+          <strong className="text-foreground">
+            {formatCurrency(currentEffective)}
+          </strong>{" "}
+          — tu parte efectiva de este gasto (sobre un total de{" "}
+          {formatCurrency(total)}).
+        </div>
+        {hasPending && (
+          <div>
+            Si los {others.filter((p) => p.status === "pending").length}{" "}
+            pendientes aceptan, bajará a{" "}
+            <strong className="text-foreground">
+              {formatCurrency(bestCase)}
+            </strong>
+            ; si rechazan, vos absorbés y queda en {formatCurrency(currentEffective)}.
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 

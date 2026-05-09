@@ -7,20 +7,34 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useMonth } from "@/hooks/use-month";
-import { useAccounts, useInstallmentsForMonth } from "@/hooks/use-data";
+import {
+  useAccounts,
+  useInstallmentsForMonth,
+  useSharedAsOwner,
+} from "@/hooks/use-data";
+import { useAuth } from "@/hooks/use-auth";
 import { TransactionList } from "@/components/transactions/transaction-list";
 import { useNewTransactionSheet } from "@/components/transactions/new-transaction-sheet";
 import { formatCurrency, formatMonth } from "@/lib/format";
 import { computeMonthlyBalance } from "@/lib/domain/balance";
+import { buildSharedByTxId } from "@/lib/domain/shared-effective";
 
 export default function MovimientosPage() {
   const params = useSearchParams();
   const accountFilter = params.get("account");
   const kindFilter = params.get("kind");
   const { monthKey, year, month } = useMonth();
+  const { user } = useAuth();
   const { data: installments, loading } = useInstallmentsForMonth(monthKey);
   const { data: accounts } = useAccounts();
+  const { data: shared } = useSharedAsOwner();
   const { open } = useNewTransactionSheet();
+
+  const sharedByTxId = useMemo(() => buildSharedByTxId(shared), [shared]);
+  const adj = useMemo(
+    () => (user ? { sharedByTxId, ownerUid: user.uid } : undefined),
+    [sharedByTxId, user],
+  );
 
   const filtered = useMemo(() => {
     return installments.filter((i) => {
@@ -33,8 +47,8 @@ export default function MovimientosPage() {
   }, [installments, accountFilter, kindFilter]);
 
   const balance = useMemo(
-    () => computeMonthlyBalance(installments, monthKey),
-    [installments, monthKey],
+    () => computeMonthlyBalance(installments, monthKey, adj),
+    [installments, monthKey, adj],
   );
 
   const updateFilter = (key: string, value: string | null) => {
@@ -116,7 +130,11 @@ export default function MovimientosPage() {
           </CardContent>
         </Card>
       ) : (
-        <TransactionList items={filtered} />
+        <TransactionList
+          items={filtered}
+          sharedByTxId={sharedByTxId}
+          ownerUid={user?.uid}
+        />
       )}
     </div>
   );

@@ -114,7 +114,6 @@ export function useSharedAsOwner() {
         ? query(
             collection(db, sharedExpensesCollectionPath()),
             where("ownerUid", "==", user.uid),
-            orderBy("createdAt", "desc"),
           )
         : null,
     [user],
@@ -124,16 +123,16 @@ export function useSharedAsOwner() {
 
 export function useSharedAsParticipant() {
   const { user } = useAuth();
+  const email = user?.email?.toLowerCase() ?? null;
   const q = useMemo(
     () =>
-      user
+      email
         ? query(
             collection(db, sharedExpensesCollectionPath()),
-            where("participantUids", "array-contains", user.uid),
-            orderBy("createdAt", "desc"),
+            where("participantEmails", "array-contains", email),
           )
         : null,
-    [user],
+    [email],
   );
   return useCollection<SharedExpense>(q);
 }

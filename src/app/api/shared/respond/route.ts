@@ -56,7 +56,13 @@ export async function POST(req: Request) {
     respondedAt?: { toDate(): Date } | null;
   }>) ?? [];
 
-  const idx = participants.findIndex((p) => p.uid === user.uid);
+  const userEmail = user.email?.toLowerCase() ?? null;
+  let idx = participants.findIndex((p) => p.uid === user.uid);
+  if (idx === -1 && userEmail) {
+    idx = participants.findIndex(
+      (p) => !p.uid && p.email.toLowerCase() === userEmail,
+    );
+  }
   if (idx === -1) {
     return NextResponse.json(
       { error: "No sos participante de este gasto" },
@@ -74,14 +80,26 @@ export async function POST(req: Request) {
     i === idx
       ? {
           ...p,
+          uid: user.uid,
           status: body.response,
           respondedAt: new Date(),
         }
       : p,
   );
 
+  // Mantener participantUids sincronizado para que el dueño y otros queries por uid
+  // sigan viéndolo. Acumula uids únicos de todos los participantes ya con uid.
+  const participantUids = Array.from(
+    new Set(
+      updatedParticipants
+        .map((p) => p.uid)
+        .filter((u): u is string => typeof u === "string" && u.length > 0),
+    ),
+  );
+
   await ref.update({
     participants: updatedParticipants,
+    participantUids,
     updatedAt: FieldValue.serverTimestamp(),
   });
 

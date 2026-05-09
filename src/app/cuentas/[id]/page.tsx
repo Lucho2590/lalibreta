@@ -6,12 +6,22 @@ import { ArrowLeft, ArrowRight } from "lucide-react";
 import { AccountIcon, defaultIconForType } from "@/components/account-icon";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { useAccounts, useAllInstallments } from "@/hooks/use-data";
+import {
+  useAccounts,
+  useAllInstallments,
+  useSharedAsOwner,
+} from "@/hooks/use-data";
+import { useAuth } from "@/hooks/use-auth";
 import { useMonth } from "@/hooks/use-month";
 import { CardCycleEditor } from "@/components/accounts/card-cycle-editor";
 import { ShareAccountSection } from "@/components/accounts/share-account-section";
 import { formatCurrency, formatMonth } from "@/lib/format";
 import type { AccountType } from "@/lib/domain/types";
+import {
+  buildSharedByTxId,
+  getEffectiveInstallmentInfo,
+} from "@/lib/domain/shared-effective";
+import { useMemo } from "react";
 
 const typeLabel: Record<AccountType, string> = {
   cash: "Efectivo",
@@ -24,9 +34,16 @@ const typeLabel: Record<AccountType, string> = {
 
 export default function AccountDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
+  const { user } = useAuth();
   const { data: accounts } = useAccounts();
   const { data: installments } = useAllInstallments();
+  const { data: shared } = useSharedAsOwner();
   const { monthKey, year, month } = useMonth();
+  const sharedByTxId = useMemo(() => buildSharedByTxId(shared), [shared]);
+  const effectiveAmount = (i: (typeof installments)[number]) =>
+    user
+      ? getEffectiveInstallmentInfo(i, sharedByTxId, user.uid).effectiveAmount
+      : i.amount;
 
   const account = accounts.find((a) => a.id === id);
   if (!account) {
@@ -52,7 +69,7 @@ export default function AccountDetailPage({ params }: { params: Promise<{ id: st
   // El total muestra solamente gastos (los ingresos y transferencias se ven aparte).
   const total = monthly
     .filter((i) => i.kind === "expense")
-    .reduce((s, i) => s + i.amount, 0);
+    .reduce((s, i) => s + effectiveAmount(i), 0);
 
   return (
     <div className="space-y-6">
@@ -109,7 +126,7 @@ export default function AccountDetailPage({ params }: { params: Promise<{ id: st
                   .filter(
                     (i) => i.accountId === card.id && i.billingMonth === monthKey,
                   )
-                  .reduce((s, i) => s + i.amount, 0);
+                  .reduce((s, i) => s + effectiveAmount(i), 0);
                 return (
                   <Link
                     key={card.id}
