@@ -10,12 +10,19 @@ import {
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useMonth } from "@/hooks/use-month";
-import { useAccounts, useCategories, useInstallmentsForMonth } from "@/hooks/use-data";
+import {
+  useAccounts,
+  useCategories,
+  useInstallmentsForMonth,
+  useSharedAsOwner,
+} from "@/hooks/use-data";
+import { useAuth } from "@/hooks/use-auth";
 import {
   computeMonthlyBalance,
   sumByAccount,
   sumByCategory,
 } from "@/lib/domain/balance";
+import { buildSharedByTxId } from "@/lib/domain/shared-effective";
 import { formatCurrency, formatMonth } from "@/lib/format";
 import { RecurringBanner } from "@/components/dashboard/recurring-banner";
 import { ApprovalsBanner } from "@/components/dashboard/approvals-banner";
@@ -24,21 +31,31 @@ import { AccountIcon, defaultIconForType } from "@/components/account-icon";
 
 export default function Dashboard() {
   const { monthKey, year, month } = useMonth();
+  const { user } = useAuth();
   const { data: installments, loading } = useInstallmentsForMonth(monthKey);
   const { data: categories } = useCategories();
   const { data: accounts } = useAccounts();
+  const { data: shared } = useSharedAsOwner();
+
+  const adj = useMemo(
+    () =>
+      user
+        ? { sharedByTxId: buildSharedByTxId(shared), ownerUid: user.uid }
+        : undefined,
+    [shared, user],
+  );
 
   const balance = useMemo(
-    () => computeMonthlyBalance(installments, monthKey),
-    [installments, monthKey],
+    () => computeMonthlyBalance(installments, monthKey, adj),
+    [installments, monthKey, adj],
   );
   const byCategory = useMemo(
-    () => sumByCategory(installments, monthKey),
-    [installments, monthKey],
+    () => sumByCategory(installments, monthKey, adj),
+    [installments, monthKey, adj],
   );
   const byAccount = useMemo(
-    () => sumByAccount(installments, monthKey),
-    [installments, monthKey],
+    () => sumByAccount(installments, monthKey, adj),
+    [installments, monthKey, adj],
   );
 
   const sortedCategories = [...byCategory.entries()]

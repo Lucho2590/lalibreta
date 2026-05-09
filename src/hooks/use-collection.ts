@@ -33,7 +33,10 @@ export function useCollection<T>(
         const data = snap.docs.map((d) => ({ id: d.id, ...d.data() }) as T);
         setState({ data, loading: false, error: null });
       },
-      (error) => setState({ data: [], loading: false, error }),
+      (error) => {
+        console.error("[useCollection] snapshot error", error);
+        setState({ data: [], loading: false, error });
+      },
     );
     return unsub;
   }, [q]);
