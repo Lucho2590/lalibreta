@@ -21,12 +21,12 @@ import { CATEGORY_ICON_IDS, createCategoryAdmin } from "../categories-admin";
 import {
   createShareCode,
   displayNameOf,
-  notifyUser,
   redeemShareCode,
   revokeShare,
   type MyShare,
   type SharedWithMe,
 } from "../sharing";
+import { notify } from "../notifications";
 import { currentMonthKey, formatShortDateAR, isMonthKey, isYMD, todayYMD } from "../time";
 import type {
   AccountDraft,
@@ -1626,10 +1626,13 @@ export const executeTool = async (
       }
       if (!r.alreadyHad) {
         const me = await displayNameOf(ctx.uid);
-        await notifyUser(
-          r.share.ownerUid,
-          `🤝 *${me}* ya comparte tu *${r.share.accountName}*. Lo que cargue ahí entra directo y te aviso.`,
-        );
+        await notify(r.share.ownerUid, {
+          kind: "share-joined",
+          title: `${me} ya comparte tu ${r.share.accountName}`,
+          body: "Lo que cargue ahí entra directo a tu cuenta y te aviso.",
+          url: "/compartidas",
+          whatsappText: `🤝 *${me}* ya comparte tu *${r.share.accountName}*. Lo que cargue ahí entra directo y te aviso.`,
+        });
       }
       return {
         ok: true,
@@ -1669,7 +1672,15 @@ export const executeTool = async (
       if (!r.ok || !r.share) return { error: "No encontré ese compartido." };
       const me = await displayNameOf(ctx.uid);
       const other = r.share.ownerUid === ctx.uid ? r.share.granteeUid : r.share.ownerUid;
-      if (other) await notifyUser(other, `🔒 ${me} dejó de compartir la cuenta *${r.share.accountName}*.`);
+      if (other) {
+        await notify(other, {
+          kind: "share-stopped",
+          title: `${me} dejó de compartir ${r.share.accountName}`,
+          body: "Ya no van a ver ni cargar movimientos en esa cuenta.",
+          url: "/compartidas",
+          whatsappText: `🔒 ${me} dejó de compartir la cuenta *${r.share.accountName}*.`,
+        });
+      }
       return { ok: true, account: r.share.accountName };
     }
 

@@ -123,7 +123,7 @@ export function CardCycleEditor({ account }: { account: Account }) {
         </div>
 
         <div className="grid grid-cols-2 gap-2">
-          <div className="space-y-1">
+          <div className="min-w-0 space-y-1">
             <Label htmlFor="cycle-closing" className="text-xs">
               Cierre
             </Label>
@@ -135,7 +135,7 @@ export function CardCycleEditor({ account }: { account: Account }) {
               className="h-11"
             />
           </div>
-          <div className="space-y-1">
+          <div className="min-w-0 space-y-1">
             <Label htmlFor="cycle-due" className="text-xs">
               Vencimiento
             </Label>

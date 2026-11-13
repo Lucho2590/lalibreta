@@ -21,13 +21,21 @@ const mono = JetBrains_Mono({
 export const metadata: Metadata = {
   title: "La Libreta",
   description: "Gestión de gastos personales con tarjetas en cuotas",
+  applicationName: "La Libreta",
+  // iOS: abrir sin la barra de Safari cuando se agrega a la pantalla de inicio.
+  appleWebApp: { capable: true, title: "La Libreta", statusBarStyle: "default" },
+  formatDetection: { telephone: false },
 };
 
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   maximumScale: 1,
-  themeColor: "#ffffff",
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#ffffff" },
+    { media: "(prefers-color-scheme: dark)", color: "#14161f" },
+  ],
+  viewportFit: "cover",
 };
 
 export default function RootLayout({

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { usePathname } from "next/navigation";
 import {
+  Bell,
   ClipboardCheck,
   CreditCard,
   FileText,
@@ -39,6 +40,7 @@ const moreItems = [
   { href: "/contactos", label: "Contactos", icon: Users },
   { href: "/categorias", label: "Categorías", icon: Tag },
   { href: "/whatsapp", label: "WhatsApp", icon: MessageCircle },
+  { href: "/notificaciones", label: "Avisos", icon: Bell },
   { href: "/resumenes", label: "Importar resumen", icon: FileText, note: "desde la compu" },
 ] as const;
 
