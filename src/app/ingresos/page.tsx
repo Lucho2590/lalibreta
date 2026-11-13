@@ -15,14 +15,16 @@ import { useMonth } from "@/hooks/use-month";
 import { useInstallmentsForMonth } from "@/hooks/use-data";
 import { TransactionForm } from "@/components/transactions/transaction-form";
 import { TransactionList } from "@/components/transactions/transaction-list";
-import { formatCurrency, formatMonth } from "@/lib/format";
+import { formatCurrency, formatMoney, formatMonth } from "@/lib/format";
+import { currencyOf } from "@/lib/domain/types";
 
 export default function IngresosPage() {
   const [open, setOpen] = useState(false);
   const { monthKey, year, month } = useMonth();
   const { data: installments, loading } = useInstallmentsForMonth(monthKey);
   const incomes = installments.filter((i) => i.kind === "income");
-  const total = incomes.reduce((s, i) => s + i.amount, 0);
+  const total = incomes.filter((i) => currencyOf(i) === "ARS").reduce((s, i) => s + i.amount, 0);
+  const totalUSD = incomes.filter((i) => currencyOf(i) === "USD").reduce((s, i) => s + i.amount, 0);
 
   return (
     <div className="space-y-6">
@@ -63,6 +65,11 @@ export default function IngresosPage() {
             <div className="text-3xl font-bold tabular-nums text-success">
               {formatCurrency(total)}
             </div>
+            {totalUSD > 0 && (
+              <div className="text-xl font-semibold tabular-nums text-success">
+                + {formatMoney(totalUSD, "USD")}
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>

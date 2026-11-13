@@ -52,6 +52,8 @@ export interface AccountShare {
   granteeUid?: string | null;
   granteeDisplayName?: string | null;
   status: "active" | "revoked";
+  /** "direct" (compartidas por WhatsApp): lo que carga el invitado entra sin aprobación. */
+  mode?: "direct" | "approval";
   createdAt: Timestamp;
   updatedAt?: Timestamp;
 }
@@ -104,9 +106,35 @@ export type AccountType =
   | "credit"
   | "checking"
   | "savings"
-  | "digital";
+  | "digital"
+  /** Cobacha: plata apartada dentro de otra cuenta (reservas de Mercado Pago, frascos de Naranja X…). */
+  | "reserve";
 
 export type TransactionKind = "expense" | "income" | "transfer";
+
+// === Monedas ===
+
+export type Currency = "ARS" | "USD";
+export const CURRENCIES: Currency[] = ["ARS", "USD"];
+
+/** Los docs viejos no tienen moneda: son pesos. */
+export const currencyOf = (x: { currency?: Currency | null }): Currency =>
+  x.currency ?? "ARS";
+
+/** Monedas que maneja una cuenta. Las tarjetas de crédito aceptan ambas. */
+export const accountCurrencies = (a: {
+  type: AccountType;
+  currencies?: Currency[] | null;
+}): Currency[] =>
+  a.type === "credit" ? CURRENCIES : a.currencies?.length ? a.currencies : ["ARS"];
+
+/**
+ * Tipo de transferencia:
+ * - transfer: mover plata entre cuentas (misma moneda)
+ * - exchange: cambio de moneda (vender/comprar dólares), puede ser en la misma cuenta
+ * - card-payment: pago de una tarjeta de crédito desde una cuenta
+ */
+export type TransferType = "transfer" | "exchange" | "card-payment";
 
 export type CategoryKind = "expense" | "income";
 
@@ -129,6 +157,15 @@ export interface Account {
   active?: boolean;
   defaultClosingDay?: number;
   defaultDueDay?: number;
+  /** Últimos 4 dígitos de la tarjeta (los carga el agente al leer un resumen). */
+  last4?: string | null;
+  /** Monedas de la cuenta (no aplica a tarjetas: aceptan ARS y USD). Default ["ARS"]. */
+  currencies?: Currency[] | null;
+  /** Cuenta principal del usuario (donde cobra). Una sola. */
+  isMain?: boolean | null;
+  /** Saldo con el que arranca la cuenta, por moneda. */
+  openingBalances?: Partial<Record<Currency, number>> | null;
+  openingDate?: Timestamp | null;
   createdAt: Timestamp;
 }
 
@@ -153,6 +190,13 @@ export interface Transaction {
   firstBillingMonth?: string;
   recurringId?: string;
   toAccountId?: string;
+  /** Moneda de totalAmount. Default ARS. */
+  currency?: Currency;
+  /** Transferencias: tipo, y para cambios de moneda, moneda/monto de destino y cotización. */
+  transferType?: TransferType;
+  toCurrency?: Currency;
+  toAmount?: number;
+  rate?: number;
   createdAt: Timestamp;
 }
 
@@ -163,6 +207,7 @@ export interface RecurringExpense {
   accountId: string;
   categoryId: string;
   kind: TransactionKind;
+  currency?: Currency;
   dayOfMonth: number;
   startMonth: string;
   endMonth?: string | null;
@@ -185,6 +230,11 @@ export interface Installment {
   recurringId?: string;
   transferRole?: "source" | "destination";
   transferCounterpartId?: string;
+  transferType?: TransferType;
+  /** Moneda de amount. Default ARS. */
+  currency?: Currency;
+  /** Si lo cargó otra persona desde una cuenta compartida. */
+  createdByName?: string;
 }
 
 export const monthKey = (year: number, month: number): string =>
@@ -194,3 +244,49 @@ export const parseMonthKey = (key: string): { year: number; month: number } => {
   const [y, m] = key.split("-").map(Number);
   return { year: y, month: m };
 };
+
+// === Resúmenes de tarjeta (los carga el agente de WhatsApp) ===
+
+export type StatementLineType =
+  | "purchase"
+  | "installment"
+  | "subscription"
+  | "tax"
+  | "fee"
+  | "interest"
+  | "payment"
+  | "credit"
+  | "other";
+
+export interface StatementLine {
+  /** YYYY-MM-DD, si el resumen la trae. */
+  date: string | null;
+  description: string;
+  amount: number;
+  currency: "ARS" | "USD";
+  /** "3/6" para cuotas. */
+  installment: string | null;
+  type: StatementLineType;
+}
+
+/** users/{uid}/cardStatements/{accountId}_{YYYY-MM} */
+export interface CardStatement {
+  id: string;
+  accountId: string;
+  accountName: string;
+  /** Mes del cierre (YYYY-MM): coincide con billingMonth de las cuotas. */
+  period: string;
+  closingDate: Timestamp;
+  dueDate: Timestamp;
+  nextClosingDate?: Timestamp | null;
+  nextDueDate?: Timestamp | null;
+  last4?: string | null;
+  totalARS: number;
+  totalUSD: number;
+  minimumPayment?: number | null;
+  /** Suma de impuestos + cargos + intereses en ARS. */
+  chargesARS: number;
+  lines: StatementLine[];
+  chargesTransactionId?: string | null;
+  createdAt: Timestamp;
+}

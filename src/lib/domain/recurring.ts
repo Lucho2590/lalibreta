@@ -74,6 +74,7 @@ export const applyRecurringToMonth = async (
     installments: 1,
     cardClosedAtPurchase: false,
     recurringId: recurring.id,
+    currency: recurring.currency ?? "ARS",
   });
   return "created";
 };

@@ -31,7 +31,10 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { useAuth } from "@/hooks/use-auth";
-import { useAccounts } from "@/hooks/use-data";
+import { useAccounts, useAllInstallments } from "@/hooks/use-data";
+import { computeAccountBalances, type AccountBalance } from "@/lib/domain/balances";
+import { accountCurrencies, type Currency } from "@/lib/domain/types";
+import { formatMoney } from "@/lib/format";
 import { AccountForm } from "@/components/accounts/account-form";
 import { SharedWithMeSection } from "@/components/accounts/shared-with-me-section";
 import {
@@ -47,6 +50,7 @@ const typeLabel: Record<AccountType, string> = {
   checking: "Cuenta corriente",
   savings: "Caja de ahorro",
   digital: "Billetera virtual",
+  reserve: "Cobacha",
 };
 
 const AccountAvatar = ({ icon, type }: { icon?: string; type: AccountType }) => (
@@ -58,6 +62,11 @@ const AccountAvatar = ({ icon, type }: { icon?: string; type: AccountType }) => 
 export default function AccountsPage() {
   const { user } = useAuth();
   const { data: accounts, loading } = useAccounts();
+  const { data: allInstallments } = useAllInstallments();
+  const balances = useMemo(
+    () => computeAccountBalances(accounts, allInstallments),
+    [accounts, allInstallments],
+  );
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState<Account | null>(null);
 
@@ -223,7 +232,10 @@ export default function AccountsPage() {
                       <AccountAvatar icon={acc.icon} type={acc.type} />
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
-                          <span className="truncate font-semibold">{acc.name}</span>
+                          <span className="truncate font-semibold">
+                            {acc.isMain && <span title="Cuenta principal">⭐ </span>}
+                            {acc.name}
+                          </span>
                           {paused && (
                             <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
                               Pausada
@@ -232,14 +244,18 @@ export default function AccountsPage() {
                         </div>
                         <div className="text-xs text-muted-foreground">
                           {typeLabel[acc.type]}
-                          {acc.type === "credit" && acc.defaultClosingDay
-                            ? ` · cierre día ${acc.defaultClosingDay}`
+                          {acc.type === "credit" && acc.last4 ? ` ···· ${acc.last4}` : ""}
+                          {acc.type === "credit"
+                            ? acc.defaultClosingDay
+                              ? ` · cierre día ${acc.defaultClosingDay}`
+                              : " · fechas pendientes"
                             : ""}
                           {children.length > 0
-                            ? ` · ${children.length} ${children.length === 1 ? "tarjeta" : "tarjetas"}`
+                            ? ` · ${childrenSummary(children)}`
                             : ""}
                         </div>
                       </div>
+                      <BalanceAmounts account={acc} balance={balances.get(acc.id)} />
                       <ChevronRight className="size-4 text-muted-foreground" />
                     </CardContent>
                   </Card>
@@ -280,11 +296,15 @@ export default function AccountsPage() {
                                 </div>
                                 <div className="text-[11px] text-muted-foreground">
                                   {typeLabel[card.type]}
-                                  {card.defaultClosingDay
-                                    ? ` · cierre día ${card.defaultClosingDay}`
-                                    : ""}
+                                  {card.last4 ? ` ···· ${card.last4}` : ""}
+                                  {card.type !== "credit"
+                                    ? ""
+                                    : card.defaultClosingDay
+                                      ? ` · cierre día ${card.defaultClosingDay}`
+                                      : " · fechas pendientes"}
                                 </div>
                               </div>
+                              <BalanceAmounts account={card} balance={balances.get(card.id)} small />
                               <ChevronRight className="size-4 text-muted-foreground" />
                             </CardContent>
                           </Card>
@@ -304,3 +324,42 @@ export default function AccountsPage() {
     </div>
   );
 }
+
+/** Saldo (cuentas) o lo que se debe (tarjetas), por moneda. */
+function BalanceAmounts({
+  account,
+  balance,
+  small,
+}: {
+  account: Account;
+  balance?: AccountBalance;
+  small?: boolean;
+}) {
+  if (!balance) return null;
+  const isCard = account.type === "credit";
+  const currencies: Currency[] = isCard
+    ? (["ARS", "USD"] as Currency[]).filter((c) => balance.amounts[c] > 0.009)
+    : accountCurrencies(account);
+  if (currencies.length === 0) return null;
+  return (
+    <div className={`text-right tabular-nums ${small ? "text-xs" : "text-sm"}`}>
+      {isCard && <div className="text-[10px] text-muted-foreground">a pagar</div>}
+      {currencies.map((c) => (
+        <div key={c} className="font-semibold">
+          {formatMoney(balance.amounts[c], c)}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+const childrenSummary = (children: Account[]) => {
+  const cards = children.filter((c) => c.type === "credit").length;
+  const reserves = children.filter((c) => c.type === "reserve").length;
+  return [
+    cards ? `${cards} ${cards === 1 ? "tarjeta" : "tarjetas"}` : null,
+    reserves ? `${reserves} ${reserves === 1 ? "cobacha" : "cobachas"}` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+};

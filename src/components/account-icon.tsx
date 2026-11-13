@@ -47,6 +47,8 @@ export const defaultIconForType = (type: AccountType): string => {
       return "piggy-bank";
     case "digital":
       return "smartphone";
+    case "reserve":
+      return "coins";
   }
 };
 

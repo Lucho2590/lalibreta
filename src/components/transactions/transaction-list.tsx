@@ -10,7 +10,8 @@ import { useAccounts, useCategories } from "@/hooks/use-data";
 import { useAuth } from "@/hooks/use-auth";
 import { deleteTransactionAndInstallments } from "@/lib/domain/installments";
 import type { Installment, SharedExpense } from "@/lib/domain/types";
-import { formatCurrency, formatShortDate } from "@/lib/format";
+import { formatMoney, formatShortDate } from "@/lib/format";
+import { currencyOf } from "@/lib/domain/types";
 import { CategoryIcon } from "@/components/category-icon";
 import { getEffectiveInstallmentInfo } from "@/lib/domain/shared-effective";
 
@@ -50,11 +51,19 @@ export function TransactionList({ items, sharedByTxId, ownerUid }: Props) {
     );
   }
 
-  // Para transferencias mostramos sólo una entrada (la del origen) — la del destino
-  // duplicaría visualmente el movimiento.
-  const dedup = items.filter(
-    (i) => i.kind !== "transfer" || i.transferRole === "source",
-  );
+  // Transferencias: una sola entrada por transacción (la de origen si está;
+  // si la lista es de la cuenta destino, la de destino). Guardamos la otra pata
+  // para mostrar los cambios de moneda (US$ 500 → $ 740.000).
+  const legsByTx = new Map<string, typeof items>();
+  for (const i of items) {
+    if (i.kind !== "transfer") continue;
+    legsByTx.set(i.transactionId, [...(legsByTx.get(i.transactionId) ?? []), i]);
+  }
+  const dedup = items.filter((i) => {
+    if (i.kind !== "transfer") return true;
+    const legs = legsByTx.get(i.transactionId) ?? [];
+    return i.transferRole === "source" || !legs.some((l) => l.transferRole === "source");
+  });
   const sorted = [...dedup].sort(
     (a, b) => b.billingDate.toMillis() - a.billingDate.toMillis(),
   );
@@ -71,6 +80,17 @@ export function TransactionList({ items, sharedByTxId, ownerUid }: Props) {
         const counterpart = isTransfer
           ? accountMap.get(it.transferCounterpartId ?? "")
           : null;
+        const cur = currencyOf(it);
+        const otherLeg = isTransfer
+          ? legsByTx.get(it.transactionId)?.find((l) => l.id !== it.id)
+          : undefined;
+        const isExchange = it.transferType === "exchange" || (otherLeg && currencyOf(otherLeg) !== cur);
+        const isCardPayment = it.transferType === "card-payment";
+        const transferLabel = isCardPayment ? "Pago de tarjeta" : isExchange ? "Cambio" : "Transferencia";
+        const [fromName, toName] =
+          it.transferRole === "destination"
+            ? [counterpart?.name, acc?.name]
+            : [acc?.name, counterpart?.name];
 
         const shareInfo =
           shareIndex && effectiveOwner && it.kind === "expense"
@@ -96,12 +116,17 @@ export function TransactionList({ items, sharedByTxId, ownerUid }: Props) {
                   <span className="truncate text-sm font-semibold">
                     {it.description ||
                       (isTransfer
-                        ? "Transferencia"
+                        ? transferLabel
                         : cat?.name || "Movimiento")}
                   </span>
                   {isTransfer && (
                     <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
-                      Transferencia
+                      {transferLabel}
+                    </span>
+                  )}
+                  {it.createdByName && (
+                    <span className="rounded-full bg-brand/10 px-2 py-0.5 text-[10px] font-medium text-brand">
+                      {it.createdByName}
                     </span>
                   )}
                   {!isTransfer && it.totalInstallments > 1 && (
@@ -112,7 +137,7 @@ export function TransactionList({ items, sharedByTxId, ownerUid }: Props) {
                 </div>
                 <div className="text-xs text-muted-foreground">
                   {isTransfer
-                    ? `${acc?.name ?? "—"} → ${counterpart?.name ?? "—"} · ${formatShortDate(it.billingDate.toDate())}`
+                    ? `${fromName === toName ? (fromName ?? "—") : `${fromName ?? "—"} → ${toName ?? "—"}`} · ${formatShortDate(it.billingDate.toDate())}`
                     : `${cat?.name ?? "—"} · ${acc?.name ?? "—"} · ${formatShortDate(it.billingDate.toDate())}`}
                 </div>
                 {isShared && shareInfo?.shared && (
@@ -121,7 +146,7 @@ export function TransactionList({ items, sharedByTxId, ownerUid }: Props) {
                     className="mt-1 inline-flex items-center gap-1 rounded-full bg-brand/10 px-2 py-0.5 text-[10px] font-medium text-brand hover:bg-brand/20"
                   >
                     <Users className="size-3" />
-                    Compartido · total {formatCurrency(shareInfo.totalAmount)}
+                    Compartido · total {formatMoney(shareInfo.totalAmount, cur)}
                     {shareInfo.othersCount > 0 &&
                       ` · ${shareInfo.acceptedCount}/${shareInfo.othersCount} aceptaron`}
                   </Link>
@@ -138,14 +163,16 @@ export function TransactionList({ items, sharedByTxId, ownerUid }: Props) {
                   }`}
                 >
                   {isTransfer
-                    ? formatCurrency(it.amount)
+                    ? isExchange && otherLeg
+                      ? `${formatMoney(it.transferRole === "destination" ? otherLeg.amount : it.amount, it.transferRole === "destination" ? currencyOf(otherLeg) : cur)} → ${formatMoney(it.transferRole === "destination" ? it.amount : otherLeg.amount, it.transferRole === "destination" ? cur : currencyOf(otherLeg))}`
+                      : formatMoney(it.amount, cur)
                     : it.kind === "income"
-                      ? `+${formatCurrency(displayAmount)}`
-                      : `-${formatCurrency(displayAmount)}`}
+                      ? `+${formatMoney(displayAmount, cur)}`
+                      : `-${formatMoney(displayAmount, cur)}`}
                 </div>
                 {showDiff && (
                   <div className="text-[10px] text-muted-foreground line-through tabular-nums">
-                    {formatCurrency(shareInfo!.totalAmount)}
+                    {formatMoney(shareInfo!.totalAmount, cur)}
                   </div>
                 )}
               </div>

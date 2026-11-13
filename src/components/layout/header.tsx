@@ -5,6 +5,7 @@ import {
   ClipboardCheck,
   Handshake,
   LogOut,
+  MessageCircle,
   Repeat,
   Tag,
   Users,
@@ -60,7 +61,7 @@ export function Header({ variant = "mobile" }: { variant?: "mobile" | "desktop" 
           </DropdownMenuLabel>
           <DropdownMenuSeparator />
           <DropdownMenuItem render={<Link href="/fijos" />}>
-            <Repeat className="mr-2 size-4" /> Gastos fijos
+            <Repeat className="mr-2 size-4" /> Fijos
           </DropdownMenuItem>
           <DropdownMenuItem render={<Link href="/ingresos" />}>
             <Wallet className="mr-2 size-4" /> Ingresos
@@ -76,6 +77,9 @@ export function Header({ variant = "mobile" }: { variant?: "mobile" | "desktop" 
           </DropdownMenuItem>
           <DropdownMenuItem render={<Link href="/categorias" />}>
             <Tag className="mr-2 size-4" /> Categorías
+          </DropdownMenuItem>
+          <DropdownMenuItem render={<Link href="/whatsapp" />}>
+            <MessageCircle className="mr-2 size-4" /> WhatsApp
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem onClick={() => signOut()}>

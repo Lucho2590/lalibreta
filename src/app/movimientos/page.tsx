@@ -15,7 +15,7 @@ import {
 import { useAuth } from "@/hooks/use-auth";
 import { TransactionList } from "@/components/transactions/transaction-list";
 import { useNewTransactionSheet } from "@/components/transactions/new-transaction-sheet";
-import { formatCurrency, formatMonth } from "@/lib/format";
+import { formatCurrency, formatMoney, formatMonth } from "@/lib/format";
 import { computeMonthlyBalance } from "@/lib/domain/balance";
 import { buildSharedByTxId } from "@/lib/domain/shared-effective";
 
@@ -47,7 +47,7 @@ export default function MovimientosPage() {
   }, [installments, accountFilter, kindFilter]);
 
   const balance = useMemo(
-    () => computeMonthlyBalance(installments, monthKey, adj),
+    () => computeMonthlyBalance(installments, monthKey, adj, "ARS"),
     [installments, monthKey, adj],
   );
 
@@ -58,6 +58,9 @@ export default function MovimientosPage() {
     const search = usp.toString();
     window.history.replaceState(null, "", search ? `?${search}` : window.location.pathname);
   };
+
+  const balanceUSD = computeMonthlyBalance(installments, monthKey, adj, "USD");
+  const hasUSD = balanceUSD.income !== 0 || balanceUSD.expense !== 0;
 
   const accountName = accounts.find((a) => a.id === accountFilter)?.name;
 
@@ -80,17 +83,20 @@ export default function MovimientosPage() {
         <Stat
           label="Ingresos"
           value={balance.income}
+          usd={hasUSD ? balanceUSD.income : undefined}
           tone="success"
           icon={<ArrowUpRight className="size-4" />}
         />
         <Stat
           label="Gastos"
           value={balance.expense}
+          usd={hasUSD ? balanceUSD.expense : undefined}
           icon={<ArrowDownRight className="size-4" />}
         />
         <Stat
           label="Balance"
           value={balance.balance}
+          usd={hasUSD ? balanceUSD.balance : undefined}
           tone={balance.balance >= 0 ? "success" : "destructive"}
           icon={<Wallet className="size-4" />}
         />
@@ -143,11 +149,13 @@ export default function MovimientosPage() {
 function Stat({
   label,
   value,
+  usd,
   tone,
   icon,
 }: {
   label: string;
   value: number;
+  usd?: number;
   tone?: "success" | "destructive";
   icon?: React.ReactNode;
 }) {
@@ -163,6 +171,9 @@ function Stat({
         <div className={`mt-1 text-xl font-semibold tabular-nums ${toneClass}`}>
           {formatCurrency(value)}
         </div>
+        {usd !== undefined && (
+          <div className={`text-sm font-medium tabular-nums ${toneClass}`}>{formatMoney(usd, "USD")}</div>
+        )}
       </CardContent>
     </Card>
   );

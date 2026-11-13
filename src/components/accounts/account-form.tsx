@@ -6,6 +6,7 @@ import {
   Banknote,
   CreditCard,
   Landmark,
+  Coins,
   PiggyBank,
   Smartphone,
   Wallet,
@@ -14,6 +15,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import {
   Select,
   SelectContent,
@@ -24,9 +26,9 @@ import {
 import { useAuth } from "@/hooks/use-auth";
 import { useAccounts } from "@/hooks/use-data";
 import { db } from "@/lib/firebase/client";
-import type { Account, AccountType } from "@/lib/domain/types";
+import type { Account, AccountType, Currency } from "@/lib/domain/types";
 import { ACCOUNT_ICONS, defaultIconForType } from "@/components/account-icon";
-import { updateAccount } from "@/lib/domain/accounts";
+import { clearOtherMainAccounts, updateAccount } from "@/lib/domain/accounts";
 
 const TYPE_OPTIONS: Array<{ value: AccountType; label: string; icon: typeof Wallet }> = [
   { value: "cash", label: "Efectivo", icon: Banknote },
@@ -35,6 +37,7 @@ const TYPE_OPTIONS: Array<{ value: AccountType; label: string; icon: typeof Wall
   { value: "checking", label: "Cta. corriente", icon: Landmark },
   { value: "savings", label: "Caja de ahorro", icon: PiggyBank },
   { value: "digital", label: "Billetera virtual", icon: Smartphone },
+  { value: "reserve", label: "Cobacha", icon: Coins },
 ];
 
 export function AccountForm({
@@ -58,7 +61,46 @@ export function AccountForm({
   const [closingDay, setClosingDay] = useState(account?.defaultClosingDay ?? 25);
   const [dueDay, setDueDay] = useState(account?.defaultDueDay ?? 5);
   const [parentId, setParentId] = useState<string>(account?.parentId ?? "");
+  const [currencies, setCurrencies] = useState<Currency[]>(
+    account?.currencies?.length ? account.currencies : ["ARS"],
+  );
+  const [isMain, setIsMain] = useState<boolean>(account?.isMain ?? false);
+  const [openingARS, setOpeningARS] = useState(
+    account?.openingBalances?.ARS ? String(account.openingBalances.ARS) : "",
+  );
+  const [openingUSD, setOpeningUSD] = useState(
+    account?.openingBalances?.USD ? String(account.openingBalances.USD) : "",
+  );
   const [busy, setBusy] = useState(false);
+
+  // Las cobachas tienen una sola moneda: elegir una reemplaza a la otra.
+  const toggleCurrency = (c: Currency) =>
+    setCurrencies((prev) =>
+      type === "reserve"
+        ? [c]
+        : prev.includes(c)
+          ? prev.length > 1
+            ? prev.filter((x) => x !== c)
+            : prev
+          : [...prev, c],
+    );
+
+  /** Monedas, principal y saldo inicial (solo cuentas que no son tarjeta). */
+  const moneyFields = (): Record<string, unknown> => {
+    const effCurrencies: Currency[] = type === "reserve" ? [currencies[0]] : currencies;
+    const opening: Partial<Record<Currency, number>> = {};
+    const ars = Number(openingARS.replace(",", "."));
+    const usd = Number(openingUSD.replace(",", "."));
+    if (effCurrencies.includes("ARS") && ars) opening.ARS = ars;
+    if (effCurrencies.includes("USD") && usd) opening.USD = usd;
+    const hasOpening = Object.keys(opening).length > 0;
+    return {
+      currencies: effCurrencies,
+      isMain: type === "reserve" ? false : isMain,
+      openingBalances: hasOpening ? opening : null,
+      openingDate: hasOpening ? (account?.openingDate ?? Timestamp.now()) : null,
+    };
+  };
 
   useEffect(() => {
     if (!iconTouched) setIcon(defaultIconForType(type));
@@ -69,9 +111,11 @@ export function AccountForm({
     [accounts, account],
   );
 
+  const isReserve = type === "reserve";
   const eligibleParents = accounts.filter(
     (a) =>
       a.type !== "credit" &&
+      a.type !== "reserve" &&
       !a.parentId &&
       a.active !== false &&
       a.id !== account?.id,
@@ -80,6 +124,10 @@ export function AccountForm({
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user || !name.trim()) return;
+    if (isReserve && !parentId) {
+      toast.error("Elegí en qué cuenta está la cobacha");
+      return;
+    }
     setBusy(true);
     try {
       if (isEdit && account) {
@@ -93,11 +141,13 @@ export function AccountForm({
           patch.defaultDueDay = Math.min(31, Math.max(1, dueDay));
           patch.parentId = parentId || null;
         } else {
-          patch.parentId = null;
+          patch.parentId = isReserve ? parentId || null : null;
           patch.defaultClosingDay = null;
           patch.defaultDueDay = null;
+          Object.assign(patch, moneyFields());
         }
         await updateAccount(user.uid, account.id, patch);
+        if (type !== "credit" && isMain) await clearOtherMainAccounts(user.uid, account.id);
         toast.success("Cuenta actualizada");
         onUpdated?.();
       } else {
@@ -112,8 +162,12 @@ export function AccountForm({
           data.defaultClosingDay = Math.min(31, Math.max(1, closingDay));
           data.defaultDueDay = Math.min(31, Math.max(1, dueDay));
           if (parentId) data.parentId = parentId;
+        } else {
+          Object.assign(data, moneyFields());
+          if (isReserve) data.parentId = parentId;
         }
-        await addDoc(collection(db, `users/${user.uid}/accounts`), data);
+        const ref = await addDoc(collection(db, `users/${user.uid}/accounts`), data);
+        if (type !== "credit" && isMain) await clearOtherMainAccounts(user.uid, ref.id);
         toast.success("Cuenta creada");
         setName("");
         setIconTouched(false);
@@ -132,7 +186,7 @@ export function AccountForm({
     <form onSubmit={submit} className="space-y-4">
       <div className="space-y-1.5">
         <Label>Tipo</Label>
-        <div className="grid grid-cols-3 gap-1 rounded-2xl bg-muted p-1">
+        <div className="grid grid-cols-4 gap-1 rounded-2xl bg-muted p-1">
           {TYPE_OPTIONS.map((opt) => {
             const Ico = opt.icon;
             const selected = type === opt.value;
@@ -166,6 +220,109 @@ export function AccountForm({
           onChange={(e) => setName(e.target.value)}
         />
       </div>
+
+      {isReserve && (
+        <div className="space-y-1.5">
+          <Label>¿En qué cuenta está?</Label>
+          {eligibleParents.length === 0 ? (
+            <p className="rounded-md border border-dashed p-3 text-center text-xs text-muted-foreground">
+              Primero creá la cuenta donde está la cobacha (Mercado Pago, Naranja X, tu banco…).
+            </p>
+          ) : (
+            <Select value={parentId} onValueChange={(v) => setParentId(v ?? "")}>
+              <SelectTrigger className="h-12 w-full">
+                <SelectValue
+                  placeholder="Elegí la cuenta"
+                  items={eligibleParents.map((a) => ({ value: a.id, label: a.name }))}
+                />
+              </SelectTrigger>
+              <SelectContent>
+                {eligibleParents.map((acc) => (
+                  <SelectItem key={acc.id} value={acc.id}>
+                    {acc.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+          <p className="text-xs text-muted-foreground">
+            Las reservas de Mercado Pago o los frascos de Naranja X. Guardar o sacar plata es una
+            transferencia con su cuenta.
+          </p>
+        </div>
+      )}
+
+      {type !== "credit" && (
+        <div className="space-y-4 rounded-2xl border p-3">
+          <div className="space-y-1.5">
+            <Label>{isReserve ? "Moneda" : "Monedas"}</Label>
+            <div className="grid grid-cols-2 gap-1 rounded-xl bg-muted p-1">
+              {(["ARS", "USD"] as Currency[]).map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  onClick={() => toggleCurrency(c)}
+                  className={`h-10 rounded-lg text-sm font-medium transition ${
+                    currencies.includes(c) ? "bg-background shadow-sm" : "text-muted-foreground"
+                  }`}
+                >
+                  {c === "ARS" ? "$ Pesos" : "US$ Dólares"}
+                </button>
+              ))}
+            </div>
+            {!isReserve && (
+              <p className="text-xs text-muted-foreground">
+                Un banco con caja de ahorro en pesos y en dólares lleva las dos.
+              </p>
+            )}
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            {currencies.includes("ARS") && (
+              <div className="space-y-1.5">
+                <Label htmlFor="op-ars">Saldo actual $</Label>
+                <Input
+                  id="op-ars"
+                  inputMode="decimal"
+                  className="h-11"
+                  placeholder="0"
+                  value={openingARS}
+                  onChange={(e) => setOpeningARS(e.target.value)}
+                />
+              </div>
+            )}
+            {currencies.includes("USD") && (
+              <div className="space-y-1.5">
+                <Label htmlFor="op-usd">Saldo actual US$</Label>
+                <Input
+                  id="op-usd"
+                  inputMode="decimal"
+                  className="h-11"
+                  placeholder="0"
+                  value={openingUSD}
+                  onChange={(e) => setOpeningUSD(e.target.value)}
+                />
+              </div>
+            )}
+          </div>
+
+          {!isReserve && (
+          <div className="flex items-center justify-between gap-3">
+            <span>
+              <span className="block text-sm font-medium">Cuenta principal</span>
+              <span className="block text-xs text-muted-foreground">
+                Donde cobrás. El agente la usa por defecto para ingresos, cambios y pagos de tarjeta.
+              </span>
+            </span>
+            <Switch
+              checked={isMain}
+              onCheckedChange={(v) => setIsMain(Boolean(v))}
+              aria-label="Cuenta principal"
+            />
+          </div>
+          )}
+        </div>
+      )}
 
       {type === "credit" && (
         <>
@@ -202,8 +359,8 @@ export function AccountForm({
             <Label>Cuenta asociada (opcional)</Label>
             {eligibleParents.length === 0 ? (
               <p className="rounded-md border border-dashed p-3 text-center text-xs text-muted-foreground">
-                Para asociar esta tarjeta a un banco, primero creá una cuenta de
-                tipo Efectivo o Débito.
+                Para asociar esta tarjeta a un banco, primero creá la cuenta del
+                banco (por ejemplo, tu cuenta principal).
               </p>
             ) : (
               <Select

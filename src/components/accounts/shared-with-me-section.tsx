@@ -193,7 +193,9 @@ function SubmitForm({
         return;
       }
       toast.success(
-        `Enviado a ${share.ownerDisplayName || share.ownerEmail} para aprobación`,
+        share.mode === "direct"
+          ? `Cargado en la cuenta de ${share.ownerDisplayName || share.ownerEmail}`
+          : `Enviado a ${share.ownerDisplayName || share.ownerEmail} para aprobación`,
       );
       onDone();
     } catch (err) {
@@ -210,7 +212,9 @@ function SubmitForm({
         Cuenta: <span className="font-medium text-foreground">{share.accountName}</span>{" "}
         · de {share.ownerDisplayName || share.ownerEmail}
         <br />
-        El gasto queda pendiente de aprobación. La categoría la elige el dueño al aprobar.
+        {share.mode === "direct"
+          ? "El gasto entra directo a su cuenta y le avisamos."
+          : "El gasto queda pendiente de aprobación. La categoría la elige el dueño al aprobar."}
       </div>
 
       <div className="space-y-1.5">
@@ -288,7 +292,8 @@ function SubmitForm({
       >
         {busy ? "Enviando…" : (
           <>
-            <ShieldCheck className="mr-1 size-4" /> Enviar para aprobación
+            <ShieldCheck className="mr-1 size-4" />{" "}
+            {share.mode === "direct" ? "Cargar gasto" : "Enviar para aprobación"}
           </>
         )}
       </Button>

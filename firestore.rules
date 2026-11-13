@@ -50,5 +50,25 @@ service cloud.firestore {
       );
       allow write: if false;
     }
+
+    // Bot de WhatsApp: vinculaciones, códigos, sesiones del agente y dedupe
+    // de webhooks. Solo el server (Admin SDK) accede; el cliente usa las
+    // route handlers /api/whatsapp/*.
+    match /whatsappLinks/{id} {
+      allow read, write: if false;
+    }
+    match /whatsappLinkCodes/{id} {
+      allow read, write: if false;
+    }
+    match /whatsappSessions/{id} {
+      allow read, write: if false;
+    }
+    match /waProcessedMessages/{id} {
+      allow read, write: if false;
+    }
+    // Códigos para compartir cuentas por WhatsApp (solo server).
+    match /accountShareCodes/{id} {
+      allow read, write: if false;
+    }
   }
 }
