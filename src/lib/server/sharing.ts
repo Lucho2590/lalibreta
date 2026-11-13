@@ -3,7 +3,6 @@ import "server-only";
 import { randomInt } from "node:crypto";
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { adminDb } from "./firebase-admin";
-import { sendText } from "./whatsapp/client";
 import { loadAccounts, type ServerAccountInfo } from "./queries-admin";
 
 /**
@@ -205,19 +204,6 @@ export const revokeShare = async (
  * las últimas 24 h; si no, Meta lo rechaza (haría falta una plantilla
  * aprobada). Es best-effort: no falla la operación principal.
  */
-export const notifyUser = async (uid: string, text: string): Promise<boolean> => {
-  try {
-    const link = await adminDb().collection("whatsappLinks").where("uid", "==", uid).limit(1).get();
-    const waId = link.docs[0]?.id;
-    if (!waId) return false;
-    await sendText(waId, text);
-    return true;
-  } catch (err) {
-    console.warn("[share] no se pudo avisar al usuario", uid, err);
-    return false;
-  }
-};
-
 export const displayNameOf = async (uid: string) => (await userName(uid)).name;
 
 /** Cuentas compartidas conmigo + los datos de la cuenta del dueño (moneda, cierre…). */

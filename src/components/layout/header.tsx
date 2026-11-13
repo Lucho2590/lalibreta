@@ -24,6 +24,7 @@ import {
 import { useAuth } from "@/hooks/use-auth";
 import { signOut } from "@/lib/firebase/auth";
 import { MonthSelector } from "./month-selector";
+import { NotificationBell } from "@/components/pwa/notification-bell";
 
 export function Header({ variant = "mobile" }: { variant?: "mobile" | "desktop" }) {
   const { user } = useAuth();
@@ -33,7 +34,10 @@ export function Header({ variant = "mobile" }: { variant?: "mobile" | "desktop" 
     return (
       <header className="sticky top-0 z-30 flex h-16 items-center justify-between gap-2 border-b bg-background/80 px-6 backdrop-blur">
         <MonthSelector />
-        <div className="text-xs text-muted-foreground">{user?.email}</div>
+        <div className="flex items-center gap-3">
+          <div className="text-xs text-muted-foreground">{user?.email}</div>
+          <NotificationBell />
+        </div>
       </header>
     );
   }
@@ -46,6 +50,8 @@ export function Header({ variant = "mobile" }: { variant?: "mobile" | "desktop" 
         </div>
         <MonthSelector />
       </div>
+      <div className="flex items-center gap-1">
+      <NotificationBell />
       <DropdownMenu>
         <DropdownMenuTrigger
           render={<Button variant="ghost" size="icon" aria-label="Menú" />}
@@ -87,6 +93,7 @@ export function Header({ variant = "mobile" }: { variant?: "mobile" | "desktop" 
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
+      </div>
     </header>
   );
 }

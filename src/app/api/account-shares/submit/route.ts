@@ -10,7 +10,7 @@ import { sendEmail } from "@/lib/server/resend";
 import { renderPendingApprovalSubmittedEmail } from "@/lib/server/mail-templates";
 import { createTransactionAdmin } from "@/lib/server/transactions-admin";
 import { loadAccounts, loadCategories, toServerAccount } from "@/lib/server/queries-admin";
-import { notifyUser } from "@/lib/server/sharing";
+import { notify } from "@/lib/server/notifications";
 import { formatMoney } from "@/lib/format";
 
 export const runtime = "nodejs";
@@ -104,10 +104,13 @@ export async function POST(req: Request) {
       cardClosedAtPurchase: !!body.cardClosedAtPurchase,
       createdBy: { uid: user.uid, name },
     });
-    void notifyUser(
-      share.ownerUid,
-      `🧾 *${name}* cargó *${body.description || "un gasto"}* por *${formatMoney(totalAmount)}* con tu *${share.accountName}*.`,
-    );
+    await notify(share.ownerUid, {
+      kind: "shared-expense",
+      title: `${name} cargó ${body.description || "un gasto"}`,
+      body: `${formatMoney(totalAmount)} con tu ${share.accountName}`,
+      url: `/cuentas/${account.id}`,
+      whatsappText: `🧾 *${name}* cargó *${body.description || "un gasto"}* por *${formatMoney(totalAmount)}* con tu *${share.accountName}*.`,
+    });
     return NextResponse.json({ ok: true, transactionId: txId, direct: true });
   }
 

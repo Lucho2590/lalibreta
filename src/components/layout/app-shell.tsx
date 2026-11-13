@@ -5,6 +5,7 @@ import { ProtectedRoute } from "./protected-route";
 import { Header } from "./header";
 import { BottomNav } from "./bottom-nav";
 import { Sidebar } from "./sidebar";
+import { PwaSetup } from "@/components/pwa/pwa-setup";
 import { NewTransactionSheetProvider } from "@/components/transactions/new-transaction-sheet";
 
 const PUBLIC_ROUTES = ["/login"];
@@ -15,6 +16,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <ProtectedRoute>
+      <PwaSetup />
       <NewTransactionSheetProvider>
         <div className="flex min-h-screen">
           <Sidebar />

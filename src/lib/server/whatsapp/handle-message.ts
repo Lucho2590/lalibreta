@@ -31,8 +31,8 @@ import {
   displayNameOf,
   loadMyShares,
   loadSharedAccounts,
-  notifyUser,
 } from "../sharing";
+import { notify } from "../notifications";
 import { loadSession, saveSession, takeDraft } from "./sessions";
 import {
   draftType,
@@ -627,7 +627,7 @@ const confirmTransfer = async (waId: string, uid: string, d: TransferDraft) => {
 
 /**
  * Gasto sobre una cuenta que otra persona compartió: entra directo a la cuenta
- * del dueño (con "cargado por") y se le avisa por WhatsApp.
+ * del dueño (con "cargado por") y se le avisa (app, push o WhatsApp).
  */
 const confirmSharedTransaction = async (waId: string, uid: string, draft: TransactionDraft) => {
   const shared = draft.shared!;
@@ -668,10 +668,15 @@ const confirmSharedTransaction = async (waId: string, uid: string, draft: Transa
 
   const money = formatMoney(draft.amount, draft.currency ?? "ARS");
   const cuotas = draft.installments > 1 ? ` en ${draft.installments} cuotas` : "";
-  const notified = await notifyUser(
-    shared.ownerUid,
-    `🧾 *${me}* cargó *${draft.description}* por *${money}*${cuotas} con tu *${account.name}* (${category.name}).`,
-  );
+  const notified = (
+    await notify(shared.ownerUid, {
+      kind: "shared-expense",
+      title: `${me} cargó ${draft.description}`,
+      body: `${money}${cuotas} con tu ${account.name} · ${category.name}`,
+      url: `/cuentas/${account.id}`,
+      whatsappText: `🧾 *${me}* cargó *${draft.description}* por *${money}*${cuotas} con tu *${account.name}* (${category.name}).`,
+    })
+  ).stored;
   await sendText(
     waId,
     `✅ Cargado en la *${account.name}* de ${shared.ownerName}: *${draft.description}* por *${money}*${cuotas}.${notified ? ` Le avisé a ${shared.ownerName}.` : ""}`,

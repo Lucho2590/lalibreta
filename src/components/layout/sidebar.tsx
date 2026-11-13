@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
+  Bell,
   ClipboardCheck,
   CreditCard,
   FileText,
@@ -36,6 +37,7 @@ const navItems = [
   { href: "/contactos", label: "Contactos", icon: Users },
   { href: "/categorias", label: "Categorías", icon: Tag },
   { href: "/whatsapp", label: "WhatsApp", icon: MessageCircle },
+  { href: "/notificaciones", label: "Notificaciones", icon: Bell },
 ] as const;
 
 export function Sidebar() {

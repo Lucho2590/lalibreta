@@ -3,6 +3,7 @@
 import { useMemo } from "react";
 import {
   collection,
+  limit,
   orderBy,
   query,
   where,
@@ -21,6 +22,7 @@ import type {
   SharedExpense,
   Transaction,
 } from "@/lib/domain/types";
+import type { AppNotification } from "@/lib/domain/notifications";
 import {
   categoriesCollectionPath,
 } from "@/lib/domain/seed";
@@ -215,4 +217,16 @@ export function useTransactions() {
     [user],
   );
   return useCollection<Transaction>(q);
+}
+
+export function useNotifications(max = 60) {
+  const { user } = useAuth();
+  const q = useMemo(
+    () =>
+      user
+        ? query(collection(db, `users/${user.uid}/notifications`), orderBy("createdAt", "desc"), limit(max))
+        : null,
+    [user, max],
+  );
+  return useCollection<AppNotification>(q);
 }

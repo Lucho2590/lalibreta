@@ -1,4 +1,6 @@
-# Próximo PR: app instalable (PWA) + notificaciones
+# App instalable (PWA) + notificaciones
+
+> **Estado:** implementado en el branch `Lucho2590/pwa-notificaciones` (manifest e íconos, `public/sw.js`, push con VAPID, bandeja `/notificaciones`, campanita, preferencias y cron diario `/api/cron/daily`). Queda pendiente lo de la sección final.
 
 ## Objetivo
 1. Que La Libreta se pueda **instalar** en el escritorio y en el celular (PWA).
