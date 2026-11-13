@@ -124,6 +124,22 @@ export function TransactionList({ items, sharedByTxId, ownerUid }: Props) {
                       {transferLabel}
                     </span>
                   )}
+                  {it.cardCredit && (
+                    <span
+                      className="rounded-full bg-success/10 px-2 py-0.5 text-[10px] font-medium text-success"
+                      title="Reintegro en la tarjeta: baja lo que tenés que pagar"
+                    >
+                      saldo a favor
+                    </span>
+                  )}
+                  {it.projected && (
+                    <span
+                      className="rounded-full border border-dashed border-muted-foreground/40 px-2 py-0.5 text-[10px] font-medium text-muted-foreground"
+                      title="Suscripción estimada: se reemplaza por el monto real al importar el resumen"
+                    >
+                      estimado
+                    </span>
+                  )}
                   {it.createdByName && (
                     <span className="rounded-full bg-brand/10 px-2 py-0.5 text-[10px] font-medium text-brand">
                       {it.createdByName}

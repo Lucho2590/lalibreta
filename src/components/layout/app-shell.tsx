@@ -18,12 +18,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <NewTransactionSheetProvider>
         <div className="flex min-h-screen">
           <Sidebar />
-          <div className="flex min-h-screen flex-1 flex-col">
+          {/* min-w-0: sin esto, en el celular la columna se estira al ancho de
+              su contenido más largo y las tarjetas se salen de la pantalla. */}
+          <div className="flex min-h-screen min-w-0 flex-1 flex-col overflow-x-clip">
             <Header variant="mobile" />
             <div className="hidden md:block">
               <Header variant="desktop" />
             </div>
-            <main className="flex-1 px-4 py-4 pb-24 md:px-8 md:py-8 md:pb-10 md:max-w-6xl md:mx-auto md:w-full">
+            <main className="w-full min-w-0 flex-1 px-4 py-4 pb-[calc(6rem+env(safe-area-inset-bottom))] md:px-8 md:py-8 md:pb-10 md:max-w-6xl md:mx-auto">
               {children}
             </main>
             <BottomNav />

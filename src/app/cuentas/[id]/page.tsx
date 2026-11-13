@@ -9,15 +9,17 @@ import { Card, CardContent } from "@/components/ui/card";
 import {
   useAccounts,
   useAllInstallments,
+  useCategories,
   useSharedAsOwner,
 } from "@/hooks/use-data";
 import { useAuth } from "@/hooks/use-auth";
 import { useMonth } from "@/hooks/use-month";
 import { CardCycleEditor } from "@/components/accounts/card-cycle-editor";
 import { ShareAccountSection } from "@/components/accounts/share-account-section";
-import { formatMoney, formatMonth } from "@/lib/format";
+import { formatDate, formatMoney, formatMonth } from "@/lib/format";
+import { TAX_CATEGORY, nextMonthKey, summarizeCardMonth, type Money } from "@/lib/domain/card-summary";
 import type { AccountType, Currency } from "@/lib/domain/types";
-import { accountCurrencies, currencyOf } from "@/lib/domain/types";
+import { accountCurrencies, currencyOf, monthOf } from "@/lib/domain/types";
 import { computeAccountBalances } from "@/lib/domain/balances";
 import {
   buildSharedByTxId,
@@ -40,6 +42,7 @@ export default function AccountDetailPage({ params }: { params: Promise<{ id: st
   const { user } = useAuth();
   const { data: accounts } = useAccounts();
   const { data: installments } = useAllInstallments();
+  const { data: categories } = useCategories();
   const { data: shared } = useSharedAsOwner();
   const { monthKey, year, month } = useMonth();
   const sharedByTxId = useMemo(() => buildSharedByTxId(shared), [shared]);
@@ -67,7 +70,7 @@ export default function AccountDetailPage({ params }: { params: Promise<{ id: st
   const childIds = new Set([account.id, ...children.map((c) => c.id)]);
 
   const monthly = installments.filter(
-    (i) => childIds.has(i.accountId) && i.billingMonth === monthKey,
+    (i) => childIds.has(i.accountId) && monthOf(i) === monthKey,
   );
   // El total muestra solamente gastos (los ingresos y transferencias se ven aparte).
   const totals: Record<Currency, number> = { ARS: 0, USD: 0 };
@@ -86,6 +89,14 @@ export default function AccountDetailPage({ params }: { params: Promise<{ id: st
     account.type === "credit"
       ? (["ARS", "USD"] as Currency[]).filter((c) => c === "ARS" || balance[c] !== 0)
       : accountCurrencies(account);
+
+  // Tarjeta: resumen del mes de pago elegido (igual al "Total a pagar" del banco)
+  // y lo que va juntando el resumen siguiente.
+  const taxIds = new Set(categories.filter((c) => TAX_CATEGORY.test(c.name)).map((c) => c.id));
+  const card = summarizeCardMonth(installments, [account.id], monthKey, taxIds);
+  const nextKey = nextMonthKey(monthKey);
+  const nextCard = summarizeCardMonth(installments, [account.id], nextKey, taxIds);
+  const [nextY, nextM] = nextKey.split("-").map(Number);
 
   return (
     <div className="space-y-6">
@@ -120,29 +131,79 @@ export default function AccountDetailPage({ params }: { params: Promise<{ id: st
             <div className="text-xl font-bold tracking-tight">{account.name}</div>
           </div>
         </div>
-        <div className="mt-6">
-          <div className="text-[11px] uppercase tracking-wider opacity-80">
-            Gastos {formatMonth(year, month)}
-            {children.length > 0 ? " · incluye tarjetas asociadas" : ""}
-          </div>
-          <div className="text-3xl font-bold tabular-nums md:text-4xl">
-            {totalCurrencies.map((c) => (
-              <div key={c}>{formatMoney(totals[c], c)}</div>
-            ))}
-          </div>
-          <div className="mt-1 text-xs opacity-80">
-            {monthly.length} {monthly.length === 1 ? "movimiento" : "movimientos"}
-          </div>
-          <div className="mt-4 rounded-2xl bg-white/15 px-4 py-3 backdrop-blur">
+        {account.type === "credit" ? (
+          <div className="mt-6 space-y-3">
             <div className="text-[11px] uppercase tracking-wider opacity-80">
-              {account.type === "credit" ? "A pagar" : "Saldo hoy"}
-              {account.isMain ? " · ⭐ cuenta principal" : ""}
+              Resumen que vence en {formatMonth(year, month)}
+              {card.dueDate ? ` · vence el ${formatDate(card.dueDate)}` : ""}
             </div>
-            <div className="text-lg font-semibold tabular-nums">
-              {balanceCurrencies.map((c) => formatMoney(balance[c], c)).join("  ·  ")}
+            <div className="grid gap-3 sm:grid-cols-3">
+              <HeroStat
+                label="Gastos"
+                money={card.expenses}
+                note={
+                  card.taxes.ARS || card.taxes.USD
+                    ? `de impuestos y comisiones: ${moneyText(card.taxes)}`
+                    : undefined
+                }
+              />
+              <HeroStat
+                label="Reintegros"
+                money={card.credits}
+                note={card.credits.ARS || card.credits.USD ? "saldo a favor" : "sin reintegros"}
+              />
+              <HeroStat
+                label="Total a pagar"
+                money={card.total}
+                emphasis
+                note={
+                  card.paid.ARS || card.paid.USD
+                    ? card.pending.ARS || card.pending.USD
+                      ? `pagaste ${moneyText(card.paid)} · faltan ${moneyText(card.pending)}`
+                      : "✓ pagado"
+                    : undefined
+                }
+              />
+            </div>
+            {(nextCard.total.ARS !== 0 || nextCard.total.USD !== 0) && (
+              <div className="rounded-2xl bg-white/10 px-4 py-2.5 text-sm">
+                <span className="opacity-80">Próximo resumen (vence en {formatMonth(nextY, nextM)}): </span>
+                <span className="font-semibold tabular-nums">{moneyText(nextCard.total)}</span>
+                <span className="opacity-80">
+                  {" "}
+                  hasta ahora
+                  {nextCard.projected.ARS || nextCard.projected.USD
+                    ? ` · incluye ${moneyText(nextCard.projected)} estimado de suscripciones`
+                    : ""}
+                </span>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="mt-6">
+            <div className="text-[11px] uppercase tracking-wider opacity-80">
+              Gastos {formatMonth(year, month)}
+              {children.length > 0 ? " · incluye tarjetas asociadas" : ""}
+            </div>
+            <div className="text-3xl font-bold tabular-nums md:text-4xl">
+              {totalCurrencies.map((c) => (
+                <div key={c}>{formatMoney(totals[c], c)}</div>
+              ))}
+            </div>
+            <div className="mt-1 text-xs opacity-80">
+              {monthly.length} {monthly.length === 1 ? "movimiento" : "movimientos"}
+            </div>
+            <div className="mt-4 rounded-2xl bg-white/15 px-4 py-3 backdrop-blur">
+              <div className="text-[11px] uppercase tracking-wider opacity-80">
+                Saldo hoy
+                {account.isMain ? " · ⭐ cuenta principal" : ""}
+              </div>
+              <div className="text-lg font-semibold tabular-nums">
+                {balanceCurrencies.map((c) => formatMoney(balance[c], c)).join("  ·  ")}
+              </div>
             </div>
           </div>
-        </div>
+        )}
       </div>
 
       {children.length > 0 && (
@@ -163,7 +224,7 @@ export default function AccountDetailPage({ params }: { params: Promise<{ id: st
                   : undefined;
                 const cardTotals: Record<Currency, number> = { ARS: 0, USD: 0 };
                 for (const i of installments) {
-                  if (i.accountId === card.id && i.billingMonth === monthKey && i.kind === "expense") {
+                  if (i.accountId === card.id && monthOf(i) === monthKey && i.kind === "expense") {
                     cardTotals[currencyOf(i)] += effectiveAmount(i);
                   }
                 }
@@ -217,6 +278,26 @@ export default function AccountDetailPage({ params }: { params: Promise<{ id: st
       <div className="grid gap-4 md:grid-cols-2">
         {account.type === "credit" && <CardCycleEditor account={account} />}
 
+        {account.type === "credit" && (
+          <Card className="hidden rounded-3xl md:block">
+            <CardContent className="py-4">
+              <div className="text-sm font-semibold">Importar resumen</div>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Subí el PDF del resumen: carga los consumos con su categoría y no duplica lo que ya
+                tenías.
+              </p>
+              <Button
+                variant="outline"
+                className="mt-3 w-full"
+                nativeButton={false}
+                render={<Link href={`/resumenes?account=${account.id}`} />}
+              >
+                Importar resumen <ArrowRight className="ml-1 size-4" />
+              </Button>
+            </CardContent>
+          </Card>
+        )}
+
         <Card className="rounded-3xl">
           <CardContent className="py-4">
             <div className="text-sm font-semibold">Movimientos del mes</div>
@@ -235,6 +316,34 @@ export default function AccountDetailPage({ params }: { params: Promise<{ id: st
           </CardContent>
         </Card>
       </div>
+    </div>
+  );
+}
+
+const moneyText = (m: Money) =>
+  [m.ARS ? formatMoney(m.ARS, "ARS") : null, m.USD ? formatMoney(m.USD, "USD") : null]
+    .filter(Boolean)
+    .join(" + ") || formatMoney(0, "ARS");
+
+function HeroStat({
+  label,
+  money,
+  note,
+  emphasis,
+}: {
+  label: string;
+  money: Money;
+  note?: string;
+  emphasis?: boolean;
+}) {
+  return (
+    <div className={`rounded-2xl px-4 py-3 backdrop-blur ${emphasis ? "bg-white/25 ring-1 ring-white/40" : "bg-white/15"}`}>
+      <div className="text-[11px] uppercase tracking-wider opacity-80">{label}</div>
+      <div className={`font-bold tabular-nums ${emphasis ? "text-2xl" : "text-xl"}`}>
+        {formatMoney(money.ARS, "ARS")}
+      </div>
+      {money.USD !== 0 && <div className="text-sm font-semibold tabular-nums">{formatMoney(money.USD, "USD")}</div>}
+      {note && <div className="mt-1 text-xs opacity-80">{note}</div>}
     </div>
   );
 }

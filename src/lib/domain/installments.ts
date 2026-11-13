@@ -10,6 +10,7 @@ import {
 } from "firebase/firestore";
 import { db } from "@/lib/firebase/client";
 import type { Account, Currency, Installment, Transaction, TransferType } from "./types";
+import { paymentMonthOf } from "./types";
 import { monthKey } from "./types";
 import { addMonths, computeFirstBillingMonth, getOrBuildCycle } from "./cycles";
 
@@ -92,6 +93,7 @@ export const createTransactionWithInstallments = async (
       amount: input.totalAmount,
       billingMonth,
       billingDate: Timestamp.fromDate(input.purchaseDate),
+      paymentMonth: paymentMonthOf(input.purchaseDate),
       installmentNumber: 1,
       totalInstallments: 1,
       kind: "transfer" as const,
@@ -121,6 +123,9 @@ export const createTransactionWithInstallments = async (
 
   // === Gastos / Ingresos (con cuotas para crédito) ===
   const isCredit = account.type === "credit" && input.kind === "expense";
+  // En una tarjeta, gastos Y reintegros van al resumen (mes del cierre y fecha
+  // de vencimiento). Las cuotas son solo para gastos.
+  const followsCardCycle = account.type === "credit";
   const installmentsCount = isCredit ? Math.max(1, input.installments) : 1;
   const amountPerInstallment =
     Math.round((input.totalAmount / installmentsCount) * 100) / 100;
@@ -132,7 +137,7 @@ export const createTransactionWithInstallments = async (
 
   let firstYear: number;
   let firstMonth: number;
-  if (isCredit) {
+  if (followsCardCycle) {
     const first = computeFirstBillingMonth(
       account,
       input.purchaseDate,
@@ -166,7 +171,7 @@ export const createTransactionWithInstallments = async (
   for (let i = 0; i < installmentsCount; i += 1) {
     const { year, month } = addMonths(firstYear, firstMonth, i);
     let billingDate: Date;
-    if (isCredit) {
+    if (followsCardCycle) {
       const cycle = await getOrBuildCycle(uid, account, year, month);
       billingDate = cycle.dueDate.toDate();
     } else {
@@ -179,12 +184,15 @@ export const createTransactionWithInstallments = async (
       amount: amountPerInstallment,
       billingMonth: monthKey(year, month),
       billingDate: Timestamp.fromDate(billingDate),
+      paymentMonth: paymentMonthOf(billingDate),
       installmentNumber: i + 1,
       totalInstallments: installmentsCount,
       kind: input.kind,
       description: input.description,
       currency: input.currency ?? "ARS",
       ...(input.recurringId ? { recurringId: input.recurringId } : {}),
+      // Plata que "entra" a una tarjeta = saldo a favor, no ingreso.
+      ...(followsCardCycle && input.kind === "income" ? { cardCredit: true } : {}),
     };
     batch.set(installmentRefs[i], installment);
   }
@@ -261,7 +269,10 @@ export const regenerateFutureInstallmentsForAccount = async (
       const ins = insDoc.data() as Omit<Installment, "id">;
       const [y, m] = ins.billingMonth.split("-").map(Number);
       const cycle = await getOrBuildCycle(uid, account, y, m);
-      batch.update(insDoc.ref, { billingDate: cycle.dueDate });
+      batch.update(insDoc.ref, {
+        billingDate: cycle.dueDate,
+        paymentMonth: paymentMonthOf(cycle.dueDate.toDate()),
+      });
     }
     await batch.commit();
   }

@@ -7,6 +7,7 @@ import { createTransactionAdmin } from "./transactions-admin";
 import { loadAccounts, toServerAccount } from "./queries-admin";
 import { dateFromYMD } from "./time";
 import type { StatementDraft } from "./whatsapp/types";
+import { paymentMonthOf } from "@/lib/domain/types";
 
 /**
  * Guardado y lectura de resúmenes de tarjeta.
@@ -31,7 +32,7 @@ const normalize = (s: string) =>
   s
     .toLowerCase()
     .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
+    .replace(/[\u0300-\u036f]/g, "")
     .replace(/[^a-z0-9]+/g, " ")
     .trim();
 
@@ -86,7 +87,7 @@ const saveCycleAndUpdateInstallments = async (
   for (let i = 0; i < snap.docs.length; i += 400) {
     const batch = db.batch();
     for (const d of snap.docs.slice(i, i + 400)) {
-      batch.update(d.ref, { billingDate: dueDate });
+      batch.update(d.ref, { billingDate: dueDate, paymentMonth: paymentMonthOf(dueDate.toDate()) });
       updated += 1;
     }
     await batch.commit();

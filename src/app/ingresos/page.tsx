@@ -16,13 +16,14 @@ import { useInstallmentsForMonth } from "@/hooks/use-data";
 import { TransactionForm } from "@/components/transactions/transaction-form";
 import { TransactionList } from "@/components/transactions/transaction-list";
 import { formatCurrency, formatMoney, formatMonth } from "@/lib/format";
-import { currencyOf } from "@/lib/domain/types";
+import { currencyOf, isRealIncome } from "@/lib/domain/types";
 
 export default function IngresosPage() {
   const [open, setOpen] = useState(false);
   const { monthKey, year, month } = useMonth();
   const { data: installments, loading } = useInstallmentsForMonth(monthKey);
-  const incomes = installments.filter((i) => i.kind === "income");
+  // Los reintegros de tarjeta no son ingresos (son saldo a favor de la tarjeta).
+  const incomes = installments.filter(isRealIncome);
   const total = incomes.filter((i) => currencyOf(i) === "ARS").reduce((s, i) => s + i.amount, 0);
   const totalUSD = incomes.filter((i) => currencyOf(i) === "USD").reduce((s, i) => s + i.amount, 0);
 

@@ -44,6 +44,7 @@ export interface ServerAccountInfo {
   currencies: Currency[];
   isMain: boolean;
   openingBalances: Partial<Record<Currency, number>> | null;
+  createdAt: Date | null;
 }
 
 export interface ServerCategoryInfo {
@@ -71,6 +72,7 @@ export const loadAccounts = async (uid: string): Promise<ServerAccountInfo[]> =>
       }),
       isMain: data.isMain === true,
       openingBalances: (data.openingBalances as Partial<Record<Currency, number>> | undefined) ?? null,
+      createdAt: (data.createdAt as Timestamp | undefined)?.toDate() ?? null,
     };
   });
 };
@@ -130,7 +132,7 @@ const loadInstallmentsForMonth = async (
 ): Promise<Installment[]> => {
   const snap = await adminDb()
     .collection(`users/${uid}/installments`)
-    .where("billingMonth", "==", monthKey)
+    .where("paymentMonth", "==", monthKey)
     .get();
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }) as unknown as Installment);
 };
@@ -276,17 +278,25 @@ export const getCardStatement = async (
   monthKey: string,
 ): Promise<CardStatement> => {
   const installments = (await loadInstallmentsForMonth(uid, monthKey)).filter(
-    (i) => i.accountId === account.id && i.kind === "expense",
+    (i) => i.accountId === account.id && (i.kind === "expense" || (i.kind === "income" && i.cardCredit)),
   );
-  const [year, month] = monthKey.split("-").map(Number);
-  const cycle = await getOrBuildCycle(uid, toServerAccount(account), year, month);
+  // monthKey es el mes de PAGO: el vencimiento sale de las cuotas o, si no
+  // hay, del resumen que cerró el mes anterior.
+  let dueDate = installments
+    .map((i) => (i.billingDate as unknown as Timestamp | undefined)?.toDate())
+    .find((d): d is Date => !!d);
+  if (!dueDate) {
+    const [y, m] = monthKey.split("-").map(Number);
+    const prev = m === 1 ? { y: y - 1, m: 12 } : { y, m: m - 1 };
+    dueDate = (await getOrBuildCycle(uid, toServerAccount(account), prev.y, prev.m)).dueDate.toDate();
+  }
   const totals: Record<Currency, number> = { ARS: 0, USD: 0 };
-  for (const i of installments) totals[currencyOf(i)] += i.amount;
+  for (const i of installments) totals[currencyOf(i)] += i.kind === "income" ? -i.amount : i.amount;
   return {
     accountName: account.name,
     month: monthKey,
     totals: { ARS: r2(totals.ARS), USD: r2(totals.USD) },
-    dueDate: cycle.dueDate.toDate(),
+    dueDate,
     items: installments
       .sort((a, b) => b.amount - a.amount)
       .slice(0, 30)

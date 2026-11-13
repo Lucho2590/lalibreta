@@ -9,13 +9,17 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useMonth } from "@/hooks/use-month";
 import {
   useAccounts,
+  useCategories,
   useInstallmentsForMonth,
   useSharedAsOwner,
 } from "@/hooks/use-data";
 import { useAuth } from "@/hooks/use-auth";
 import { TransactionList } from "@/components/transactions/transaction-list";
 import { useNewTransactionSheet } from "@/components/transactions/new-transaction-sheet";
-import { formatCurrency, formatMoney, formatMonth } from "@/lib/format";
+import { formatCurrency, formatDate, formatMoney, formatMonth } from "@/lib/format";
+import { isCardCredit, isRealIncome } from "@/lib/domain/types";
+import { TAX_CATEGORY, summarizeCardMonth } from "@/lib/domain/card-summary";
+
 import { computeMonthlyBalance } from "@/lib/domain/balance";
 import { buildSharedByTxId } from "@/lib/domain/shared-effective";
 
@@ -27,6 +31,7 @@ export default function MovimientosPage() {
   const { user } = useAuth();
   const { data: installments, loading } = useInstallmentsForMonth(monthKey);
   const { data: accounts } = useAccounts();
+  const { data: categories } = useCategories();
   const { data: shared } = useSharedAsOwner();
   const { open } = useNewTransactionSheet();
 
@@ -36,19 +41,28 @@ export default function MovimientosPage() {
     [sharedByTxId, user],
   );
 
+  const filterAccount = accounts.find((a) => a.id === accountFilter);
+  // Vista de tarjeta de crédito: gastos (con impuestos), reintegros y total a pagar.
+  const isCardView = filterAccount?.type === "credit";
+
   const filtered = useMemo(() => {
     return installments.filter((i) => {
       if (accountFilter && i.accountId !== accountFilter) return false;
       if (kindFilter === "expense" && i.kind !== "expense") return false;
-      if (kindFilter === "income" && i.kind !== "income") return false;
+      if (kindFilter === "income" && !isRealIncome(i) && !(isCardView && isCardCredit(i))) return false;
       if (kindFilter === "transfer" && i.kind !== "transfer") return false;
       return true;
     });
-  }, [installments, accountFilter, kindFilter]);
+  }, [installments, accountFilter, kindFilter, isCardView]);
 
+  // Los totales de arriba respetan el filtro de cuenta (no el de tipo).
+  const statBase = useMemo(
+    () => (accountFilter ? installments.filter((i) => i.accountId === accountFilter) : installments),
+    [installments, accountFilter],
+  );
   const balance = useMemo(
-    () => computeMonthlyBalance(installments, monthKey, adj, "ARS"),
-    [installments, monthKey, adj],
+    () => computeMonthlyBalance(statBase, monthKey, adj, "ARS"),
+    [statBase, monthKey, adj],
   );
 
   const updateFilter = (key: string, value: string | null) => {
@@ -59,10 +73,24 @@ export default function MovimientosPage() {
     window.history.replaceState(null, "", search ? `?${search}` : window.location.pathname);
   };
 
-  const balanceUSD = computeMonthlyBalance(installments, monthKey, adj, "USD");
+  const balanceUSD = computeMonthlyBalance(statBase, monthKey, adj, "USD");
   const hasUSD = balanceUSD.income !== 0 || balanceUSD.expense !== 0;
 
-  const accountName = accounts.find((a) => a.id === accountFilter)?.name;
+  const accountName = filterAccount?.name;
+  const taxCategoryIds = useMemo(
+    () => new Set(categories.filter((c) => TAX_CATEGORY.test(c.name)).map((c) => c.id)),
+    [categories],
+  );
+  // Mismo cálculo que el detalle de la tarjeta: Total a pagar = gastos − reintegros.
+  const cardSum = useMemo(
+    () => (isCardView && accountFilter ? summarizeCardMonth(statBase, [accountFilter], monthKey, taxCategoryIds) : null),
+    [isCardView, accountFilter, statBase, monthKey, taxCategoryIds],
+  );
+  const cardHasUSD = !!cardSum && (cardSum.expenses.USD !== 0 || cardSum.credits.USD !== 0);
+  const moneyText = (m: { ARS: number; USD: number }) =>
+    [m.ARS ? formatMoney(m.ARS, "ARS") : null, m.USD ? formatMoney(m.USD, "USD") : null]
+      .filter(Boolean)
+      .join(" + ");
 
   return (
     <div className="space-y-6">
@@ -79,28 +107,76 @@ export default function MovimientosPage() {
         </Button>
       </div>
 
-      <div className="grid gap-3 md:grid-cols-3">
-        <Stat
-          label="Ingresos"
-          value={balance.income}
-          usd={hasUSD ? balanceUSD.income : undefined}
-          tone="success"
-          icon={<ArrowUpRight className="size-4" />}
-        />
-        <Stat
-          label="Gastos"
-          value={balance.expense}
-          usd={hasUSD ? balanceUSD.expense : undefined}
-          icon={<ArrowDownRight className="size-4" />}
-        />
-        <Stat
-          label="Balance"
-          value={balance.balance}
-          usd={hasUSD ? balanceUSD.balance : undefined}
-          tone={balance.balance >= 0 ? "success" : "destructive"}
-          icon={<Wallet className="size-4" />}
-        />
-      </div>
+      {cardSum ? (
+        <div className="grid gap-3 md:grid-cols-3">
+          <Stat
+            label="Gastos"
+            value={cardSum.expenses.ARS}
+            usd={cardHasUSD ? cardSum.expenses.USD : undefined}
+            note={
+              cardSum.taxes.ARS || cardSum.taxes.USD
+                ? `de impuestos y comisiones: ${moneyText(cardSum.taxes)}`
+                : undefined
+            }
+            icon={<ArrowDownRight className="size-4" />}
+          />
+          <Stat
+            label="Reintegros"
+            value={cardSum.credits.ARS}
+            usd={cardHasUSD ? cardSum.credits.USD : undefined}
+            tone={cardSum.credits.ARS > 0 || cardSum.credits.USD > 0 ? "success" : undefined}
+            note={
+              cardSum.credits.ARS === 0 && cardSum.credits.USD === 0
+                ? "sin reintegros este mes"
+                : "saldo a favor: se descuenta del total"
+            }
+            icon={<ArrowUpRight className="size-4" />}
+          />
+          <Stat
+            label="Total a pagar"
+            value={cardSum.total.ARS}
+            usd={cardHasUSD ? cardSum.total.USD : undefined}
+            note={[
+              cardSum.dueDate ? `vence el ${formatDate(cardSum.dueDate)}` : null,
+              cardSum.projected.ARS || cardSum.projected.USD
+                ? `incluye ${moneyText(cardSum.projected)} estimado de suscripciones`
+                : null,
+              cardSum.paid.ARS || cardSum.paid.USD
+                ? cardSum.pending.ARS || cardSum.pending.USD
+                  ? `pagaste ${moneyText(cardSum.paid)}`
+                  : "✓ pagado"
+                : null,
+            ]
+              .filter(Boolean)
+              .join(" · ") || undefined}
+            emphasis
+            icon={<Wallet className="size-4" />}
+          />
+        </div>
+      ) : (
+        <div className="grid gap-3 md:grid-cols-3">
+          <Stat
+            label="Ingresos"
+            value={balance.income}
+            usd={hasUSD ? balanceUSD.income : undefined}
+            tone="success"
+            icon={<ArrowUpRight className="size-4" />}
+          />
+          <Stat
+            label="Gastos"
+            value={balance.expense}
+            usd={hasUSD ? balanceUSD.expense : undefined}
+            icon={<ArrowDownRight className="size-4" />}
+          />
+          <Stat
+            label="Balance"
+            value={balance.balance}
+            usd={hasUSD ? balanceUSD.balance : undefined}
+            tone={balance.balance >= 0 ? "success" : "destructive"}
+            icon={<Wallet className="size-4" />}
+          />
+        </div>
+      )}
 
       <div className="flex flex-wrap items-center gap-2">
         <Tabs
@@ -152,17 +228,23 @@ function Stat({
   usd,
   tone,
   icon,
+  note,
+  emphasis,
 }: {
   label: string;
   value: number;
   usd?: number;
   tone?: "success" | "destructive";
   icon?: React.ReactNode;
+  /** Línea chica debajo (ej. impuestos, vencimiento). */
+  note?: string;
+  /** Resalta la tarjeta (ej. Total a pagar). */
+  emphasis?: boolean;
 }) {
   const toneClass =
     tone === "success" ? "text-success" : tone === "destructive" ? "text-destructive" : "";
   return (
-    <Card className="rounded-2xl">
+    <Card className={`rounded-2xl ${emphasis ? "ring-2 ring-brand/30" : ""}`}>
       <CardContent className="py-4">
         <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-muted-foreground">
           {icon}
@@ -173,6 +255,9 @@ function Stat({
         </div>
         {usd !== undefined && (
           <div className={`text-sm font-medium tabular-nums ${toneClass}`}>{formatMoney(usd, "USD")}</div>
+        )}
+        {note && (
+          <div className="mt-1.5 text-xs text-muted-foreground">{note}</div>
         )}
       </CardContent>
     </Card>
