@@ -5,6 +5,13 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: path.resolve(__dirname),
   },
+  // El login de Google se sirve desde nuestro dominio (ver src/lib/firebase/client.ts).
+  async rewrites() {
+    const firebaseHost = `https://${process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN ?? "cashflow-fd2c8.firebaseapp.com"}`;
+    return [
+      { source: "/__/auth/:path*", destination: `${firebaseHost}/__/auth/:path*` },
+    ];
+  },
   async headers() {
     return [
       {
