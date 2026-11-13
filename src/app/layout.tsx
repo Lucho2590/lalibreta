@@ -19,7 +19,7 @@ const mono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Control de gastos",
+  title: "La Libreta",
   description: "Gestión de gastos personales con tarjetas en cuotas",
 };
 

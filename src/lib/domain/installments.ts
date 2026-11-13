@@ -9,7 +9,7 @@ import {
   writeBatch,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase/client";
-import type { Account, Installment, Transaction } from "./types";
+import type { Account, Currency, Installment, Transaction, TransferType } from "./types";
 import { monthKey } from "./types";
 import { addMonths, computeFirstBillingMonth, getOrBuildCycle } from "./cycles";
 
@@ -30,6 +30,13 @@ export interface CreateTransactionInput {
   cardClosedAtPurchase?: boolean;
   recurringId?: string;
   toAccountId?: string; // requerido si kind === "transfer"
+  /** Moneda de totalAmount. Default ARS. */
+  currency?: Currency;
+  /** Transferencias: tipo y, para cambios de moneda, destino y cotización. */
+  transferType?: TransferType;
+  toCurrency?: Currency;
+  toAmount?: number;
+  rate?: number;
 }
 
 export const createTransactionWithInstallments = async (
@@ -42,9 +49,15 @@ export const createTransactionWithInstallments = async (
     if (!input.toAccountId) {
       throw new Error("Falta toAccountId para una transferencia");
     }
-    if (input.toAccountId === input.accountId) {
+    const currency = input.currency ?? "ARS";
+    const toCurrency = input.toCurrency ?? currency;
+    const toAmount = input.toAmount ?? input.totalAmount;
+    // En la misma cuenta solo tiene sentido un cambio de moneda (USD → ARS).
+    if (input.toAccountId === input.accountId && toCurrency === currency) {
       throw new Error("No se puede transferir a la misma cuenta");
     }
+    const transferType: TransferType =
+      input.transferType ?? (toCurrency !== currency ? "exchange" : "transfer");
     const txRef = doc(collection(db, transactionsCollectionPath(uid)));
     const sourceRef = doc(collection(db, installmentsCollectionPath(uid)));
     const destRef = doc(collection(db, installmentsCollectionPath(uid)));
@@ -64,6 +77,11 @@ export const createTransactionWithInstallments = async (
       kind: "transfer",
       installments: 1,
       firstBillingMonth: billingMonth,
+      currency,
+      transferType,
+      ...(toCurrency !== currency
+        ? { toCurrency, toAmount, ...(input.rate ? { rate: input.rate } : {}) }
+        : {}),
       createdAt: Timestamp.now(),
     };
     batch.set(txRef, transaction);
@@ -78,16 +96,21 @@ export const createTransactionWithInstallments = async (
       totalInstallments: 1,
       kind: "transfer" as const,
       description: input.description,
+      transferType,
     };
+    // Cada pata lleva su moneda y su monto (en un cambio difieren).
     batch.set(sourceRef, {
       ...baseInstallment,
       accountId: input.accountId,
+      currency,
       transferRole: "source",
       transferCounterpartId: input.toAccountId,
     });
     batch.set(destRef, {
       ...baseInstallment,
+      amount: toAmount,
       accountId: input.toAccountId,
+      currency: toCurrency,
       transferRole: "destination",
       transferCounterpartId: input.accountId,
     });
@@ -134,6 +157,7 @@ export const createTransactionWithInstallments = async (
     installments: installmentsCount,
     cardClosedAtPurchase: isCredit ? input.cardClosedAtPurchase ?? false : false,
     firstBillingMonth: monthKey(firstYear, firstMonth),
+    currency: input.currency ?? "ARS",
     ...(input.recurringId ? { recurringId: input.recurringId } : {}),
     createdAt: Timestamp.now(),
   };
@@ -159,6 +183,7 @@ export const createTransactionWithInstallments = async (
       totalInstallments: installmentsCount,
       kind: input.kind,
       description: input.description,
+      currency: input.currency ?? "ARS",
       ...(input.recurringId ? { recurringId: input.recurringId } : {}),
     };
     batch.set(installmentRefs[i], installment);
@@ -208,6 +233,17 @@ export const regenerateFutureInstallmentsForAccount = async (
         kind: tx.kind,
         installments: tx.installments,
         cardClosedAtPurchase: tx.cardClosedAtPurchase ?? false,
+        currency: tx.currency,
+        ...(tx.recurringId ? { recurringId: tx.recurringId } : {}),
+        ...(tx.kind === "transfer"
+          ? {
+              toAccountId: tx.toAccountId,
+              transferType: tx.transferType,
+              toCurrency: tx.toCurrency,
+              toAmount: tx.toAmount,
+              rate: tx.rate,
+            }
+          : {}),
       });
       continue;
     }

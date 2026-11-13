@@ -46,7 +46,7 @@ export default function LoginPage() {
           <div className="flex size-10 items-center justify-center rounded-2xl bg-white/15 backdrop-blur">
             <Wallet className="size-5" />
           </div>
-          <span className="text-base font-semibold tracking-tight">Saldo</span>
+          <span className="text-base font-semibold tracking-tight">La Libreta</span>
         </div>
         <div className="space-y-3">
           <div className="inline-flex items-center gap-1.5 rounded-full bg-white/15 px-3 py-1 text-[11px] font-medium uppercase tracking-wider backdrop-blur">
@@ -61,7 +61,7 @@ export default function LoginPage() {
             de un vistazo.
           </p>
         </div>
-        <div className="text-xs text-white/60">© Saldo</div>
+        <div className="text-xs text-white/60">© La Libreta</div>
       </div>
 
       <div className="flex items-center justify-center px-4 py-10">
@@ -71,7 +71,7 @@ export default function LoginPage() {
               <div className="flex size-9 items-center justify-center rounded-xl bg-brand-grad text-white">
                 <Wallet className="size-4" />
               </div>
-              <span className="text-base font-bold">Saldo</span>
+              <span className="text-base font-bold">La Libreta</span>
             </div>
           </div>
           <div className="space-y-1">

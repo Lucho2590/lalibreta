@@ -8,6 +8,10 @@ import {
 } from "@/lib/server/auth";
 import { sendEmail } from "@/lib/server/resend";
 import { renderPendingApprovalSubmittedEmail } from "@/lib/server/mail-templates";
+import { createTransactionAdmin } from "@/lib/server/transactions-admin";
+import { loadAccounts, loadCategories, toServerAccount } from "@/lib/server/queries-admin";
+import { notifyUser } from "@/lib/server/sharing";
+import { formatMoney } from "@/lib/format";
 
 export const runtime = "nodejs";
 
@@ -58,6 +62,7 @@ export async function POST(req: Request) {
     accountId: string;
     accountName: string;
     status: string;
+    mode?: "direct" | "approval";
   };
   if (share.granteeUid !== user.uid) {
     return NextResponse.json({ error: "No autorizado" }, { status: 403 });
@@ -70,6 +75,41 @@ export async function POST(req: Request) {
   }
 
   const purchaseDate = new Date(`${body.purchaseDate}T12:00:00`);
+
+  // Compartidas por WhatsApp (mode "direct"): el gasto entra directo a la
+  // cuenta del dueño, en su categoría "Otros", y se le avisa.
+  if (share.mode === "direct") {
+    const [ownerAccounts, ownerCats] = await Promise.all([
+      loadAccounts(share.ownerUid),
+      loadCategories(share.ownerUid),
+    ]);
+    const account = ownerAccounts.find((a) => a.id === share.accountId);
+    const category =
+      ownerCats.find((c) => c.kind === "expense" && /^otro/i.test(c.name)) ??
+      ownerCats.find((c) => c.kind === "expense");
+    if (!account || !category) {
+      return NextResponse.json({ error: "La cuenta compartida ya no existe" }, { status: 404 });
+    }
+    const name = user.name ?? user.email.split("@")[0];
+    const txId = await createTransactionAdmin({
+      ownerUid: share.ownerUid,
+      account: toServerAccount(account),
+      accountId: account.id,
+      categoryId: category.id,
+      description: body.description ?? "",
+      totalAmount,
+      purchaseDate,
+      kind: "expense",
+      installments,
+      cardClosedAtPurchase: !!body.cardClosedAtPurchase,
+      createdBy: { uid: user.uid, name },
+    });
+    void notifyUser(
+      share.ownerUid,
+      `🧾 *${name}* cargó *${body.description || "un gasto"}* por *${formatMoney(totalAmount)}* con tu *${share.accountName}*.`,
+    );
+    return NextResponse.json({ ok: true, transactionId: txId, direct: true });
+  }
 
   const approvalRef = adminDb().collection("pendingApprovals").doc();
   await approvalRef.set({

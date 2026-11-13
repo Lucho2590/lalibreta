@@ -21,8 +21,10 @@ import { useAccounts, useCategories } from "@/hooks/use-data";
 import { useAuth } from "@/hooks/use-auth";
 import { createTransactionWithInstallments } from "@/lib/domain/installments";
 import { computeFirstBillingMonth } from "@/lib/domain/cycles";
-import { formatMonth } from "@/lib/format";
-import type { TransactionKind } from "@/lib/domain/types";
+import { formatMoney, formatMonth } from "@/lib/format";
+import type { Currency, TransactionKind } from "@/lib/domain/types";
+import { accountCurrencies } from "@/lib/domain/types";
+import { useUsdRate } from "@/hooks/use-usd-rate";
 import { ShareSection, type ShareSplit } from "./share-section";
 import { buildParticipantsList, createSharedExpense } from "@/lib/domain/shared";
 import { upsertContact } from "@/lib/domain/contacts";
@@ -57,6 +59,10 @@ export function TransactionForm({
   const [submitting, setSubmitting] = useState(false);
   const [shareEnabled, setShareEnabled] = useState(false);
   const [shareSplits, setShareSplits] = useState<ShareSplit[]>([]);
+  const [currency, setCurrency] = useState<Currency>("ARS");
+  const [toCurrency, setToCurrency] = useState<Currency>("ARS");
+  const [rateInput, setRateInput] = useState("");
+  const usdRate = useUsdRate();
 
   const today = useMemo(() => new Date().toISOString().slice(0, 10), []);
   const resolver = zodResolver(schema as never) as unknown as Resolver<FormValues>;
@@ -83,10 +89,28 @@ export function TransactionForm({
   const cardClosed = form.watch("cardClosedAtPurchase");
 
   const account = accounts.find((a) => a.id === accountId);
+  const toAccount = accounts.find((a) => a.id === toAccountId);
   const isCredit = account?.type === "credit" && kind === "expense";
   const isTransfer = kind === "transfer";
 
+  // Monedas posibles según la cuenta elegida (las tarjetas aceptan $ y US$).
+  const fromCurrencies: Currency[] = account ? accountCurrencies(account) : ["ARS", "USD"];
+  const toCurrencies: Currency[] = toAccount ? accountCurrencies(toAccount) : ["ARS", "USD"];
+  const effCurrency: Currency = fromCurrencies.includes(currency) ? currency : fromCurrencies[0];
+  const effToCurrency: Currency = toCurrencies.includes(toCurrency) ? toCurrency : toCurrencies[0];
+  const isExchange = isTransfer && !!toAccount && effToCurrency !== effCurrency;
+  const rate = Number(rateInput.replace(",", ".")) || usdRate?.rate || 0;
+  const amountValue = Number(form.watch("amount")) || 0;
+  const exchangedAmount =
+    isExchange && rate > 0
+      ? Math.round((effCurrency === "USD" ? amountValue * rate : amountValue / rate) * 100) / 100
+      : null;
+
   const selectableAccounts = accounts.filter((a) => a.active !== false);
+  // Destinos: las otras cuentas, y la misma si maneja dos monedas (cambio).
+  const transferTargets = selectableAccounts.filter(
+    (a) => a.id !== accountId || (a.type !== "credit" && accountCurrencies(a).length > 1),
+  );
   const filteredCategories = categories.filter(
     (c) => c.kind === (kind === "transfer" ? "expense" : kind),
   );
@@ -120,8 +144,12 @@ export function TransactionForm({
           toast.error("Elegí la cuenta destino");
           return;
         }
-        if (values.toAccountId === values.accountId) {
-          toast.error("La cuenta origen y destino no pueden ser la misma");
+        if (values.toAccountId === values.accountId && effToCurrency === effCurrency) {
+          toast.error("En la misma cuenta solo se puede cambiar de moneda");
+          return;
+        }
+        if (isExchange && !(rate > 0)) {
+          toast.error("Falta la cotización");
           return;
         }
         const sourceAccount = accounts.find((a) => a.id === values.accountId);
@@ -139,8 +167,20 @@ export function TransactionForm({
           kind: "transfer",
           installments: 1,
           cardClosedAtPurchase: false,
+          currency: effCurrency,
+          ...(isExchange && exchangedAmount != null
+            ? { toCurrency: effToCurrency, toAmount: exchangedAmount, rate }
+            : {}),
+          transferType:
+            toAccount?.type === "credit" ? "card-payment" : isExchange ? "exchange" : "transfer",
         });
-        toast.success("Transferencia registrada");
+        toast.success(
+          toAccount?.type === "credit"
+            ? "Pago de tarjeta registrado"
+            : isExchange
+              ? "Cambio registrado"
+              : "Transferencia registrada",
+        );
       } else {
         if (!account) {
           toast.error("Elegí una cuenta");
@@ -159,6 +199,7 @@ export function TransactionForm({
           kind: values.kind,
           installments: values.installments,
           cardClosedAtPurchase: values.cardClosedAtPurchase,
+          currency: effCurrency,
         });
         toast.success(values.kind === "income" ? "Ingreso guardado" : "Gasto guardado");
 
@@ -166,6 +207,7 @@ export function TransactionForm({
         const sumOthers = shareSplits.reduce((s, x) => s + x.percentage, 0);
         if (
           shareEnabled &&
+          effCurrency === "ARS" &&
           values.kind === "expense" &&
           shareSplits.length > 0 &&
           sumOthers > 0 &&
@@ -305,6 +347,9 @@ export function TransactionForm({
         {form.formState.errors.amount && (
           <p className="text-xs text-destructive">{form.formState.errors.amount.message}</p>
         )}
+        {fromCurrencies.length > 1 && (
+          <CurrencyToggle value={effCurrency} options={fromCurrencies} onChange={setCurrency} />
+        )}
       </div>
 
       {isTransfer ? (
@@ -348,22 +393,55 @@ export function TransactionForm({
               <SelectTrigger className="h-12 w-full">
                 <SelectValue
                   placeholder="Cuenta destino"
-                  items={selectableAccounts
-                    .filter((a) => a.id !== accountId)
-                    .map((a) => ({ value: a.id, label: a.name }))}
+                  items={transferTargets.map((a) => ({
+                    value: a.id,
+                    label: a.id === accountId ? `${a.name} (cambio de moneda)` : a.name,
+                  }))}
                 />
               </SelectTrigger>
               <SelectContent>
-                {selectableAccounts
-                  .filter((a) => a.id !== accountId)
-                  .map((acc) => (
-                    <SelectItem key={acc.id} value={acc.id}>
-                      {acc.name}
-                    </SelectItem>
-                  ))}
+                {transferTargets.map((acc) => (
+                  <SelectItem key={acc.id} value={acc.id}>
+                    {acc.id === accountId ? `${acc.name} (cambio de moneda)` : acc.name}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
+            {toAccount && toCurrencies.length > 1 && (
+              <CurrencyToggle value={effToCurrency} options={toCurrencies} onChange={setToCurrency} />
+            )}
           </div>
+
+          {isExchange && (
+            <div className="space-y-2 rounded-lg bg-background p-3">
+              <div className="space-y-1">
+                <Label htmlFor="rate">Cotización ($ por US$)</Label>
+                <Input
+                  id="rate"
+                  inputMode="decimal"
+                  className="h-11"
+                  placeholder={usdRate ? String(usdRate.rate) : "Ej: 1480"}
+                  value={rateInput}
+                  onChange={(e) => setRateInput(e.target.value)}
+                />
+                {usdRate && !rateInput && (
+                  <p className="text-xs text-muted-foreground">
+                    Oficial BCRA del {usdRate.date.split("-").reverse().join("/")}. Si cambiaste a otro
+                    valor, escribilo.
+                  </p>
+                )}
+              </div>
+              {exchangedAmount != null && amountValue > 0 && (
+                <p className="text-sm">
+                  {formatMoney(amountValue, effCurrency)} →{" "}
+                  <span className="font-semibold">{formatMoney(exchangedAmount, effToCurrency)}</span>
+                </p>
+              )}
+            </div>
+          )}
+          {toAccount?.type === "credit" && (
+            <p className="text-xs text-muted-foreground">Se registra como pago de la tarjeta.</p>
+          )}
         </div>
       ) : (
         <>
@@ -501,7 +579,7 @@ export function TransactionForm({
         </div>
       )}
 
-      {kind === "expense" && (
+      {kind === "expense" && effCurrency === "ARS" && (
         <ShareSection
           totalAmount={form.watch("amount") || 0}
           enabled={shareEnabled}
@@ -519,5 +597,32 @@ export function TransactionForm({
         {submitting ? "Guardando…" : "Guardar"}
       </Button>
     </form>
+  );
+}
+
+function CurrencyToggle({
+  value,
+  options,
+  onChange,
+}: {
+  value: Currency;
+  options: Currency[];
+  onChange: (c: Currency) => void;
+}) {
+  return (
+    <div className="mt-1.5 inline-flex rounded-lg bg-muted p-0.5">
+      {options.map((c) => (
+        <button
+          key={c}
+          type="button"
+          onClick={() => onChange(c)}
+          className={`h-8 rounded-md px-3 text-xs font-medium transition ${
+            value === c ? "bg-background shadow-sm" : "text-muted-foreground"
+          }`}
+        >
+          {c === "ARS" ? "$ Pesos" : "US$ Dólares"}
+        </button>
+      ))}
+    </div>
   );
 }

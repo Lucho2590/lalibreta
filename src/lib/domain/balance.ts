@@ -1,4 +1,5 @@
-import type { Installment, SharedExpense } from "./types";
+import type { Currency, Installment, SharedExpense } from "./types";
+import { currencyOf } from "./types";
 import { getEffectiveInstallmentInfo } from "./shared-effective";
 
 export interface MonthlyBalance {
@@ -12,6 +13,16 @@ export interface SharedAdjustment {
   ownerUid: string;
 }
 
+/**
+ * Pasa un monto a pesos. Si no hay cotización, los dólares no se pueden
+ * convertir y se ignoran en los totales "en pesos".
+ */
+export type ToARS = (amount: number, currency: Currency) => number | null;
+
+export const makeToARS = (usdRate: number | null | undefined): ToARS =>
+  (amount, currency) =>
+    currency === "ARS" ? amount : usdRate ? amount * usdRate : null;
+
 const expenseAmount = (
   ins: Installment,
   adj: SharedAdjustment | undefined,
@@ -21,48 +32,57 @@ const expenseAmount = (
     .effectiveAmount;
 };
 
+/** Ingresos y gastos del mes en UNA moneda (las transferencias no cuentan). */
 export const computeMonthlyBalance = (
   installments: Installment[],
   monthKey: string,
   adj?: SharedAdjustment,
+  currency: Currency = "ARS",
 ): MonthlyBalance => {
   let income = 0;
   let expense = 0;
   for (const ins of installments) {
     if (ins.billingMonth !== monthKey) continue;
+    if (currencyOf(ins) !== currency) continue;
     if (ins.kind === "income") income += ins.amount;
     else if (ins.kind === "expense") expense += expenseAmount(ins, adj);
-    // transferencias no afectan el balance global
+    // transferencias (incluidos cambios de moneda y pagos de tarjeta) no afectan el balance
   }
   return { income, expense, balance: income - expense };
 };
 
-export const sumByCategory = (
+const sumBy = (
   installments: Installment[],
   monthKey: string,
+  key: (ins: Installment) => string,
   adj?: SharedAdjustment,
+  toARS?: ToARS,
 ): Map<string, number> => {
   const map = new Map<string, number>();
   for (const ins of installments) {
     if (ins.billingMonth !== monthKey) continue;
     if (ins.kind !== "expense") continue;
-    const a = expenseAmount(ins, adj);
-    map.set(ins.categoryId, (map.get(ins.categoryId) ?? 0) + a);
+    const raw = expenseAmount(ins, adj);
+    // Sin conversor: solo pesos. Con conversor: todo en pesos equivalentes.
+    const a = toARS ? toARS(raw, currencyOf(ins)) : currencyOf(ins) === "ARS" ? raw : null;
+    if (a == null) continue;
+    map.set(key(ins), (map.get(key(ins)) ?? 0) + a);
   }
   return map;
 };
 
+/** Gastos del mes por categoría, en pesos (los USD se convierten si hay toARS). */
+export const sumByCategory = (
+  installments: Installment[],
+  monthKey: string,
+  adj?: SharedAdjustment,
+  toARS?: ToARS,
+): Map<string, number> => sumBy(installments, monthKey, (i) => i.categoryId, adj, toARS);
+
+/** Gastos del mes por cuenta, en pesos (los USD se convierten si hay toARS). */
 export const sumByAccount = (
   installments: Installment[],
   monthKey: string,
   adj?: SharedAdjustment,
-): Map<string, number> => {
-  const map = new Map<string, number>();
-  for (const ins of installments) {
-    if (ins.billingMonth !== monthKey) continue;
-    if (ins.kind !== "expense") continue;
-    const a = expenseAmount(ins, adj);
-    map.set(ins.accountId, (map.get(ins.accountId) ?? 0) + a);
-  }
-  return map;
-};
+  toARS?: ToARS,
+): Map<string, number> => sumBy(installments, monthKey, (i) => i.accountId, adj, toARS);

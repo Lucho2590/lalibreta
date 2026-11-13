@@ -3,7 +3,7 @@ import "server-only";
 import { Resend } from "resend";
 
 const apiKey = process.env.RESEND_API_KEY;
-const from = process.env.EMAIL_FROM ?? "Saldo <onboarding@resend.dev>";
+const from = process.env.EMAIL_FROM ?? "La Libreta <onboarding@resend.dev>";
 const devLog = process.env.EMAIL_DEV_LOG === "true";
 
 let clientSingleton: Resend | null = null;

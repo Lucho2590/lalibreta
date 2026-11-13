@@ -9,6 +9,7 @@ import {
   Home,
   List,
   LogOut,
+  MessageCircle,
   Plus,
   Repeat,
   Tag,
@@ -26,12 +27,13 @@ const navItems = [
   { href: "/", label: "Inicio", icon: Home },
   { href: "/movimientos", label: "Movimientos", icon: List },
   { href: "/cuentas", label: "Cuentas", icon: CreditCard },
-  { href: "/fijos", label: "Gastos fijos", icon: Repeat },
+  { href: "/fijos", label: "Fijos", icon: Repeat },
   { href: "/ingresos", label: "Ingresos", icon: Wallet },
   { href: "/compartidas", label: "Compartidas", icon: Handshake },
   { href: "/aprobaciones", label: "Aprobaciones", icon: ClipboardCheck },
   { href: "/contactos", label: "Contactos", icon: Users },
   { href: "/categorias", label: "Categorías", icon: Tag },
+  { href: "/whatsapp", label: "WhatsApp", icon: MessageCircle },
 ] as const;
 
 export function Sidebar() {
@@ -47,7 +49,7 @@ export function Sidebar() {
           <Wallet className="size-5" strokeWidth={2.25} />
         </div>
         <div className="leading-tight">
-          <div className="text-sm font-bold tracking-tight">Saldo</div>
+          <div className="text-sm font-bold tracking-tight">La Libreta</div>
           <div className="text-[11px] text-muted-foreground">Control de gastos</div>
         </div>
       </div>

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { adminDb } from "@/lib/server/firebase-admin";
+import { ensureAgentName, seedDefaultCategories } from "@/lib/server/onboarding";
 import {
   UnauthorizedError,
   getAuthedUser,
@@ -39,8 +40,12 @@ export async function POST(req: Request) {
       createdAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),
     });
+    await setupNewUser(user.uid);
     return NextResponse.json({ created: true });
   }
+
+  // Usuarios existentes que todavía no pasaron por el onboarding.
+  await setupNewUser(user.uid);
 
   // Idempotente: actualizar solo si cambió algo (email o display).
   const data = snap.data() ?? {};
@@ -56,3 +61,12 @@ export async function POST(req: Request) {
   }
   return NextResponse.json({ created: false, updated: false });
 }
+
+/** Categorías iniciales + nombre del agente. Idempotente. */
+const setupNewUser = async (uid: string) => {
+  try {
+    await Promise.all([seedDefaultCategories(uid), ensureAgentName(uid)]);
+  } catch (err) {
+    console.error("[users/init] setup falló", err);
+  }
+};

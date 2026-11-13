@@ -5,6 +5,19 @@ export const formatCurrency = (n: number): string =>
     maximumFractionDigits: 2,
   }).format(n);
 
+const usdFormatter = new Intl.NumberFormat("es-AR", {
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 2,
+});
+
+/** "$ 1.200,50" o "US$ 1.200,5" según la moneda. */
+export const formatMoney = (n: number, currency: "ARS" | "USD" = "ARS"): string =>
+  currency === "USD"
+    ? `${n < 0 ? "-" : ""}US$ ${usdFormatter.format(Math.abs(n))}`
+    : formatCurrency(n);
+
+export const currencyLabel = (c: "ARS" | "USD") => (c === "USD" ? "Dólares" : "Pesos");
+
 const MONTHS = [
   "Enero",
   "Febrero",

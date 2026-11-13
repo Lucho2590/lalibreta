@@ -20,6 +20,7 @@ import {
 import { useAuth } from "@/hooks/use-auth";
 import { useAccounts, useCategories } from "@/hooks/use-data";
 import { db } from "@/lib/firebase/client";
+import { accountCurrencies, type Currency } from "@/lib/domain/types";
 import { recurringCollectionPath } from "@/lib/domain/recurring";
 import { monthKey, type TransactionKind } from "@/lib/domain/types";
 
@@ -34,6 +35,7 @@ export function RecurringForm({ onCreated }: { onCreated?: () => void }) {
   const [kind, setKind] = useState<TransactionKind>("expense");
   const [name, setName] = useState("");
   const [amount, setAmount] = useState("");
+  const [currency, setCurrency] = useState<Currency>("ARS");
   const [accountId, setAccountId] = useState("");
   const [categoryId, setCategoryId] = useState("");
   const [day, setDay] = useState(1);
@@ -42,6 +44,9 @@ export function RecurringForm({ onCreated }: { onCreated?: () => void }) {
   const [busy, setBusy] = useState(false);
 
   const selectableAccounts = accounts.filter((a) => a.active !== false);
+  const selectedAccount = accounts.find((a) => a.id === accountId);
+  const currencyOptions: Currency[] = selectedAccount ? accountCurrencies(selectedAccount) : ["ARS", "USD"];
+  const effCurrency: Currency = currencyOptions.includes(currency) ? currency : currencyOptions[0];
   const filteredCategories = categories.filter((c) => c.kind === kind);
 
   const submit = async (e: React.FormEvent) => {
@@ -53,6 +58,7 @@ export function RecurringForm({ onCreated }: { onCreated?: () => void }) {
       await addDoc(collection(db, recurringCollectionPath(user.uid)), {
         name: name.trim(),
         amount: amt,
+        currency: effCurrency,
         accountId,
         categoryId,
         kind,
@@ -62,7 +68,7 @@ export function RecurringForm({ onCreated }: { onCreated?: () => void }) {
         active: true,
         createdAt: Timestamp.now(),
       });
-      toast.success("Gasto fijo creado");
+      toast.success(kind === "income" ? "Ingreso fijo creado" : "Gasto fijo creado");
       setName("");
       setAmount("");
       onCreated?.();
@@ -119,6 +125,22 @@ export function RecurringForm({ onCreated }: { onCreated?: () => void }) {
           value={amount}
           onChange={(e) => setAmount(e.target.value)}
         />
+        {currencyOptions.length > 1 && (
+          <div className="mt-1.5 inline-flex rounded-lg bg-muted p-0.5">
+            {currencyOptions.map((c) => (
+              <button
+                key={c}
+                type="button"
+                onClick={() => setCurrency(c)}
+                className={`h-8 rounded-md px-3 text-xs font-medium transition ${
+                  effCurrency === c ? "bg-background shadow-sm" : "text-muted-foreground"
+                }`}
+              >
+                {c === "ARS" ? "$ Pesos" : "US$ Dólares"}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="space-y-1">

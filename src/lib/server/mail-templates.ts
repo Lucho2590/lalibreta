@@ -19,7 +19,7 @@ const card = (body: string) => `
   <div style="${baseStyles}">
     <div style="max-width: 520px; margin: 0 auto; background: white; border-radius: 24px; overflow: hidden; border: 1px solid #e5e5e8;">
       <div style="background: linear-gradient(135deg, #6d4ce0 0%, #5236bd 100%); color: white; padding: 28px 24px;">
-        <div style="font-size: 12px; letter-spacing: 1px; text-transform: uppercase; opacity: 0.8;">Saldo · Control de gastos</div>
+        <div style="font-size: 12px; letter-spacing: 1px; text-transform: uppercase; opacity: 0.8;">La Libreta · Control de gastos</div>
       </div>
       <div style="padding: 24px;">
         ${body}

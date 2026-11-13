@@ -39,7 +39,8 @@ import {
 } from "@/lib/domain/recurring";
 import { installmentsCollectionPath } from "@/lib/domain/installments";
 import type { RecurringExpense } from "@/lib/domain/types";
-import { formatCurrency, formatMonth } from "@/lib/format";
+import { formatMoney, formatMonth } from "@/lib/format";
+import { currencyOf } from "@/lib/domain/types";
 import { RecurringForm } from "@/components/recurring/recurring-form";
 
 export default function FijosPage() {
@@ -167,7 +168,7 @@ export default function FijosPage() {
               {cat?.name ?? "—"} · {acc?.name ?? "—"} · día {rec.dayOfMonth}
             </div>
           </div>
-          <div className="text-sm font-semibold tabular-nums">{formatCurrency(rec.amount)}</div>
+          <div className="text-sm font-semibold tabular-nums">{formatMoney(rec.amount, currencyOf(rec))}</div>
 
           <div className="flex w-full items-center justify-end gap-1 sm:w-auto">
             {rec.active && inRange && (
@@ -207,7 +208,7 @@ export default function FijosPage() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Gastos fijos</h1>
+          <h1 className="text-2xl font-bold tracking-tight">Fijos</h1>
           <p className="text-sm text-muted-foreground">
             Items que se repiten mes a mes — alquiler, sueldo, suscripciones…
           </p>
@@ -227,7 +228,7 @@ export default function FijosPage() {
               className="sheet-md-modal max-h-[92vh] overflow-y-auto p-0"
             >
               <SheetHeader className="px-5 pt-5">
-                <SheetTitle>Nuevo gasto fijo</SheetTitle>
+                <SheetTitle>Nuevo fijo</SheetTitle>
               </SheetHeader>
               <div className="px-5 pb-6 pt-2">
                 <RecurringForm onCreated={() => setOpen(false)} />
@@ -245,7 +246,7 @@ export default function FijosPage() {
             <div className="mx-auto mb-3 flex size-12 items-center justify-center rounded-2xl bg-muted">
               <Repeat className="size-5 text-muted-foreground" />
             </div>
-            <p className="text-sm font-medium">No tenés gastos fijos todavía</p>
+            <p className="text-sm font-medium">No tenés ingresos ni gastos fijos todavía</p>
             <p className="mt-1 text-xs text-muted-foreground">
               Cargá tu alquiler, sueldo o suscripciones y aplicalos cada mes con un click.
             </p>

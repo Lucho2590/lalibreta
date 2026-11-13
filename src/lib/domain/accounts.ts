@@ -22,6 +22,10 @@ const EDITABLE_FIELDS: Array<keyof Account> = [
   "active",
   "defaultClosingDay",
   "defaultDueDay",
+  "currencies",
+  "isMain",
+  "openingBalances",
+  "openingDate",
 ];
 
 export const updateAccount = async (
@@ -61,4 +65,16 @@ export const deleteAccount = async (
     await batch.commit();
   }
   await deleteDoc(doc(db, `${accountsCollectionPath(uid)}/${id}`));
+};
+
+/** Desmarca como principal a todas las cuentas menos `keepId`. */
+export const clearOtherMainAccounts = async (uid: string, keepId: string | null): Promise<void> => {
+  const snap = await getDocs(
+    query(collection(db, accountsCollectionPath(uid)), where("isMain", "==", true)),
+  );
+  const others = snap.docs.filter((d) => d.id !== keepId);
+  if (others.length === 0) return;
+  const batch = writeBatch(db);
+  others.forEach((d) => batch.update(d.ref, { isMain: false }));
+  await batch.commit();
 };
