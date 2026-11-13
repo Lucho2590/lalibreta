@@ -26,9 +26,11 @@ import {
   sumByCategory,
 } from "@/lib/domain/balance";
 import { computeAccountBalances, totalAvailable } from "@/lib/domain/balances";
-import { accountCurrencies } from "@/lib/domain/types";
+import { sortAccounts } from "@/lib/domain/accounts";
+import { accountCurrencies, paymentMonthOf } from "@/lib/domain/types";
 import { buildSharedByTxId } from "@/lib/domain/shared-effective";
-import { formatCurrency, formatMoney, formatMonth } from "@/lib/format";
+import { formatCurrency, formatMoney, formatMonth, formatShortDate } from "@/lib/format";
+import { summarizeCardMonth } from "@/lib/domain/card-summary";
 import { RecurringBanner } from "@/components/dashboard/recurring-banner";
 import { ApprovalsBanner } from "@/components/dashboard/approvals-banner";
 import { Onboarding } from "@/components/dashboard/onboarding";
@@ -84,6 +86,9 @@ export default function Dashboard() {
 
   const sortedCategories = [...byCategory.entries()]
     .map(([id, total]) => ({ cat: categories.find((c) => c.id === id), total }))
+    // Un reintegro de tarjeta con categoría de ingreso descuenta del total, pero
+    // no se muestra como fila (quedaría un "Otros ingresos" negativo).
+    .filter(({ cat, total }) => cat?.kind !== "income" && total > 0.009)
     .sort((a, b) => b.total - a.total);
 
   const sortedAccounts = [...byAccount.entries()]
@@ -152,9 +157,7 @@ export default function Dashboard() {
                 <CardTitle className="text-sm font-semibold">Tus cuentas hoy</CardTitle>
               </CardHeader>
               <CardContent className="space-y-2.5 pt-1">
-                {activeAccounts
-                  .filter((a) => a.type !== "credit")
-                  .sort((a, b) => Number(Boolean(b.isMain)) - Number(Boolean(a.isMain)))
+                {sortAccounts(activeAccounts.filter((a) => a.type !== "credit"))
                   .map((a) => {
                     const b = balances.get(a.id);
                     return (
@@ -178,11 +181,11 @@ export default function Dashboard() {
                       </Link>
                     );
                   })}
-                {activeAccounts
-                  .filter((a) => a.type === "credit")
+                {sortAccounts(activeAccounts.filter((a) => a.type === "credit"))
                   .map((a) => {
-                    const b = balances.get(a.id);
-                    const owed = (["ARS", "USD"] as const).filter((c) => (b?.amounts[c] ?? 0) > 0.009);
+                    // Lo que falta pagar del resumen que vence este mes.
+                    const s = summarizeCardMonth(allInstallments, [a.id], paymentMonthOf(new Date()));
+                    const owed = (["ARS", "USD"] as const).filter((c) => s.pending[c] > 0.009);
                     if (owed.length === 0) return null;
                     return (
                       <Link
@@ -190,11 +193,14 @@ export default function Dashboard() {
                         href={`/cuentas/${a.id}`}
                         className="flex items-start justify-between gap-2 text-sm text-muted-foreground hover:opacity-80"
                       >
-                        <span className="truncate">💳 {a.name} (a pagar)</span>
+                        <span className="truncate">
+                          💳 {a.name}
+                          {s.dueDate ? ` (vence ${formatShortDate(s.dueDate)})` : " (a pagar)"}
+                        </span>
                         <span className="text-right tabular-nums">
                           {owed.map((c) => (
                             <span key={c} className="block">
-                              {formatMoney(b!.amounts[c], c)}
+                              {formatMoney(s.pending[c], c)}
                             </span>
                           ))}
                         </span>

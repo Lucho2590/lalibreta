@@ -26,6 +26,7 @@ import {
   sendText,
 } from "./client";
 import { consumeLinkCode, getLinkedUid } from "./linking";
+import { loadCategoryRules } from "../statement-import";
 import {
   displayNameOf,
   loadMyShares,
@@ -232,11 +233,18 @@ const routeMessage = async (
     (userSnap.data()?.displayName as string | undefined) ?? profileName ?? null;
   const agentName =
     (userSnap.data()?.agentName as string | undefined) ?? (await ensureAgentName(uid));
-  const [balances, sharedWithMe, myShares] = await Promise.all([
+  const [balances, sharedWithMe, myShares, rules] = await Promise.all([
     getBalances(uid, accounts),
     loadSharedAccounts(uid),
     loadMyShares(uid),
+    loadCategoryRules(uid),
   ]);
+  const catName = new Map(categories.map((c) => [c.id, c.name]));
+  const categoryRules = rules
+    .filter((r) => catName.has(r.categoryId))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 80)
+    .map((r) => ({ sample: r.sample, categoryName: catName.get(r.categoryId)! }));
 
   const result = await runAgent(
     {
@@ -249,6 +257,7 @@ const routeMessage = async (
       balances,
       sharedWithMe,
       myShares,
+      categoryRules,
       pendingDraft: session.pendingDraft,
     },
     session.history,

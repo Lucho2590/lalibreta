@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import {
   ClipboardCheck,
   CreditCard,
+  FileText,
   Handshake,
   Home,
   List,
@@ -27,6 +28,7 @@ const navItems = [
   { href: "/", label: "Inicio", icon: Home },
   { href: "/movimientos", label: "Movimientos", icon: List },
   { href: "/cuentas", label: "Cuentas", icon: CreditCard },
+  { href: "/resumenes", label: "Importar resumen", icon: FileText },
   { href: "/fijos", label: "Fijos", icon: Repeat },
   { href: "/ingresos", label: "Ingresos", icon: Wallet },
   { href: "/compartidas", label: "Compartidas", icon: Handshake },

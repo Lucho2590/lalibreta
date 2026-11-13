@@ -59,7 +59,8 @@ export function useInstallmentsForMonth(monthKey: string) {
       user
         ? query(
             collection(db, installmentsCollectionPath(user.uid)),
-            where("billingMonth", "==", monthKey),
+            // Mes de pago: las tarjetas aparecen en el mes en que vence el resumen.
+            where("paymentMonth", "==", monthKey),
           )
         : null,
     [user, monthKey],

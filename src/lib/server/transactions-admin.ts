@@ -3,6 +3,7 @@ import "server-only";
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { adminDb } from "./firebase-admin";
 import type { AccountType, Currency, TransferType } from "@/lib/domain/types";
+import { paymentMonthOf } from "@/lib/domain/types";
 
 const lastDayOfMonth = (year: number, month: number) =>
   new Date(year, month, 0).getDate();
@@ -118,6 +119,8 @@ export interface ServerCreateInput {
   recurringId?: string;
   /** Si lo cargó otra persona sobre una cuenta compartida. */
   createdBy?: { uid: string; name: string };
+  /** Gasto estimado (ej. suscripción proyectada al próximo resumen). */
+  projected?: boolean;
 }
 
 export const createTransactionAdmin = async (
@@ -125,6 +128,9 @@ export const createTransactionAdmin = async (
 ): Promise<string> => {
   // Los ingresos nunca van en cuotas ni siguen el ciclo de la tarjeta.
   const isCredit = input.account.type === "credit" && input.kind === "expense";
+  // En una tarjeta, gastos Y reintegros van al resumen (mes del cierre y fecha
+  // de vencimiento). Las cuotas son solo para gastos.
+  const followsCardCycle = input.account.type === "credit";
   const installmentsCount = isCredit ? Math.max(1, input.installments) : 1;
   const amountPerInstallment =
     Math.round((input.totalAmount / installmentsCount) * 100) / 100;
@@ -135,9 +141,9 @@ export const createTransactionAdmin = async (
 
   let firstYear: number;
   let firstMonth: number;
-  if (isCredit && input.forceFirstBillingMonth) {
+  if (followsCardCycle && input.forceFirstBillingMonth) {
     [firstYear, firstMonth] = input.forceFirstBillingMonth.split("-").map(Number);
-  } else if (isCredit) {
+  } else if (followsCardCycle) {
     const first = computeFirstBillingMonth(
       input.account,
       input.purchaseDate,
@@ -165,6 +171,7 @@ export const createTransactionAdmin = async (
     currency: input.currency ?? "ARS",
     ...(input.recurringId ? { recurringId: input.recurringId } : {}),
     ...(input.createdBy ? { createdByUid: input.createdBy.uid, createdByName: input.createdBy.name } : {}),
+    ...(input.projected ? { projected: true } : {}),
     createdAt: FieldValue.serverTimestamp(),
   });
 
@@ -179,10 +186,11 @@ export const createTransactionAdmin = async (
     firstMonth,
     installmentsCount,
     amountPerInstallment,
-    isCredit,
+    isCredit: followsCardCycle,
     currency: input.currency ?? "ARS",
     recurringId: input.recurringId,
     createdByName: input.createdBy?.name,
+    projected: input.projected,
   });
 
   await batch.commit();
@@ -204,6 +212,7 @@ interface InstallmentSpec {
   currency: Currency;
   recurringId?: string;
   createdByName?: string;
+  projected?: boolean;
 }
 
 const writeInstallments = async (
@@ -229,6 +238,7 @@ const writeInstallments = async (
       amount: spec.amountPerInstallment,
       billingMonth: monthKey(year, month),
       billingDate: Timestamp.fromDate(billingDate),
+      paymentMonth: paymentMonthOf(billingDate),
       installmentNumber: i + 1,
       totalInstallments: spec.installmentsCount,
       kind: spec.kind,
@@ -236,6 +246,9 @@ const writeInstallments = async (
       currency: spec.currency,
       ...(spec.recurringId ? { recurringId: spec.recurringId } : {}),
       ...(spec.createdByName ? { createdByName: spec.createdByName } : {}),
+      ...(spec.projected ? { projected: true } : {}),
+      // Plata que "entra" a una tarjeta = saldo a favor, no ingreso.
+      ...(spec.isCredit && spec.kind === "income" ? { cardCredit: true } : {}),
     });
   }
 };
@@ -260,9 +273,10 @@ export const rebuildCardInstallmentsAdmin = async (
   let rebuilt = 0;
   for (const txDoc of txs.docs) {
     const tx = txDoc.data();
-    if (tx.kind !== "expense") continue;
+    // Gastos y reintegros siguen el ciclo de la tarjeta (las transferencias no).
+    if (tx.kind !== "expense" && tx.kind !== "income") continue;
     const purchaseDate = (tx.purchaseDate as Timestamp).toDate();
-    const installmentsCount = Math.max(1, Number(tx.installments ?? 1));
+    const installmentsCount = tx.kind === "income" ? 1 : Math.max(1, Number(tx.installments ?? 1));
     const first = computeFirstBillingMonth(
       account,
       purchaseDate,
@@ -280,7 +294,7 @@ export const rebuildCardInstallmentsAdmin = async (
       accountId: account.id,
       categoryId: String(tx.categoryId),
       description: String(tx.description ?? ""),
-      kind: "expense",
+      kind: String(tx.kind),
       purchaseDate,
       firstYear: first.year,
       firstMonth: first.month,
@@ -290,6 +304,7 @@ export const rebuildCardInstallmentsAdmin = async (
       currency: (tx.currency as Currency | undefined) ?? "ARS",
       recurringId: tx.recurringId as string | undefined,
       createdByName: tx.createdByName as string | undefined,
+      projected: tx.projected === true,
     });
     await batch.commit();
     rebuilt += 1;
@@ -353,6 +368,7 @@ export const createTransferAdmin = async (input: ServerTransferInput): Promise<s
     categoryId: "",
     billingMonth,
     billingDate: Timestamp.fromDate(input.date),
+    paymentMonth: paymentMonthOf(input.date),
     installmentNumber: 1,
     totalInstallments: 1,
     kind: "transfer",

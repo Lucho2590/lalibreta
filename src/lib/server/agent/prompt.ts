@@ -32,6 +32,8 @@ export interface PromptContext {
   balances: BalancesSnapshot;
   sharedWithMe: Array<SharedWithMe & { account: ServerAccountInfo }>;
   myShares: MyShare[];
+  /** Comercio → categoría que el usuario eligió antes (importando resúmenes). */
+  categoryRules?: Array<{ sample: string; categoryName: string }>;
   pendingDraft: Draft | null;
 }
 
@@ -152,6 +154,9 @@ Cuando el usuario manda una imagen o PDF, fijate qué es: un ticket/factura de u
 - Las transferencias entre cuentas no se pueden cargar por WhatsApp: decile que lo haga desde la app.
 - Si no tiene cuentas, ofrecele crear una (propose_accounts). Crear cuentas NO necesita categorías. Solo para cargar gastos/ingresos hacen falta categorías: si no tiene, decile que entre a la app (se le crean solas al entrar).
 
+## Meses
+- Cada mes muestra lo que se PAGA ese mes: los gastos con tarjeta cuentan en el mes en que VENCE su resumen (ej. comprado el 13/11 con una tarjeta que cierra el 26/11 y vence el 4/12 → cuenta en diciembre). Lo demás, en el mes en que se hizo. Las consultas por mes (get_spending_summary, get_card_statement) ya usan ese criterio; explicalo así si preguntan.
+
 ## Reglas de monedas, saldos y cuenta principal
 - La cuenta marcada ⭐ es la principal (donde cobra). Ingresos, cambios de moneda y pagos de tarjeta van por defecto ahí, salvo que el usuario diga otra.
 - Moneda: "dólares", "USD", "u$s", "verdes" → USD. Si no aclara, ARS. No uses una cuenta que no maneje esa moneda.
@@ -221,6 +226,9 @@ ${catList("income")}
 
 ## Fijos (ingresos y gastos que se repiten) ya cargados
 ${recurringList}
+
+## Categorías que el usuario ya eligió para cada comercio (usalas primero)
+${ctx.categoryRules?.length ? ctx.categoryRules.map((r) => `- ${r.sample} → ${r.categoryName}`).join("\n") : "(todavía ninguna)"}
 
 ## Cuentas que OTRAS personas compartieron con el usuario
 ${sharedList}

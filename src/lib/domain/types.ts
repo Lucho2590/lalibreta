@@ -166,6 +166,8 @@ export interface Account {
   /** Saldo con el que arranca la cuenta, por moneda. */
   openingBalances?: Partial<Record<Currency, number>> | null;
   openingDate?: Timestamp | null;
+  /** Orden elegido por el usuario (arrastrar y soltar). Menor = más arriba. */
+  sortOrder?: number | null;
   createdAt: Timestamp;
 }
 
@@ -235,7 +237,28 @@ export interface Installment {
   currency?: Currency;
   /** Si lo cargó otra persona desde una cuenta compartida. */
   createdByName?: string;
+  /**
+   * Mes en que se paga (YYYY-MM): el de billingDate. Para tarjetas es el mes
+   * del vencimiento del resumen (billingMonth es el del cierre); para el
+   * resto coincide con billingMonth. Las pantallas agrupan por este mes.
+   */
+  paymentMonth?: string;
+  /** Gasto estimado (suscripción proyectada al próximo resumen); se reemplaza al importar el real. */
+  projected?: boolean;
+  /**
+   * Reintegro/bonificación en una TARJETA (kind "income"): no es plata que
+   * entra, es saldo a favor que baja lo que se paga. En los balances resta
+   * del gasto en vez de sumar como ingreso.
+   */
+  cardCredit?: boolean;
 }
+
+/** Ingreso de verdad (no un saldo a favor de tarjeta). */
+export const isRealIncome = (i: { kind: string; cardCredit?: boolean }) =>
+  i.kind === "income" && !i.cardCredit;
+/** Saldo a favor en una tarjeta (reintegro, devolución, bonificación). */
+export const isCardCredit = (i: { kind: string; cardCredit?: boolean }) =>
+  i.kind === "income" && !!i.cardCredit;
 
 export const monthKey = (year: number, month: number): string =>
   `${year}-${String(month).padStart(2, "0")}`;
@@ -290,3 +313,18 @@ export interface CardStatement {
   chargesTransactionId?: string | null;
   createdAt: Timestamp;
 }
+
+// === Mes de pago ===
+
+const arMonthFormatter = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "America/Argentina/Buenos_Aires",
+  year: "numeric",
+  month: "2-digit",
+});
+
+/** "YYYY-MM" de una fecha, en hora argentina. */
+export const paymentMonthOf = (d: Date): string => arMonthFormatter.format(d).slice(0, 7);
+
+/** Mes en que se paga una cuota (los docs viejos sin paymentMonth caen en billingMonth). */
+export const monthOf = (ins: { paymentMonth?: string; billingMonth: string }): string =>
+  ins.paymentMonth ?? ins.billingMonth;

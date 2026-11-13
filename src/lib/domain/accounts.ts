@@ -78,3 +78,24 @@ export const clearOtherMainAccounts = async (uid: string, keepId: string | null)
   others.forEach((d) => batch.update(d.ref, { isMain: false }));
   await batch.commit();
 };
+
+/**
+ * Orden para mostrar cuentas: el que eligió el usuario (sortOrder) y, para las
+ * que no tienen, el de creación.
+ */
+export const sortAccounts = <T extends Pick<Account, "sortOrder" | "createdAt">>(list: T[]): T[] =>
+  [...list].sort((a, b) => {
+    const ao = a.sortOrder ?? Number.MAX_SAFE_INTEGER;
+    const bo = b.sortOrder ?? Number.MAX_SAFE_INTEGER;
+    if (ao !== bo) return ao - bo;
+    return (a.createdAt?.toMillis?.() ?? 0) - (b.createdAt?.toMillis?.() ?? 0);
+  });
+
+/** Guarda el orden de una lista de cuentas (la posición pasa a ser su sortOrder). */
+export const saveAccountOrder = async (uid: string, orderedIds: string[]): Promise<void> => {
+  const batch = writeBatch(db);
+  orderedIds.forEach((id, index) => {
+    batch.update(doc(db, `${accountsCollectionPath(uid)}/${id}`), { sortOrder: index });
+  });
+  await batch.commit();
+};

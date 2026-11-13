@@ -18,11 +18,16 @@ const round2 = (n: number) => Math.round(n * 100) / 100;
 
 type AccountLike = Pick<Account, "id" | "type" | "currencies" | "openingBalances"> & {
   type: AccountType;
+  /** Cuándo se agregó (Timestamp del SDK o Date): lo anterior de una tarjeta se da por pagado. */
+  createdAt?: { toDate(): Date } | Date | null;
 };
+
+const createdDate = (a: AccountLike): Date | null =>
+  !a.createdAt ? null : a.createdAt instanceof Date ? a.createdAt : a.createdAt.toDate();
 
 type InstallmentLike = Pick<
   Installment,
-  "accountId" | "amount" | "kind" | "billingMonth" | "transferRole" | "currency"
+  "accountId" | "amount" | "kind" | "billingMonth" | "paymentMonth" | "transferRole" | "currency"
 > & { billingDate: { toDate(): Date } };
 
 export interface AccountBalance {
@@ -51,6 +56,13 @@ export const computeAccountBalances = (
   const currentMonth = today.slice(0, 7);
   const happened = (ins: InstallmentLike) => ymdAR(ins.billingDate.toDate()) <= today;
   const result = new Map<string, AccountBalance>();
+  // Tarjetas: lo que vencía antes de agregarla a la app (ej. cuotas viejas de una
+  // compra importada en cuotas) se da por pagado.
+  const cardFloor = new Map<string, string>();
+  for (const a of accounts) {
+    const d = a.type === "credit" ? createdDate(a) : null;
+    if (d) cardFloor.set(a.id, ymdAR(d).slice(0, 7));
+  }
   for (const a of accounts) {
     const amounts = emptyMoney();
     if (a.type !== "credit") {
@@ -65,6 +77,8 @@ export const computeAccountBalances = (
     const cur = currencyOf(ins);
 
     if (bal.isCard) {
+      const floor = cardFloor.get(ins.accountId);
+      if (floor && (ins.paymentMonth ?? ins.billingMonth) < floor && ins.kind !== "transfer") continue;
       // Deuda: gastos de resúmenes ya cerrados o en curso; los pagos la bajan.
       if (ins.kind === "expense" && ins.billingMonth <= currentMonth) bal.amounts[cur] += ins.amount;
       else if (ins.kind === "income" && ins.billingMonth <= currentMonth) bal.amounts[cur] -= ins.amount;

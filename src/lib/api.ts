@@ -14,7 +14,8 @@ export const apiFetch = async (
     const token = await user.getIdToken();
     headers.set("Authorization", `Bearer ${token}`);
   }
-  if (init.body && !headers.has("Content-Type")) {
+  // Con FormData (subir archivos) el navegador arma el Content-Type con el boundary.
+  if (init.body && !(init.body instanceof FormData) && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
   return fetch(path, { ...init, headers });
