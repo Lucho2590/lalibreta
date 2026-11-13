@@ -10,6 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuth } from "@/hooks/use-auth";
 import {
   signInWithEmail,
+  completeGoogleRedirect,
   signInWithGoogle,
   signUpWithEmail,
 } from "@/lib/firebase/auth";
@@ -25,6 +26,14 @@ export default function LoginPage() {
   useEffect(() => {
     if (!loading && user) router.replace("/");
   }, [user, loading, router]);
+
+  // Volviendo del login de Google por redirección (app instalada): si falló, mostrarlo.
+  useEffect(() => {
+    completeGoogleRedirect().catch((err) => {
+      const msg = err instanceof Error ? err.message : "Error";
+      setError(msg.replace("Firebase: ", ""));
+    });
+  }, []);
 
   const handle = async (fn: () => Promise<unknown>) => {
     setError(null);
