@@ -5,6 +5,8 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: path.resolve(__dirname),
   },
+  // Lee planillas (xlsx) que llegan por WhatsApp: mejor con el require de Node.
+  serverExternalPackages: ["exceljs"],
   // El login de Google se sirve desde nuestro dominio (ver src/lib/firebase/client.ts).
   async rewrites() {
     const firebaseHost = `https://${process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN ?? "cashflow-fd2c8.firebaseapp.com"}`;

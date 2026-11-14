@@ -249,8 +249,43 @@ export interface RecurringDraft {
   createdAt: number;
 }
 
+/** Un renglón de una carga en lote (lista de gastos de una foto, planilla, etc.). */
+export interface BatchDraftLine {
+  description: string;
+  /** Monto del renglón tal como figura (si es una cuota, el de la cuota). */
+  amount: number;
+  currency: "ARS" | "USD";
+  kind: "expense" | "income";
+  /** YYYY-MM-DD de la compra. */
+  date: string;
+  accountId: string;
+  accountName: string;
+  accountType: string;
+  categoryId: string;
+  categoryName: string;
+  /**
+   * Cuota k de N (solo gastos con tarjeta): se carga la compra completa en N
+   * cuotas desde `date`, así la cuota k cae en el resumen que corresponde.
+   */
+  installmentNumber: number | null;
+  installmentsTotal: number | null;
+}
+
+/** Varios gastos/ingresos confirmados juntos con un solo botón. */
+export interface BatchDraft {
+  type: "batch";
+  id: string;
+  lines: BatchDraftLine[];
+  /** Renglones que ya estaban cargados y no se repiten (para mostrar). */
+  duplicates: Array<{ description: string; amount: number; currency: "ARS" | "USD" }>;
+  /** Renglones que no se pueden cargar (cuenta inexistente, moneda que no maneja…). */
+  skipped: string[];
+  createdAt: number;
+}
+
 export type Draft =
   | TransactionDraft
+  | BatchDraft
   | AccountDraft
   | StatementDraft
   | ExchangeDraft
