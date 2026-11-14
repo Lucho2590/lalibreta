@@ -94,6 +94,10 @@ export const setMainAccountAdmin = async (uid: string, accountId: string) => {
 export const setAccountLast4 = async (uid: string, accountId: string, last4: string) =>
   adminDb().doc(`users/${uid}/accounts/${accountId}`).update({ last4 });
 
+/** Cuelga una tarjeta o cobacha existente de su cuenta madre (banco, billetera…). */
+export const setAccountParentAdmin = async (uid: string, accountId: string, parentId: string) =>
+  adminDb().doc(`users/${uid}/accounts/${accountId}`).update({ parentId });
+
 /**
  * Guarda los días de cierre/vencimiento de una tarjeta. Si estaban
  * pendientes, rearma las cuotas de lo que se cargó mientras tanto.

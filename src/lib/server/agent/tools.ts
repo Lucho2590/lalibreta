@@ -16,7 +16,7 @@ import { getLatestStatement, getStatementHistory } from "../statements-admin";
 import { getUsdRate } from "../fx";
 import type { BalancesSnapshot } from "../queries-admin";
 import type { Currency } from "@/lib/domain/types";
-import { setAccountBalanceAdmin, setCardDatesAdmin } from "../accounts-admin";
+import { setAccountBalanceAdmin, setAccountParentAdmin, setCardDatesAdmin } from "../accounts-admin";
 import { CATEGORY_ICON_IDS, createCategoryAdmin } from "../categories-admin";
 import {
   REDEEM_ERRORS,
@@ -214,6 +214,23 @@ export const TOOL_DEFINITIONS: ChatCompletionFunctionTool[] = [
           dueDay: { type: "integer", description: "Día de vencimiento (1-31)" },
         },
         required: ["accountId", "closingDay", "dueDay"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "set_account_parent",
+      description:
+        "Asocia una tarjeta de crédito (o cobacha) que YA EXISTE a su cuenta madre existente (banco, billetera): \"la visa es del Francés\", \"poné las tarjetas dentro del Galicia\". Se aplica en el momento, sin botones. Para varias tarjetas, llamala una vez por cada una.",
+      parameters: {
+        type: "object",
+        properties: {
+          accountId: { type: "string", description: "id de la tarjeta o cobacha" },
+          parentId: { type: "string", description: "id de la cuenta madre (banco, billetera…)" },
+        },
+        required: ["accountId", "parentId"],
         additionalProperties: false,
       },
     },
@@ -723,6 +740,11 @@ const balanceSchema = z.object({
   USD: z.number().optional(),
 });
 
+const accountParentSchema = z.object({
+  accountId: z.string().min(1),
+  parentId: z.string().min(1),
+});
+
 const cardDatesSchema = z.object({
   accountId: z.string().min(1),
   closingDay: z.number().int().min(1).max(31),
@@ -807,6 +829,26 @@ const normalize = (s: string) =>
 const sameName = (a: string, b: string) =>
   normalize(a).replace(/ /g, "") === normalize(b).replace(/ /g, "");
 const issues = (e: z.ZodError) => ({ error: e.issues.map((i) => i.message).join("; ") });
+
+/** Puede ser cuenta madre: no es tarjeta ni cobacha, ni cuelga de otra. */
+const canBeParent = (a: { type: string; parentId?: string | null; active?: boolean }) =>
+  a.type !== "credit" && a.type !== "reserve" && !a.parentId && a.active !== false;
+
+/**
+ * Busca por nombre: exacto ("Banco Francés" == "banco frances") o, con
+ * `loose`, la única que contenga o esté contenida ("Francés" ↔ "Banco Francés").
+ */
+const findByName = <T extends { name: string }>(pool: T[], name: string, loose: boolean) => {
+  const exact = pool.find((x) => sameName(x.name, name));
+  if (exact || !loose) return exact;
+  const n = normalize(name).replace(/ /g, "");
+  if (n.length < 4) return undefined;
+  const hits = pool.filter((x) => {
+    const m = normalize(x.name).replace(/ /g, "");
+    return m.length >= 4 && (m.includes(n) || n.includes(m));
+  });
+  return hits.length === 1 ? hits[0] : undefined;
+};
 
 const BUILT_MESSAGE =
   "Borrador listo. El sistema le manda el resumen al usuario con los botones. No agregues nada más.";
@@ -932,15 +974,22 @@ const proposeAccounts = (ctx: ToolContext, raw: unknown): ToolResult => {
 
     let parentId: string | null = null;
     let parentName: string | null = null;
-    if ((isCredit || isReserve) && a.parentId) {
-      const parent = ctx.accounts.find((x) => x.id === a.parentId);
-      if (parent && parent.type !== "credit" && parent.type !== "reserve" && !parent.parentId && parent.active) {
+    if (isCredit || isReserve) {
+      // La madre puede venir como id, o como nombre de una cuenta que ya
+      // existe (aunque el modelo la haya repetido en la lista) o que se crea
+      // en esta misma lista.
+      const pool = ctx.accounts.filter(canBeParent);
+      const parent =
+        (a.parentId ? pool.find((x) => x.id === a.parentId) : undefined) ??
+        (a.parentName ? findByName(pool, a.parentName, false) : undefined) ??
+        (a.parentId ? findByName(pool, a.parentId, false) : undefined);
+      if (parent) {
         parentId = parent.id;
         parentName = parent.name;
+      } else if (a.parentName || a.parentId) {
+        // Se resuelve al confirmar, si esa cuenta está en la misma lista.
+        parentName = a.parentName ?? a.parentId ?? null;
       }
-    } else if ((isCredit || isReserve) && a.parentName) {
-      // Se resuelve al confirmar, si esa cuenta está en la misma lista.
-      parentName = a.parentName;
     }
     if (isReserve && !parentId && !parentName) {
       return {
@@ -979,18 +1028,35 @@ const proposeAccounts = (ctx: ToolContext, raw: unknown): ToolResult => {
     if (it.isMain) mainSeen = true;
   }
 
-  // La cuenta madre por nombre solo vale si es otra cuenta no-crédito de la lista.
+  // La cuenta madre por nombre tiene que ser otra cuenta no-crédito de la
+  // lista. Si no aparece, avisamos al modelo en vez de crearla suelta.
+  // Orden: exacto en la lista → parecido entre las existentes → parecido en la lista.
+  const existingParents = ctx.accounts.filter(canBeParent);
+  const newParents = items.filter((x) => x.accountType !== "credit" && x.accountType !== "reserve");
+  const unresolved: string[] = [];
   for (const it of items) {
     if (it.parentName && !it.parentId) {
-      const ok = items.some(
-        (x) =>
-          x !== it &&
-          x.accountType !== "credit" &&
-          x.accountType !== "reserve" &&
-          sameName(x.name, it.parentName!),
-      );
-      if (!ok) it.parentName = null;
+      const name = it.parentName;
+      const inList = findByName(newParents, name, false);
+      const existing = inList ? undefined : findByName(existingParents, name, true);
+      const looseInList = inList || existing ? undefined : findByName(newParents, name, true);
+      if (existing) {
+        it.parentId = existing.id;
+        it.parentName = existing.name;
+      } else if (inList ?? looseInList) {
+        it.parentName = (inList ?? looseInList)!.name;
+      } else {
+        unresolved.push(`"${it.name}" (de "${name}")`);
+      }
     }
+  }
+  if (unresolved.length > 0) {
+    const options = existingParents
+      .map((x) => `${x.name} (id=${x.id})`)
+      .join(", ");
+    return {
+      error: `No encontré la cuenta madre de ${unresolved.join(", ")}. Si ya existe, pasá su id en parentId (cuentas posibles: ${options || "ninguna"}); si es nueva, incluila en la misma lista; si no sabés de cuál es, preguntale.`,
+    };
   }
 
   if (items.length === 0) {
@@ -1531,6 +1597,26 @@ export const executeTool = async (
       const r = await createCategoryAdmin(ctx.uid, parsed.data);
       ctx.categories.push({ id: r.id, name: r.name, kind: parsed.data.kind });
       return { ok: true, created: r.created, id: r.id, name: r.name };
+    }
+
+    case "set_account_parent": {
+      const parsed = accountParentSchema.safeParse(args);
+      if (!parsed.success) return issues(parsed.error);
+      const account = resolveAccount(ctx, parsed.data.accountId);
+      if (!account) return { error: "Cuenta inexistente" };
+      if (account.type !== "credit" && account.type !== "reserve") {
+        return { error: `"${account.name}" no es una tarjeta ni una cobacha: no puede ir dentro de otra cuenta` };
+      }
+      const parent = ctx.accounts.find((x) => x.id === parsed.data.parentId);
+      if (!parent || parent.id === account.id || !canBeParent(parent)) {
+        return { error: "Esa cuenta madre no sirve: tiene que ser un banco, billetera, efectivo… (no una tarjeta ni una cobacha)" };
+      }
+      if (account.parentId === parent.id) {
+        return { ok: true, alreadyLinked: true, account: account.name, parent: parent.name };
+      }
+      await setAccountParentAdmin(ctx.uid, account.id, parent.id);
+      account.parentId = parent.id;
+      return { ok: true, account: account.name, parent: parent.name };
     }
 
     case "set_card_dates": {
