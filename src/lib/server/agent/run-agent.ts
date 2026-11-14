@@ -5,6 +5,7 @@ import type {
   ChatCompletionMessageParam,
 } from "openai/resources/chat/completions";
 import { CHAT_MODEL, DOCUMENT_MODEL, openai } from "./openai";
+import { recordAiUsage, usageFromChat } from "../ai-usage";
 import { buildSystemPrompt, type PromptContext } from "./prompt";
 import { TOOL_DEFINITIONS, executeTool, type ToolContext } from "./tools";
 import type { ChatTurn, Draft } from "../whatsapp/types";
@@ -67,15 +68,17 @@ export const runAgent = async (
 
   let retriedLeakedToolCall = false;
   for (let round = 0; round < MAX_ROUNDS; round += 1) {
+    const model = hasDocument ? DOCUMENT_MODEL : CHAT_MODEL;
     const completion = await openai().chat.completions.create({
       // Para leer resúmenes largos conviene un modelo más grande (configurable).
-      model: hasDocument ? DOCUMENT_MODEL : CHAT_MODEL,
+      model,
       messages,
       tools: TOOL_DEFINITIONS,
       ...(process.env.OPENAI_REASONING_EFFORT
         ? { reasoning_effort: process.env.OPENAI_REASONING_EFFORT as "low" }
         : {}),
     });
+    void recordAiUsage(prompt.uid, hasDocument ? "document" : "chat", completion.model || model, usageFromChat(completion.usage));
     const msg = completion.choices[0]?.message;
     if (!msg) break;
 

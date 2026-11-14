@@ -16,7 +16,7 @@ Hoy algunos avisos se mandan por WhatsApp, pero WhatsApp solo deja escribirle a 
 | Dejaron de compartir una cuenta | "Luciano dejó de compartir la Visa Galicia" | `stop_sharing` (`tools.ts`) |
 | **Vencimiento de tarjeta** (nuevo) | "Mañana vence la Visa Galicia: $ 289.510 + US$ 26" | Job diario (ver abajo) |
 | **Cierre de tarjeta** (nuevo, opcional) | "Hoy cierra la Visa: lo que compres desde mañana va al resumen de diciembre" | Job diario |
-| **Fijos del mes** (nuevo) | "Hoy es 5: ¿cargo el sueldo de US$ 2.500?" | Job diario sobre `users/{uid}/recurring` |
+| **Fijos del mes** (nuevo) | "Hoy es 5: ¿cargo el sueldo de $ 1.500.000?" | Job diario sobre `users/{uid}/recurring` |
 
 Hoy todos esos avisos pasan por `notifyUser` (`src/lib/server/sharing.ts`), que intenta mandar un WhatsApp. La idea es reemplazarlo por un `notify(uid, evento)` que:
 1. Guarde la notificación en `users/{uid}/notifications` (bandeja dentro de la app, con leída/no leída).

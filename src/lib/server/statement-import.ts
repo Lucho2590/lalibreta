@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { FieldValue, type Timestamp } from "firebase-admin/firestore";
 import { adminDb } from "./firebase-admin";
 import { DOCUMENT_MODEL, openai } from "./agent/openai";
+import { recordAiUsage, usageFromChat } from "./ai-usage";
 import { createAccountAdmin } from "./accounts-admin";
 import { createTransactionAdmin } from "./transactions-admin";
 import { saveStatementAdmin } from "./statements-admin";
@@ -202,6 +203,7 @@ ${rules
       json_schema: { name: "card_statement", strict: true, schema: SCHEMA as unknown as Record<string, unknown> },
     },
   });
+  void recordAiUsage(uid, "statement", completion.model || DOCUMENT_MODEL, usageFromChat(completion.usage));
   const content = completion.choices[0]?.message?.content;
   if (!content) throw new Error("La IA no devolvió el análisis");
   const raw = JSON.parse(content) as RawAnalysis;

@@ -419,7 +419,7 @@ export const TOOL_DEFINITIONS: ChatCompletionFunctionTool[] = [
     function: {
       name: "propose_recurring",
       description:
-        "Ingreso o gasto FIJO que se repite todos los meses (\"cobro 2500 USD todos los 5\", \"pago 450 lucas de alquiler el 10\"). Queda en Fijos. Se confirma con botones.",
+        "Ingreso o gasto FIJO que se repite todos los meses (\"cobro 1500000 de sueldo todos los 5\", \"pago 450 lucas de alquiler el 10\", o en dólares: \"cobro 2500 USD el 5\"). Queda en Fijos. Se confirma con botones.",
       parameters: {
         type: "object",
         properties: {
