@@ -28,9 +28,14 @@ import {
 import { consumeLinkCode, getLinkedUid } from "./linking";
 import { loadCategoryRules } from "../statement-import";
 import {
+  REDEEM_ERRORS,
   displayNameOf,
+  findShareCodeInText,
+  joinWithCode,
+  joinedMessage,
   loadMyShares,
   loadSharedAccounts,
+  shareCodeExists,
 } from "../sharing";
 import { notify } from "../notifications";
 import { loadSession, saveSession, takeDraft } from "./sessions";
@@ -106,6 +111,13 @@ const routeMessage = async (
       }
       return;
     }
+    if (findShareCodeInText(text)?.explicit) {
+      await sendText(
+        waId,
+        `Hola 👋 Para sumarte a esa cuenta compartida primero creá tu usuario en *La Libreta* y vinculá este número:\n\n1. Entrá a ${appUrl()}/whatsapp\n2. Tocá "Vincular WhatsApp"\n3. Mandame el mensaje: vincular <código>\n\nDespués reenviame de nuevo la invitación y listo.`,
+      );
+      return;
+    }
     await sendText(
       waId,
       `Hola 👋 Soy el asistente de *La Libreta*. Para empezar, vinculá tu número:\n\n1. Entrá a ${appUrl()}/whatsapp\n2. Tocá "Vincular WhatsApp"\n3. Mandame el mensaje: vincular <código>`,
@@ -125,6 +137,20 @@ const routeMessage = async (
   }
 
   const session = await loadSession(waId, uid);
+
+  // Invitación a una cuenta compartida (reenviada o "unirme 123456"): se
+  // resuelve directo, sin pasar por el agente.
+  const shareCode = text ? findShareCodeInText(text) : null;
+  if (shareCode && (shareCode.explicit || (await shareCodeExists(shareCode.code)))) {
+    const r = await joinWithCode(uid, shareCode.code);
+    const reply = r.ok ? joinedMessage(r) : REDEEM_ERRORS[r.reason];
+    await saveSession(waId, session, [
+      { role: "user", content: text },
+      { role: "assistant", content: reply },
+    ]);
+    await sendText(waId, reply);
+    return;
+  }
 
   // "si" / "no" en texto cuando hay un borrador esperando.
   if (session.pendingDraft && text) {
@@ -278,12 +304,15 @@ const routeMessage = async (
     } else {
       await sendButtons(waId, summary, buttons);
     }
+    for (const extra of result.outbox) await sendText(waId, extra);
     return;
   }
 
   turns.push({ role: "assistant", content: result.reply });
+  for (const extra of result.outbox) turns.push({ role: "assistant", content: extra });
   await saveSession(waId, session, turns);
   await sendText(waId, result.reply);
+  for (const extra of result.outbox) await sendText(waId, extra);
 };
 
 /** Primer mensaje después de vincular: presentación del agente y primer paso. */

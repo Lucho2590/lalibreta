@@ -9,7 +9,10 @@ export function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const router = useRouter();
 
   useEffect(() => {
-    if (!loading && !user) router.replace("/login");
+    if (loading || user) return;
+    // Volver a donde iba después de entrar (ej. el link de una invitación).
+    const here = window.location.pathname + window.location.search;
+    router.replace(here === "/" ? "/login" : `/login?next=${encodeURIComponent(here)}`);
   }, [loading, user, router]);
 
   if (loading || !user) {

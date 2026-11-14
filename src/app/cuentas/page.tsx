@@ -29,6 +29,7 @@ import {
   ChevronDown,
   CreditCard,
   GripVertical,
+  Handshake,
   MoreVertical,
   Pause,
   Pencil,
@@ -38,7 +39,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { AccountIcon, defaultIconForType } from "@/components/account-icon";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
   DropdownMenu,
@@ -420,13 +421,21 @@ export default function AccountsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-end justify-between">
+      <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Cuentas</h1>
           <p className="text-sm text-muted-foreground">
             Arrastrá <GripVertical className="inline size-3.5 align-text-bottom" /> para ordenarlas a tu gusto
           </p>
         </div>
+        <div className="flex shrink-0 gap-2">
+        <Link
+          href="/unirme"
+          className={buttonVariants({ variant: "outline" })}
+          title="Unirme a una cuenta que me compartieron"
+        >
+          <Handshake className="mr-1 size-4" /> Unirme
+        </Link>
         <Sheet open={createOpen} onOpenChange={setCreateOpen}>
           <SheetTrigger
             render={<Button className="bg-brand-grad text-white hover:opacity-95" />}
@@ -442,6 +451,7 @@ export default function AccountsPage() {
             </div>
           </SheetContent>
         </Sheet>
+        </div>
       </div>
 
       <Sheet open={!!editing} onOpenChange={(v) => !v && setEditing(null)}>

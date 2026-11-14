@@ -19,9 +19,10 @@ import type { Currency } from "@/lib/domain/types";
 import { setAccountBalanceAdmin, setCardDatesAdmin } from "../accounts-admin";
 import { CATEGORY_ICON_IDS, createCategoryAdmin } from "../categories-admin";
 import {
+  REDEEM_ERRORS,
   createShareCode,
   displayNameOf,
-  redeemShareCode,
+  joinWithCode,
   revokeShare,
   type MyShare,
   type SharedWithMe,
@@ -57,6 +58,8 @@ export interface ToolContext {
   pendingDraft: Draft | null;
   /** Lo completa una herramienta propose_* cuando arma un borrador válido. */
   proposedDraft: Draft | null;
+  /** Mensajes que el sistema manda aparte, tal cual (ej. la invitación para reenviar). */
+  outbox: string[];
 }
 
 const ACCOUNT_TYPES = ["cash", "debit", "credit", "checking", "savings", "digital", "reserve"] as const;
@@ -466,14 +469,18 @@ export const TOOL_DEFINITIONS: ChatCompletionFunctionTool[] = [
     function: {
       name: "create_share_code",
       description:
-        "Genera un código para COMPARTIR una cuenta propia con otra persona (\"quiero compartir la Visa con mi señora\"). La otra persona se lo pasa a su agente y queda conectada: puede cargar gastos en esa cuenta (entran directo y te avisan) y consultarla. El código vale 24 h y sirve una vez. Se crea en el momento.",
+        "COMPARTE una o varias cuentas propias con otra persona (\"quiero compartir la Visa con mi señora\", \"compartí las dos tarjetas con mi marido\"). El sistema le manda al usuario, aparte, UN mensaje listo para reenviar: la otra persona se lo reenvía a su agente (o entra al link) y queda conectada a TODAS esas cuentas. Si son varias cuentas, una sola llamada con todos los ids.",
       parameters: {
         type: "object",
         properties: {
-          accountId: { type: "string", description: "id de la cuenta propia a compartir" },
-          withWhom: { type: "string", description: 'Con quién (ej. "mi señora", "Orne"), para el mensaje' },
+          accountIds: {
+            type: "array",
+            items: { type: "string" },
+            description: "ids de las cuentas propias a compartir (todas juntas en un solo código)",
+          },
+          withWhom: { type: "string", description: 'Con quién (ej. "mi señora", "Orne")' },
         },
-        required: ["accountId"],
+        required: ["accountIds"],
         additionalProperties: false,
       },
     },
@@ -685,7 +692,10 @@ const recurringSchema = z.object({
 
 const fxSchema = z.object({ date: optYMD });
 
-const shareCodeSchema = z.object({ accountId: z.string().min(1), withWhom: optStr });
+const shareCodeSchema = z.object({
+  accountIds: z.array(z.string().min(1)).min(1).max(10),
+  withWhom: optStr,
+});
 const joinSchema = z.object({
   code: z
     .string()
@@ -1598,50 +1608,34 @@ export const executeTool = async (
     case "create_share_code": {
       const parsed = shareCodeSchema.safeParse(args);
       if (!parsed.success) return issues(parsed.error);
-      const account = ctx.accounts.find((a) => a.id === parsed.data.accountId && a.active);
-      if (!account) return { error: "Esa cuenta no existe (o no es tuya)." };
-      if (account.type === "reserve") return { error: "Las cobachas no se comparten; compartí la cuenta madre." };
-      const { code } = await createShareCode(ctx.uid, account);
+      const ids = [...new Set(parsed.data.accountIds)];
+      const accounts = ids.map((id) => ctx.accounts.find((a) => a.id === id && a.active));
+      if (accounts.some((a) => !a)) return { error: "Alguna de esas cuentas no existe (o no es tuya)." };
+      const valid = accounts as ServerAccountInfo[];
+      if (valid.some((a) => a.type === "reserve")) {
+        return { error: "Las cobachas no se comparten; compartí la cuenta madre." };
+      }
+      const { message } = await createShareCode(ctx.uid, valid);
+      ctx.outbox.push(message);
+      const who = parsed.data.withWhom;
       return {
         ok: true,
-        code,
-        account: account.name,
-        validHours: 24,
-        forwardMessage: `unirme a la cuenta compartida ${code}`,
-        note: "Decile el código y que la otra persona le mande a SU agente el forwardMessage (o el código). Vale 24 h y sirve una vez. Mostrá el código bien visible (en negrita).",
+        accounts: valid.map((a) => a.name),
+        note: `El sistema ya le manda al usuario, justo después de tu respuesta, el mensaje para reenviar (con el código y el link). Respondé SOLO una línea corta del estilo "Listo 👇 Reenviale el mensaje de abajo${who ? ` a ${who}` : ""}." NO escribas el código, ni instrucciones, ni cuánto dura.`,
       };
     }
 
     case "join_shared_account": {
       const parsed = joinSchema.safeParse(args);
       if (!parsed.success) return issues(parsed.error);
-      const r = await redeemShareCode(ctx.uid, parsed.data.code);
-      if (!r.ok) {
-        const msg = {
-          invalid: "Ese código no existe. Pedile a la otra persona que te lo pase de nuevo.",
-          expired: "Ese código venció (duran 24 h). Pedile uno nuevo.",
-          own: "Ese código es de una cuenta tuya: se lo tenés que pasar a la otra persona.",
-          "account-gone": "La cuenta de ese código ya no existe.",
-        }[r.reason];
-        return { error: msg };
-      }
-      if (!r.alreadyHad) {
-        const me = await displayNameOf(ctx.uid);
-        await notify(r.share.ownerUid, {
-          kind: "share-joined",
-          title: `${me} ya comparte tu ${r.share.accountName}`,
-          body: "Lo que cargue ahí entra directo a tu cuenta y te aviso.",
-          url: "/compartidas",
-          whatsappText: `🤝 *${me}* ya comparte tu *${r.share.accountName}*. Lo que cargue ahí entra directo y te aviso.`,
-        });
-      }
+      const r = await joinWithCode(ctx.uid, parsed.data.code);
+      if (!r.ok) return { error: REDEEM_ERRORS[r.reason] };
       return {
         ok: true,
-        alreadyHad: r.alreadyHad,
-        account: r.share.accountName,
-        owner: r.share.ownerName,
-        shareId: r.share.shareId,
-        note: "Contale que ya puede cargar gastos en esa cuenta (entran directo a la cuenta del dueño y le avisa) y consultarla.",
+        owner: r.ownerName,
+        joined: r.joined.map((s) => ({ account: s.accountName, shareId: s.shareId })),
+        alreadyHad: r.alreadyHad.map((s) => ({ account: s.accountName, shareId: s.shareId })),
+        note: "Contale en una o dos líneas que ya puede cargar gastos en esas cuentas (entran directo a la cuenta del dueño y le avisa) y consultarlas.",
       };
     }
 

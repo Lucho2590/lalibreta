@@ -33,7 +33,7 @@ export function Header({ variant = "mobile" }: { variant?: "mobile" | "desktop" 
 
   if (variant === "desktop") {
     return (
-      <header className="sticky top-0 z-30 flex h-16 items-center justify-between gap-2 border-b bg-background/80 px-6 backdrop-blur">
+      <header className="sticky top-0 z-30 hidden h-16 items-center md:flex justify-between gap-2 border-b bg-background/80 px-6 backdrop-blur">
         <MonthSelector />
         <div className="flex items-center gap-3">
           <div className="text-xs text-muted-foreground">{user?.email}</div>

@@ -23,10 +23,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           {/* min-w-0: sin esto, en el celular la columna se estira al ancho de
               su contenido más largo y las tarjetas se salen de la pantalla. */}
           <div className="flex min-h-screen min-w-0 flex-1 flex-col overflow-x-clip">
+            {/* Las dos barras son hijas directas de la columna: si van dentro
+                de otro div, el sticky queda limitado a ese div y se van con
+                el scroll. */}
             <Header variant="mobile" />
-            <div className="hidden md:block">
-              <Header variant="desktop" />
-            </div>
+            <Header variant="desktop" />
             <main className="w-full min-w-0 flex-1 px-4 py-4 pb-[calc(6rem+env(safe-area-inset-bottom))] md:px-8 md:py-8 md:pb-10 md:max-w-6xl md:mx-auto">
               {children}
             </main>
