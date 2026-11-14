@@ -39,6 +39,8 @@ export type SharedExpenseStatus = "active" | "cancelled";
 
 // === Cuentas con extensión ===
 
+export type ShareVisibility = "own" | "all";
+
 export interface AccountShare {
   id: string;
   ownerUid: string;
@@ -54,6 +56,8 @@ export interface AccountShare {
   status: "active" | "revoked";
   /** "direct" (compartidas por WhatsApp): lo que carga el invitado entra sin aprobación. */
   mode?: "direct" | "approval";
+  /** Qué ve el invitado de la cuenta: solo lo que cargó él (por defecto) o todos los gastos. */
+  visibility?: ShareVisibility;
   createdAt: Timestamp;
   updatedAt?: Timestamp;
 }

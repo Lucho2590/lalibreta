@@ -8,9 +8,15 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAccountSharesAsOwner } from "@/hooks/use-data";
 import { apiFetch } from "@/lib/api";
-import type { Account } from "@/lib/domain/types";
+import type { Account, ShareVisibility } from "@/lib/domain/types";
+
+const VISIBILITY_OPTIONS: Array<{ value: ShareVisibility; label: string }> = [
+  { value: "own", label: "Ve solo lo que carga" },
+  { value: "all", label: "Ve todos los gastos" },
+];
 
 export function ShareAccountSection({ account }: { account: Account }) {
   const { data: allShares } = useAccountSharesAsOwner();
@@ -52,6 +58,24 @@ export function ShareAccountSection({ account }: { account: Account }) {
     }
   };
 
+  // Solo el dueño de la cuenta decide qué ve cada persona.
+  const changeVisibility = async (shareId: string, visibility: ShareVisibility, name: string) => {
+    try {
+      const r = await apiFetch("/api/account-shares/visibility", {
+        method: "POST",
+        body: JSON.stringify({ shareId, visibility }),
+      });
+      if (!r.ok) throw new Error();
+      toast.success(
+        visibility === "all"
+          ? `${name} ahora ve todos los gastos de esta cuenta`
+          : `${name} ahora ve solo lo que carga`,
+      );
+    } catch {
+      toast.error("No se pudo cambiar el permiso");
+    }
+  };
+
   const revoke = async (shareId: string, name: string) => {
     if (!confirm(`Revocar acceso a ${name}? No podrá cargar más gastos en esta cuenta.`)) return;
     try {
@@ -76,7 +100,7 @@ export function ShareAccountSection({ account }: { account: Account }) {
         <div>
           <div className="text-sm font-semibold">Compartida con</div>
           <p className="mt-1 text-xs text-muted-foreground">
-            Otros pueden cargar gastos en esta cuenta. Cada uno te queda pendiente de aprobación.
+            Otros pueden cargar gastos en esta cuenta. Vos elegís qué ve cada uno: solo lo que carga o todos los gastos.
           </p>
         </div>
 
@@ -112,7 +136,7 @@ export function ShareAccountSection({ account }: { account: Account }) {
               return (
                 <div
                   key={s.id}
-                  className="flex items-center gap-3 rounded-xl bg-muted/40 p-2"
+                  className="flex flex-wrap items-center gap-3 rounded-xl bg-muted/40 p-2"
                 >
                   <Avatar className="size-9">
                     <AvatarFallback>
@@ -134,6 +158,21 @@ export function ShareAccountSection({ account }: { account: Account }) {
                       <Circle className="size-3" /> Sin registrar
                     </span>
                   )}
+                  <Select
+                    value={s.visibility === "all" ? "all" : "own"}
+                    onValueChange={(v) => v && changeVisibility(s.id, v as ShareVisibility, display)}
+                  >
+                    <SelectTrigger className="h-8 w-[170px] rounded-lg bg-background text-xs" aria-label="Qué puede ver">
+                      <SelectValue items={VISIBILITY_OPTIONS} />
+                    </SelectTrigger>
+                    <SelectContent alignItemWithTrigger={false}>
+                      {VISIBILITY_OPTIONS.map((o) => (
+                        <SelectItem key={o.value} value={o.value}>
+                          {o.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                   <Button
                     size="icon"
                     variant="ghost"

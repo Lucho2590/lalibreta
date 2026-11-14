@@ -27,6 +27,7 @@ import {
   type SharedWithMe,
 } from "../sharing";
 import { notify } from "../notifications";
+import { loadSharedMovements } from "../shared-movements";
 import { currentMonthKey, formatShortDateAR, isMonthKey, isYMD, todayYMD } from "../time";
 import type {
   AccountDraft,
@@ -496,7 +497,7 @@ export const TOOL_DEFINITIONS: ChatCompletionFunctionTool[] = [
     function: {
       name: "get_shared_account_summary",
       description:
-        "Consulta una cuenta que OTRA persona compartió con el usuario: gastos del mes, y si es tarjeta, cuánto se paga y cuándo vence. Solo de esa cuenta.",
+        "Consulta una cuenta que OTRA persona compartió con el usuario: gastos del mes, y si es tarjeta, cuánto se paga y cuándo vence. Solo de esa cuenta. Respeta lo que el dueño le permite ver: si visibility es \"own\", solo ve lo que cargó él (decíselo si pregunta por el total).",
       parameters: {
         type: "object",
         properties: {
@@ -1650,6 +1651,26 @@ export const executeTool = async (
       const entry = ctx.sharedWithMe.find((s) => s.shareId === parsed.data.shareId);
       if (!entry) return { error: "Esa cuenta compartida no está disponible." };
       const month = parsed.data.month ?? currentMonthKey();
+      // El dueño decide qué ve: por defecto, solo lo que cargó el usuario.
+      const view = await loadSharedMovements(ctx.uid, entry.shareId, month).catch(() => null);
+      if (!view) return { error: "Esa cuenta compartida no está disponible." };
+      if (view.visibility === "own") {
+        return {
+          account: entry.account.name,
+          owner: entry.ownerName,
+          month,
+          visibility: "own",
+          note: `${entry.ownerName} solo te deja ver lo que cargaste vos en esta cuenta.`,
+          myTotal: view.mineTotal,
+          myItems: view.items.slice(0, 30).map((i) => ({
+            description: i.description,
+            amount: i.credit || i.kind === "income" ? -i.amount : i.amount,
+            currency: i.currency,
+            installment: i.installment,
+            date: i.date.slice(0, 10),
+          })),
+        };
+      }
       if (entry.account.type === "credit") {
         const st = await getCardStatement(entry.ownerUid, entry.account, month);
         return { account: entry.account.name, owner: entry.ownerName, ...st, dueDate: formatShortDateAR(st.dueDate) };
