@@ -52,7 +52,9 @@ export const buildSystemPrompt = (ctx: PromptContext): string => {
                 a.type === "reserve" && a.parentId
                   ? ` (dentro de ${ctx.accounts.find((p) => p.id === a.parentId)?.name ?? "?"})`
                   : "";
-              return `- id=${a.id} | nombre: "${a.name}" | tipo: ${ACCOUNT_TYPE_LABEL[a.type] ?? a.type}${inside}${a.isMain ? " | ⭐ CUENTA PRINCIPAL" : ""} | monedas: ${a.currencies.join(", ")} | saldo: ${money(bal, a.currencies)}`;
+              const cards = accounts.filter((c) => c.type === "credit" && c.parentId === a.id).map((c) => c.name);
+              const cardsTxt = cards.length > 0 ? ` | tarjetas adentro: ${cards.join(", ")}` : "";
+              return `- id=${a.id} | nombre: "${a.name}" | tipo: ${ACCOUNT_TYPE_LABEL[a.type] ?? a.type}${inside}${a.isMain ? " | ⭐ CUENTA PRINCIPAL" : ""} | monedas: ${a.currencies.join(", ")} | saldo: ${money(bal, a.currencies)}${cardsTxt}`;
             }
             const parent = a.parentId ? ctx.accounts.find((p) => p.id === a.parentId) : null;
             const dates =
@@ -63,7 +65,7 @@ export const buildSystemPrompt = (ctx: PromptContext): string => {
               bal.ARS ? formatMoney(bal.ARS, "ARS") : null,
               bal.USD ? formatMoney(bal.USD, "USD") : null,
             ].filter(Boolean);
-            return `- id=${a.id} | nombre: "${a.name}" | tipo: tarjeta de crédito (${dates}${a.last4 ? `, terminada en ${a.last4}` : ""}${parent ? `, asociada a ${parent.name}` : ""}) | debe: ${debt.join(" + ") || "$ 0"}`;
+            return `- id=${a.id} | nombre: "${a.name}" | tipo: tarjeta de crédito (${dates}${a.last4 ? `, terminada en ${a.last4}` : ""}${parent ? `, asociada a ${parent.name}` : ", SUELTA: no está dentro de ningún banco"}) | debe: ${debt.join(" + ") || "$ 0"}`;
           })
           .join("\n")
       : "(el usuario todavía no tiene cuentas cargadas)";
@@ -193,7 +195,7 @@ Cuando el usuario manda una imagen o PDF, fijate qué es: un ticket/factura de u
 - Tarjeta de crédito: el día de cierre y de vencimiento son OPCIONALES. Si el usuario los dio, pasalos; si no, creala igual sin días (queda con fechas pendientes): NO los exijas ni frenes la creación. Si es de un banco que ya tiene como cuenta (ej. "Visa Galicia" y existe "Banco Galicia"), pasá parentId con el id de ese banco y NO vuelvas a poner el banco en la lista; si el banco se crea en la misma lista, parentName.
 - "Tengo Visa y Master del Francés" = dos tarjetas de crédito que van DENTRO del banco Francés (parentId), no cuentas sueltas. Antes de proponer, chequeá que cada tarjeta lleve su banco.
 - Si una tarjeta que YA EXISTE tiene que ir dentro de un banco existente ("las tarjetas son del Francés", "no las pusiste dentro del banco"), usá set_account_parent (una vez por tarjeta). No vuelvas a proponerlas con propose_accounts.
-- En la lista de cuentas, una tarjeta está dentro de un banco solo si dice "asociada a …". Nunca digas que ya está asociada si no lo dice.
+- En la lista de cuentas, una tarjeta está dentro de un banco solo si dice "asociada a …"; si dice SUELTA, no lo está. Si el usuario dice que una tarjeta va dentro de un banco y figura SUELTA, usá set_account_parent ya, sin discutir. Si la tarjeta ni siquiera figura en la lista, no existe: proponela con propose_accounts y parentId.
 - Cuando el usuario te pase los días de una tarjeta que ya existe ("la visa cierra el 25 y vence el 7"), usá set_card_dates. Si te manda el resumen, register_card_statement con su accountId: las fechas se completan solas.
 - Si carga un gasto con una tarjeta de fechas pendientes, proponelo igual (el sistema ya le agrega un recordatorio de las fechas).
 - No propongas una cuenta con el mismo nombre que una existente.
@@ -219,6 +221,7 @@ Cuando el usuario manda una imagen o PDF, fijate qué es: un ticket/factura de u
 Usá *negrita* con un asterisco, nada de markdown con #. Pocos emojis. No más de ~10 líneas.
 
 ## Cuentas del usuario
+Esta lista es el estado REAL de ahora (se lee de la base en cada mensaje). Si antes en la conversación dijiste algo que no coincide (que una cuenta existe, que una tarjeta está dentro de un banco…), lo que vale es la lista: reconocé el error y arreglalo con la herramienta que corresponda. Nunca digas que algo ya está hecho si la lista no lo muestra o si no lo hiciste con una herramienta.
 ${accountsList}
 
 ## Categorías de gasto
