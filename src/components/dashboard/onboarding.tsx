@@ -2,12 +2,14 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { doc, onSnapshot, setDoc } from "firebase/firestore";
 import { CheckCircle2, CreditCard, MessageCircle, Wallet } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { useAuth } from "@/hooks/use-auth";
 import { useAccounts, useRecurring } from "@/hooks/use-data";
 import { apiJson } from "@/lib/api";
+import { db } from "@/lib/firebase/client";
 import { cn } from "@/lib/utils";
 
 interface WaStatus {
@@ -22,17 +24,38 @@ const SALARY_MSG = "cobro 1500000 pesos de sueldo todos los 5";
 const SKIP_KEY = "onboarding-salary-skipped";
 
 /**
- * Onboarding: (1) conectar WhatsApp con el agente, (2) crear la primera
- * cuenta. Se oculta solo cuando los dos pasos están hechos.
+ * Onboarding: (1) conectar WhatsApp con el agente, (2) crear la cuenta
+ * principal, (3) contar el sueldo (opcional, se puede omitir). Se oculta
+ * cuando están los tres. El "Omitir" se guarda en la cuenta del usuario
+ * (`users/{uid}.onboardingSalarySkipped`) para que valga en todos sus
+ * dispositivos: en el iPhone, la app instalada y Safari no comparten el
+ * localStorage.
  */
 export function Onboarding() {
   const { user } = useAuth();
   const { data: accounts, loading: accountsLoading } = useAccounts();
   const { data: recurring, loading: recurringLoading } = useRecurring();
   const [status, setStatus] = useState<WaStatus | null>(null);
-  const [salarySkipped, setSalarySkipped] = useState(
-    () => typeof window !== "undefined" && window.localStorage.getItem(SKIP_KEY) === "1",
-  );
+  const [salarySkipped, setSalarySkipped] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    if (!user) return;
+    const ref = doc(db, "users", user.uid);
+    return onSnapshot(
+      ref,
+      (snap) => {
+        const remote = snap.data()?.onboardingSalarySkipped === true;
+        // Lo que se omitió antes solo en este dispositivo pasa a la cuenta.
+        if (!remote && window.localStorage.getItem(SKIP_KEY) === "1") {
+          void setDoc(ref, { onboardingSalarySkipped: true }, { merge: true }).catch(() => {});
+          setSalarySkipped(true);
+          return;
+        }
+        setSalarySkipped(remote);
+      },
+      () => setSalarySkipped(window.localStorage.getItem(SKIP_KEY) === "1"),
+    );
+  }, [user]);
 
   // Estado de WhatsApp; mientras no esté vinculado, se reconsulta cada 5 s
   // para marcar el paso apenas el usuario manda el código.
@@ -57,7 +80,7 @@ export function Onboarding() {
     };
   }, [user]);
 
-  if (!status || accountsLoading || recurringLoading) return null;
+  if (!status || accountsLoading || recurringLoading || salarySkipped === null) return null;
   const linked = status.linked;
   const hasMain = accounts.some((a) => a.isMain && a.active !== false);
   const hasIncome = recurring.some((r) => r.kind === "income");
@@ -72,6 +95,9 @@ export function Onboarding() {
   const skipSalary = () => {
     window.localStorage.setItem(SKIP_KEY, "1");
     setSalarySkipped(true);
+    if (user) {
+      void setDoc(doc(db, "users", user.uid), { onboardingSalarySkipped: true }, { merge: true }).catch(() => {});
+    }
   };
 
   return (
