@@ -444,7 +444,19 @@ const confirmAccount = async (waId: string, uid: string, draft: AccountDraft) =>
       continue;
     }
     let parentId = item.parentId && existingIds.has(item.parentId) ? item.parentId : null;
-    if (!parentId && item.parentName) parentId = createdIds.get(norm(item.parentName)) ?? null;
+    if (!parentId && item.parentName) {
+      parentId =
+        createdIds.get(norm(item.parentName)) ??
+        // La madre ya existía (p. ej. se repitió en la lista y se salteó).
+        accounts.find(
+          (a) =>
+            norm(a.name) === norm(item.parentName!) &&
+            a.type !== "credit" &&
+            a.type !== "reserve" &&
+            !a.parentId,
+        )?.id ??
+        null;
+    }
     const id = await createAccountAdmin(uid, {
       name: item.name,
       type: item.accountType,
