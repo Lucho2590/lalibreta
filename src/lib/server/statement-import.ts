@@ -420,67 +420,21 @@ export const importStatement = async (uid: string, payload: ImportPayload): Prom
     categories.find((c) => c.kind === kind && /^otro/i.test(c.name))?.id ??
     categories.find((c) => c.kind === kind)?.id;
 
-  let created = 0;
   let skipped = 0;
   const learned = new Map<string, { categoryId: string; sample: string }>();
   const subscriptions: ProjectedSubscription[] = [];
+  const toLoad: LoadableLine[] = [];
   for (const line of payload.lines) {
     if (isPaymentLine(line) || !line.include) {
       if (line.duplicateOf) skipped += 1;
       continue;
     }
-    const kind = isCreditLine(line) ? "income" : "expense";
-    // Reintegros: con la categoría del gasto que devuelven (de gasto), así en
-    // "Por categoría" descuentan de ese gasto. Si no hay, impuestos u "Otros".
-    const taxCat = categories.find((c) => c.kind === "expense" && /impuest|comisi/i.test(c.name))?.id;
-    const categoryId =
-      line.categoryId && catKind.get(line.categoryId) === "expense"
-        ? line.categoryId
-        : kind === "income" && ["tax", "fee", "interest"].includes(line.type)
-          ? (taxCat ?? fallback("expense"))
-          : fallback("expense");
-    if (!categoryId) continue;
-    const amount = Math.abs(line.amount);
-    const purchaseDate = dateFromYMD(line.date ?? payload.closingDate);
-    const k = line.installmentNumber;
-    const n = line.installmentsTotal;
-
-    if (kind === "expense" && k && n && n > 1) {
-      // Compra completa en N cuotas: la cuota k cae en este resumen.
-      await createTransactionAdmin({
-        ownerUid: uid,
-        account,
-        accountId,
-        categoryId,
-        description: line.description,
-        totalAmount: round2(amount * n),
-        purchaseDate,
-        kind: "expense",
-        installments: n,
-        currency: line.currency,
-        forceFirstBillingMonth: addMonthsKey(period, -(k - 1)),
-      });
-    } else {
-      await createTransactionAdmin({
-        ownerUid: uid,
-        account,
-        accountId,
-        categoryId,
-        description: line.description,
-        totalAmount: amount,
-        purchaseDate,
-        kind,
-        installments: 1,
-        currency: line.currency,
-        // Gastos y reintegros quedan en el resumen que se está importando.
-        forceFirstBillingMonth: period,
-      });
-    }
-    created += 1;
+    toLoad.push(line);
     if (line.categoryId && line.merchantKey) {
       learned.set(line.merchantKey, { categoryId: line.categoryId, sample: line.description });
     }
   }
+  const created = await loadStatementLines(uid, account, period, payload.closingDate, toLoad, categories);
 
   // 5. Suscripciones: se estiman en el resumen siguiente. Van las que se
   //    cargaron y las que ya estaban cargadas (no las que se desmarcaron).
@@ -516,6 +470,89 @@ export const importStatement = async (uid: string, payload: ImportPayload): Prom
   }
 
   return { accountId, accountName, createdAccount, created, skipped, rulesSaved: learned.size, projected };
+};
+
+// === Carga de renglones de un resumen ===
+
+export interface LoadableLine {
+  date: string | null;
+  description: string;
+  /** Positivo = gasto; negativo = reintegro/devolución. */
+  amount: number;
+  currency: Currency;
+  installmentNumber: number | null;
+  installmentsTotal: number | null;
+  type: StatementLineType;
+  /** Categoría de GASTO (también para reintegros: descuentan del gasto que devuelven). */
+  categoryId: string | null;
+  /** Fijo al que corresponde (suscripciones), para que no se ofrezca de nuevo ese mes. */
+  recurringId?: string | null;
+}
+
+/**
+ * Carga los renglones de un resumen como movimientos de la tarjeta:
+ * - cuota k/N: la compra completa en N cuotas, con la cuota k en este resumen
+ * - el resto (compras, suscripciones, impuestos, reintegros): en este resumen
+ * Los pagos no se cargan. Devuelve cuántos movimientos creó.
+ */
+export const loadStatementLines = async (
+  uid: string,
+  account: ReturnType<typeof toServerAccount>,
+  period: string,
+  closingDate: string,
+  lines: LoadableLine[],
+  categories: Array<{ id: string; name: string; kind: string }>,
+): Promise<number> => {
+  const catKind = new Map(categories.map((c) => [c.id, c.kind]));
+  const fallback =
+    categories.find((c) => c.kind === "expense" && /^otro/i.test(c.name))?.id ??
+    categories.find((c) => c.kind === "expense")?.id;
+  const taxCat = categories.find((c) => c.kind === "expense" && /impuest|comisi/i.test(c.name))?.id;
+
+  let created = 0;
+  for (const line of lines) {
+    if (isPaymentLine(line) || line.amount === 0) continue;
+    const kind = isCreditLine(line) ? "income" : "expense";
+    // Reintegros: con la categoría del gasto que devuelven (de gasto), así en
+    // "Por categoría" descuentan de ese gasto. Si no hay, impuestos u "Otros".
+    const categoryId =
+      line.categoryId && catKind.get(line.categoryId) === "expense"
+        ? line.categoryId
+        : ["tax", "fee", "interest"].includes(line.type)
+          ? (taxCat ?? fallback)
+          : fallback;
+    if (!categoryId) continue;
+    const amount = Math.abs(line.amount);
+    const purchaseDate = dateFromYMD(line.date ?? closingDate);
+    const k = line.installmentNumber;
+    const n = line.installmentsTotal;
+    const base = {
+      ownerUid: uid,
+      account,
+      accountId: account.id,
+      categoryId,
+      description: line.description,
+      purchaseDate,
+      currency: line.currency,
+      ...(line.recurringId ? { recurringId: line.recurringId } : {}),
+    };
+
+    if (kind === "expense" && k && n && n > 1) {
+      // Compra completa en N cuotas: la cuota k cae en este resumen.
+      await createTransactionAdmin({
+        ...base,
+        totalAmount: round2(amount * n),
+        kind: "expense",
+        installments: n,
+        forceFirstBillingMonth: addMonthsKey(period, -(k - 1)),
+      });
+    } else {
+      // Gastos y reintegros quedan en el resumen que se está importando.
+      await createTransactionAdmin({ ...base, totalAmount: amount, kind, installments: 1, forceFirstBillingMonth: period });
+    }
+    created += 1;
+  }
+  return created;
 };
 
 // === Suscripciones estimadas ===
@@ -580,4 +617,96 @@ export const projectSubscriptions = async (
     n += 1;
   }
   return n;
+};
+
+// === Resumen leído por WhatsApp: carga del detalle ===
+
+const CHARGE_LINE_TYPES = new Set<StatementLineType>(["tax", "fee", "interest"]);
+const plain = (s: string) =>
+  s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]/g, "");
+
+export interface DraftLinesResult {
+  created: number;
+  /** Renglones que ya estaban cargados y no se repitieron. */
+  duplicates: number;
+}
+
+/**
+ * Carga el detalle de un resumen confirmado por WhatsApp ("Guardar todo"):
+ * consumos, cuotas, suscripciones, impuestos/cargos y reintegros, renglón por
+ * renglón y sin repetir lo que ya estaba cargado. Se llama después de
+ * saveStatementAdmin (con la tarjeta y sus fechas ya actualizadas).
+ */
+export const loadStatementDraftLines = async (
+  uid: string,
+  draft: StatementDraft,
+  accountId: string,
+  /** Los impuestos/cargos ya estaban cargados como un solo gasto (resumen guardado antes). */
+  skipCharges: boolean,
+): Promise<DraftLinesResult> => {
+  const db = adminDb();
+  const [accounts, categories, rules, recurringSnap] = await Promise.all([
+    loadAccounts(uid),
+    loadCategories(uid),
+    loadCategoryRules(uid),
+    db.collection(`users/${uid}/recurring`).where("accountId", "==", accountId).get(),
+  ]);
+  const card = accounts.find((a) => a.id === accountId);
+  if (!card) return { created: 0, duplicates: 0 };
+  const period = draft.period;
+
+  const analyzed: AnalyzedLine[] = draft.lines.map((l, index) => {
+    const m = l.installment?.match(/(\d+)\s*\/\s*(\d+)/);
+    const k = m ? Number(m[1]) : null;
+    const n = m ? Number(m[2]) : null;
+    const hasInstallments = Boolean(k && n && n > 1 && k >= 1 && k <= n);
+    return {
+      index,
+      date: l.date && isYMD(l.date) ? l.date : null,
+      description: l.description,
+      amount: round2(l.amount),
+      currency: l.currency,
+      installmentNumber: hasInstallments ? k : null,
+      installmentsTotal: hasInstallments ? n : null,
+      type: hasInstallments && l.type === "purchase" ? "installment" : l.type,
+      merchantKey: normalizeMerchant(l.description),
+      suggestedCategoryId: null,
+      categorySource: null,
+      duplicateOf: null,
+    };
+  });
+
+  // Si un resumen anterior se importó desde la web, las suscripciones de este
+  // quedaron estimadas: se reemplazan por lo real.
+  await deleteProjected(uid, accountId, [period]);
+  await markDuplicates(uid, accountId, period, analyzed);
+
+  const catKind = new Map(categories.map((c) => [c.id, c.kind]));
+  const ruleByKey = new Map(rules.map((r) => [r.key, r.categoryId]));
+  const fixed = recurringSnap.docs.map((d) => ({ id: d.id, key: plain(String(d.data().name ?? "")) }));
+  const fixedFor = (description: string) => {
+    const key = plain(description);
+    return fixed.find((f) => f.key && (f.key === key || key.includes(f.key) || f.key.includes(key)))?.id ?? null;
+  };
+
+  const toLoad: LoadableLine[] = [];
+  for (const l of analyzed) {
+    if (isPaymentLine(l) || l.duplicateOf) continue;
+    const isCharge = CHARGE_LINE_TYPES.has(l.type);
+    if (isCharge && skipCharges) continue;
+    const chosen = draft.lines[l.index].categoryId;
+    const ruled = ruleByKey.get(l.merchantKey);
+    const categoryId =
+      (chosen && catKind.get(chosen) === "expense" ? chosen : null) ??
+      (ruled && catKind.get(ruled) === "expense" ? ruled : null) ??
+      (isCharge ? draft.chargesCategoryId : null);
+    toLoad.push({
+      ...l,
+      categoryId,
+      recurringId: l.type === "subscription" && l.amount > 0 ? fixedFor(l.description) : null,
+    });
+  }
+
+  const created = await loadStatementLines(uid, toServerAccount(card), period, draft.closingDate, toLoad, categories);
+  return { created, duplicates: analyzed.filter((l) => l.duplicateOf).length };
 };

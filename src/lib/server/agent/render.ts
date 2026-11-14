@@ -107,15 +107,29 @@ const renderStatement = (d: StatementDraft) => {
   out.push(`Total: *${money(d.totalARS)}*${d.totalUSD ? ` + ${usd(d.totalUSD)}` : ""}`);
   if (d.minimumPayment) out.push(`Pago mínimo: ${money(d.minimumPayment)}`);
 
-  const charges = d.lines.filter((l) => l.currency === "ARS" && CHARGE_TYPES.has(l.type));
-  if (d.chargesARS > 0) {
-    out.push("", `🏛️ *Impuestos y cargos: ${money(d.chargesARS)}*`);
-    for (const c of charges.slice(0, 8)) out.push(`• ${c.description}: ${money(c.amount)}`);
-    if (charges.length > 8) out.push(`• … y ${charges.length - 8} más`);
-    out.push(`→ se cargan como gasto en _${d.chargesCategoryName}_`);
+  // Consumos: compras, cuotas, suscripciones y reintegros (todo menos pagos y cargos).
+  const consumos = d.lines.filter((l) => l.type !== "payment" && !CHARGE_TYPES.has(l.type));
+  if (consumos.length > 0) {
+    const sum = (c: "ARS" | "USD") =>
+      Math.round(consumos.filter((l) => l.currency === c).reduce((a, l) => a + l.amount, 0) * 100) / 100;
+    const parts = [sum("ARS") ? money(sum("ARS")) : null, sum("USD") ? usd(sum("USD")) : null].filter(Boolean);
+    const cuotas = consumos.filter((l) => l.installment).length;
+    out.push(
+      "",
+      `🛒 *${consumos.length} ${consumos.length === 1 ? "consumo" : "consumos"}*${parts.length ? `: ${parts.join(" + ")}` : ""}${cuotas ? ` (${cuotas} en cuotas)` : ""}`,
+    );
   }
-  if (d.chargesUSD) {
-    out.push(`🏛️ *Impuestos y cargos en dólares: ${usd(d.chargesUSD)}* → se cargan como gasto en US$`);
+
+  const charges = d.lines.filter((l) => CHARGE_TYPES.has(l.type));
+  if (charges.length > 0) {
+    const ars = charges.filter((l) => l.currency === "ARS").reduce((a, l) => a + l.amount, 0);
+    const usdSum = charges.filter((l) => l.currency === "USD").reduce((a, l) => a + l.amount, 0);
+    const parts = [ars ? money(Math.round(ars * 100) / 100) : null, usdSum ? usd(Math.round(usdSum * 100) / 100) : null].filter(Boolean);
+    out.push(`🏛️ *Impuestos y cargos*${parts.length ? `: ${parts.join(" + ")}` : ""}`);
+    for (const c of charges.slice(0, 8)) {
+      out.push(`• ${c.description}: ${c.currency === "USD" ? usd(c.amount) : money(c.amount)}`);
+    }
+    if (charges.length > 8) out.push(`• … y ${charges.length - 8} más`);
   }
 
   if (d.subscriptions.length > 0) {
@@ -127,7 +141,7 @@ const renderStatement = (d: StatementDraft) => {
 
   out.push(
     "",
-    "*Guardar todo*: guarda el resumen y las fechas, carga los impuestos/cargos y los fijos.",
+    "*Guardar todo*: guarda el resumen y las fechas, y carga cada consumo, cuota, impuesto y reintegro en la tarjeta (lo que ya tengas cargado no se repite), más los fijos.",
     "*Solo resumen*: guarda el resumen y las fechas, sin crear movimientos.",
   );
   return out.join("\n");

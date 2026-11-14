@@ -99,6 +99,11 @@ export const saveStatementAdmin = async (
   uid: string,
   draft: StatementDraft,
   mode: "all" | "summary",
+  /**
+   * true: los impuestos y cargos NO se cargan como un solo gasto, porque el
+   * que llama carga el detalle renglón por renglón (incluidos los cargos).
+   */
+  opts: { chargesAsLines?: boolean } = {},
 ): Promise<SaveStatementResult> => {
   const db = adminDb();
 
@@ -187,6 +192,8 @@ export const saveStatementAdmin = async (
     chargesTransaction = "skipped";
   } else if (chargesTransactionId || chargesTransactionIdUSD) {
     chargesTransaction = "already-existed";
+  } else if (opts.chargesAsLines) {
+    chargesTransaction = "none";
   } else if (draft.chargesCategoryId && (draft.chargesARS > 0 || (draft.chargesUSD ?? 0) > 0)) {
     if (draft.chargesARS > 0) {
       chargesTransactionId = await createTransactionAdmin({
