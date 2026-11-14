@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { doc, onSnapshot, writeBatch } from "firebase/firestore";
 import {
   DndContext,
   DragOverlay,
@@ -56,11 +57,20 @@ import {
 import { useAuth } from "@/hooks/use-auth";
 import { useAccounts, useAllInstallments } from "@/hooks/use-data";
 import { computeAccountBalances, type AccountBalance } from "@/lib/domain/balances";
-import { accountCurrencies, paymentMonthOf, type Currency, type Installment } from "@/lib/domain/types";
+import { accountCurrencies, paymentMonthOf, type AccountShare, type Currency, type Installment } from "@/lib/domain/types";
+import { db } from "@/lib/firebase/client";
 import { formatMoney, formatShortDate } from "@/lib/format";
 import { summarizeCardMonth } from "@/lib/domain/card-summary";
 import { AccountForm } from "@/components/accounts/account-form";
-import { SharedWithMeSection } from "@/components/accounts/shared-with-me-section";
+import {
+  SharedApprovals,
+  SharedGroupCard,
+  SharedMovementsSheet,
+  SharedSubmitSheet,
+  isSharedGroupId,
+  useSharedWithMe,
+  type SharedGroup,
+} from "@/components/accounts/shared-with-me-section";
 import {
   deleteAccount,
   saveAccountOrder,
@@ -93,6 +103,17 @@ export default function AccountsPage() {
     () => computeAccountBalances(accounts, allInstallments),
     [accounts, allInstallments],
   );
+  const shared = useSharedWithMe();
+  const [submitting, setSubmitting] = useState<AccountShare | null>(null);
+  const [viewing, setViewing] = useState<AccountShare | null>(null);
+  // Posición de las tarjetas "Compartidas con…" entre las cuentas (users/{uid}.sharedGroupOrder).
+  const [sharedOrder, setSharedOrder] = useState<Record<string, number>>({});
+  useEffect(() => {
+    if (!user) return;
+    return onSnapshot(doc(db, "users", user.uid), (snap) =>
+      setSharedOrder((snap.data()?.sharedGroupOrder as Record<string, number> | undefined) ?? {}),
+    );
+  }, [user]);
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState<Account | null>(null);
   // Cuentas madre plegadas (se recuerda en este navegador).
@@ -122,6 +143,32 @@ export default function AccountsPage() {
     setOrderOverride((prev) => ({ ...prev, ...patch }));
     try {
       await saveAccountOrder(user.uid, orderedIds);
+    } catch (err) {
+      toast.error("No se pudo guardar el orden");
+      console.error(err);
+      setOrderOverride((prev) => {
+        const next = { ...prev };
+        for (const id of orderedIds) delete next[id];
+        return next;
+      });
+    }
+  };
+  /** Orden de la lista principal: cuentas propias y tarjetas de compartidas, todo junto. */
+  const reorderTop = async (orderedIds: string[]) => {
+    if (!user) return;
+    const patch = Object.fromEntries(orderedIds.map((id, i) => [id, i]));
+    setOrderOverride((prev) => ({ ...prev, ...patch }));
+    try {
+      const batch = writeBatch(db);
+      const sharedPatch: Record<string, number> = {};
+      orderedIds.forEach((id, i) => {
+        if (isSharedGroupId(id)) sharedPatch[id.slice("shared:".length)] = i;
+        else batch.update(doc(db, `users/${user.uid}/accounts/${id}`), { sortOrder: i });
+      });
+      if (Object.keys(sharedPatch).length > 0) {
+        batch.set(doc(db, "users", user.uid), { sharedGroupOrder: sharedPatch }, { merge: true });
+      }
+      await batch.commit();
     } catch (err) {
       toast.error("No se pudo guardar el orden");
       console.error(err);
@@ -353,7 +400,23 @@ export default function AccountsPage() {
   const orphanCards = accounts.filter(
     (a) => a.parentId && !accounts.some((p) => p.id === a.parentId),
   );
-  const groups = sorted([...topLevel, ...orphanCards]);
+  // Lista principal: cuentas madre + una tarjeta por cada persona que me compartió algo.
+  // Las compartidas sin posición guardada van al final.
+  type TopItem = { id: string; account?: Account; group?: SharedGroup; order: number; tie: number };
+  const groups: TopItem[] = [
+    ...sorted([...topLevel, ...orphanCards]).map((a, i) => ({
+      id: a.id,
+      account: a,
+      order: orderOverride[a.id] ?? a.sortOrder ?? Number.MAX_SAFE_INTEGER - 1,
+      tie: i,
+    })),
+    ...shared.groups.map((g, i) => ({
+      id: g.id,
+      group: g,
+      order: orderOverride[g.id] ?? sharedOrder[g.ownerUid] ?? Number.MAX_SAFE_INTEGER,
+      tie: 10_000 + i,
+    })),
+  ].sort((a, b) => a.order - b.order || a.tie - b.tie);
 
   return (
     <div className="space-y-6">
@@ -410,18 +473,40 @@ export default function AccountsPage() {
         </Card>
       )}
 
-      <SharedWithMeSection />
-
       <SortableList
         ids={groups.map((g) => g.id)}
-        onReorder={reorder}
+        onReorder={reorderTop}
         renderOverlay={(id) => {
-          const acc = groups.find((g) => g.id === id);
-          return acc ? parentCard(acc, { overlay: true }) : null;
+          const item = groups.find((g) => g.id === id);
+          if (item?.group) {
+            return (
+              <SharedGroupCard group={item.group} pendingByShare={shared.pendingByShare} overlay collapsed />
+            );
+          }
+          return item?.account ? parentCard(item.account, { overlay: true }) : null;
         }}
       >
         <div className="space-y-3">
-          {groups.map((acc) => {
+          {groups.map((item) => {
+            if (item.group) {
+              const g = item.group;
+              return (
+                <SortableItem key={g.id} id={g.id}>
+                  {(handle) => (
+                    <SharedGroupCard
+                      group={g}
+                      pendingByShare={shared.pendingByShare}
+                      handle={handle}
+                      collapsed={collapsed.has(g.id)}
+                      onToggle={() => toggleCollapsed(g.id)}
+                      onLoad={setSubmitting}
+                      onView={setViewing}
+                    />
+                  )}
+                </SortableItem>
+              );
+            }
+            const acc = item.account!;
             const children = sorted(childrenByParent.get(acc.id) ?? []);
             const isCollapsed = collapsed.has(acc.id);
             return (
@@ -455,6 +540,10 @@ export default function AccountsPage() {
           })}
         </div>
       </SortableList>
+
+      <SharedApprovals approvals={shared.approvals} />
+      <SharedSubmitSheet share={submitting} onClose={() => setSubmitting(null)} />
+      <SharedMovementsSheet share={viewing} onClose={() => setViewing(null)} />
     </div>
   );
 }

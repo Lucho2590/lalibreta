@@ -52,6 +52,7 @@ export async function POST(req: Request) {
   }
   const approval = approvalSnap.data() as {
     ownerUid: string;
+    granteeUid: string;
     granteeEmail: string;
     granteeDisplayName: string | null;
     accountId: string;
@@ -123,6 +124,11 @@ export async function POST(req: Request) {
       kind: "expense",
       installments: approval.installments,
       cardClosedAtPurchase: approval.cardClosedAtPurchase,
+      // Quién lo cargó: así la persona puede ver "lo suyo" en la cuenta compartida.
+      createdBy: {
+        uid: approval.granteeUid,
+        name: approval.granteeDisplayName || approval.granteeEmail,
+      },
     });
   }
 
