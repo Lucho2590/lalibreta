@@ -17,10 +17,13 @@ const SESSION_MS = 12 * 60 * 60 * 1000;
 const MAX_FAILS = 5;
 const LOCK_MS = 15 * 60 * 1000;
 
+/** Variables pegadas en Vercel a veces traen espacios, saltos de línea o comillas. */
+const cleanEnv = (v: string | undefined) => (v ?? "").trim().replace(/^["']|["']$/g, "").trim();
+
 const adminEmails = () =>
-  (process.env.ADMIN_EMAILS ?? "")
-    .split(",")
-    .map((e) => e.trim().toLowerCase())
+  cleanEnv(process.env.ADMIN_EMAILS)
+    .split(/[,;\s]+/)
+    .map((e) => cleanEnv(e).toLowerCase())
     .filter(Boolean);
 
 const secret = () => {
@@ -58,7 +61,7 @@ export const unlockAdmin = async (user: AuthedUser, pin: string): Promise<Unlock
   if (lockedUntil > Date.now()) {
     return { ok: false, reason: "locked", retryInMinutes: Math.ceil((lockedUntil - Date.now()) / 60000) };
   }
-  const expected = process.env.ADMIN_PIN;
+  const expected = cleanEnv(process.env.ADMIN_PIN);
   // Un email que no es admin recibe la misma respuesta que un PIN incorrecto.
   if (!expected || !isAdminEmail(user.email) || !safeEqual(pin, expected)) {
     const fails = ((snap.data()?.fails as number | undefined) ?? 0) + 1;
@@ -68,7 +71,10 @@ export const unlockAdmin = async (user: AuthedUser, pin: string): Promise<Unlock
         : { fails, updatedAt: FieldValue.serverTimestamp() },
       { merge: true },
     );
-    console.warn("[admin] PIN incorrecto", user.uid, user.email);
+    console.warn("[admin] PIN incorrecto", user.uid, user.email, {
+      pinConfigured: !!expected,
+      emailAllowed: isAdminEmail(user.email),
+    });
     return fails >= MAX_FAILS
       ? { ok: false, reason: "locked", retryInMinutes: LOCK_MS / 60000 }
       : { ok: false, reason: "wrong-pin" };
