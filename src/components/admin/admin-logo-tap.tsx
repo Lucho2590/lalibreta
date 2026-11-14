@@ -8,7 +8,7 @@ import { getAdminToken, unlockAdmin } from "@/lib/admin-client";
 import { cn } from "@/lib/utils";
 
 const TAPS = 8;
-const MAX_GAP_MS = 1200;
+const MAX_GAP_MS = 1500;
 
 /**
  * Envuelve el logo: 8 toques seguidos abren el PIN del panel de administrador.
@@ -32,7 +32,16 @@ export function AdminLogoTap({ children, className }: { children: React.ReactNod
 
   return (
     <>
-      <div onClick={onTap} className={cn("select-none", className)} style={{ WebkitTapHighlightColor: "transparent" }}>
+      {/* En el iPhone, los toques rápidos se toman como "doble toque = zoom" y
+          no llega el click: touch-action: manipulation lo desactiva, y contamos
+          con pointerup (llega en cada toque, con dedo o mouse). */}
+      <div
+        onPointerUp={(e) => {
+          if (e.button === 0 || e.pointerType !== "mouse") onTap();
+        }}
+        className={cn("cursor-pointer select-none", className)}
+        style={{ WebkitTapHighlightColor: "transparent", touchAction: "manipulation", WebkitTouchCallout: "none" }}
+      >
         {children}
       </div>
       <PinDialog
@@ -59,6 +68,7 @@ export function PinDialog({
   const [pin, setPin] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [focused, setFocused] = useState(false);
 
   const submit = async (value: string) => {
     setBusy(true);
@@ -114,13 +124,15 @@ export function PinDialog({
             maxLength={4}
             value={pin}
             disabled={busy}
+            onFocus={() => setFocused(true)}
+            onBlur={() => setFocused(false)}
             onChange={(e) => {
               const v = e.target.value.replace(/\D/g, "").slice(0, 4);
               setPin(v);
               setError(null);
               if (v.length === 4) void submit(v);
             }}
-            className="absolute inset-0 opacity-0"
+            className="absolute inset-0 text-base opacity-0"
           />
         </label>
         <div className="h-5 text-center text-sm">
@@ -128,6 +140,9 @@ export function PinDialog({
             <Loader2 className="mx-auto size-4 animate-spin text-muted-foreground" />
           ) : error ? (
             <span className="text-destructive">{error}</span>
+          ) : !focused ? (
+            // En el celular el teclado no se abre solo: hay que tocar los casilleros.
+            <span className="text-muted-foreground">Tocá los casilleros para escribir</span>
           ) : null}
         </div>
       </DialogContent>
