@@ -24,6 +24,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { signOut } from "@/lib/firebase/auth";
 import { useNewTransactionSheet } from "@/components/transactions/new-transaction-sheet";
 import { cn } from "@/lib/utils";
+import { AdminLogoTap } from "@/components/admin/admin-logo-tap";
 
 const navItems = [
   { href: "/", label: "Inicio", icon: Home },
@@ -49,9 +50,11 @@ export function Sidebar() {
   return (
     <aside className="hidden md:flex md:w-64 lg:w-72 shrink-0 sticky top-0 h-screen flex-col border-r bg-sidebar text-sidebar-foreground">
       <div className="flex h-16 items-center gap-2 border-b px-5">
-        <div className="flex size-9 items-center justify-center rounded-xl bg-brand-grad text-white shadow-sm">
-          <Wallet className="size-5" strokeWidth={2.25} />
-        </div>
+        <AdminLogoTap>
+          <div className="flex size-9 items-center justify-center rounded-xl bg-brand-grad text-white shadow-sm">
+            <Wallet className="size-5" strokeWidth={2.25} />
+          </div>
+        </AdminLogoTap>
         <div className="leading-tight">
           <div className="text-sm font-bold tracking-tight">La Libreta</div>
           <div className="text-[11px] text-muted-foreground">Control de gastos</div>

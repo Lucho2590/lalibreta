@@ -1,6 +1,7 @@
 import "server-only";
 
 import OpenAI, { toFile } from "openai";
+import { recordAiUsage, usageFromTranscription } from "../ai-usage";
 
 let client: OpenAI | null = null;
 
@@ -34,6 +35,7 @@ const extensionFor = (mime: string): string => {
 export const transcribeAudio = async (
   data: Buffer,
   mimeType: string,
+  uid?: string,
 ): Promise<string> => {
   const baseMime = mimeType.split(";")[0].trim();
   const file = await toFile(data, `nota.${extensionFor(baseMime)}`, {
@@ -44,5 +46,6 @@ export const transcribeAudio = async (
     model: TRANSCRIBE_MODEL,
     language: "es",
   });
+  void recordAiUsage(uid, "transcribe", TRANSCRIBE_MODEL, usageFromTranscription(res.usage));
   return res.text.trim();
 };

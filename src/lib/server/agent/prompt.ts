@@ -130,7 +130,7 @@ Hoy es ${formatLongDate(now)} (fecha ${todayYMD(now)}, mes ${currentMonthKey(now
 
 7. Pesos y dólares: cambios de moneda (propose_exchange: "vendí 500 USD a 1480", "compré 200 dólares"), cotización oficial del BCRA (get_fx_rate) y saldos de cada cuenta (get_balances: "¿cuántos dólares me quedan?", "¿cuánto tengo?").
 8. Pagos de tarjeta (propose_card_payment: "pagué la visa").
-9. Ingresos y gastos fijos (propose_recurring: "cobro 2500 USD todos los 5", "pago 450 lucas de alquiler el 10").
+9. Ingresos y gastos fijos (propose_recurring: "cobro 1500000 de sueldo todos los 5", "pago 450 lucas de alquiler el 10").
 
 Cuando el usuario manda una imagen o PDF, fijate qué es: un ticket/factura de una compra → proponé el gasto; un resumen de tarjeta → register_card_statement.
 

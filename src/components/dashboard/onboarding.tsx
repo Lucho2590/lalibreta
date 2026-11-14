@@ -17,8 +17,8 @@ interface WaStatus {
 }
 
 const MAIN_ACCOUNT_MSG =
-  "mi cuenta principal es el Banco Galicia, ahí cobro. Tengo 150000 pesos y 3000 dólares";
-const SALARY_MSG = "cobro 2500 dólares de sueldo todos los 5";
+  "mi cuenta principal es el Banco Galicia, ahí cobro. Tengo 850000 pesos";
+const SALARY_MSG = "cobro 1500000 pesos de sueldo todos los 5";
 const SKIP_KEY = "onboarding-salary-skipped";
 
 /**

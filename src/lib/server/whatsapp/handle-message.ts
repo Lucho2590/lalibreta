@@ -151,7 +151,7 @@ const routeMessage = async (
     case "audio": {
       if (!message.audio) return;
       const media = await downloadMedia(message.audio.id);
-      const transcript = await transcribeAudio(media.data, media.mimeType);
+      const transcript = await transcribeAudio(media.data, media.mimeType, uid);
       if (!transcript) {
         await sendText(waId, "No llegué a entender el audio 🙉. ¿Me lo mandás de nuevo o por escrito?");
         return;
@@ -291,7 +291,7 @@ const welcomeMessage = async (uid: string, profileName: string | null): Promise<
   const [agentName, accounts] = await Promise.all([ensureAgentName(uid), loadAccounts(uid)]);
   const hola = `¡Hola${profileName ? `, ${profileName.split(" ")[0]}` : ""}! 🎉 Soy *${agentName}*, tu agente de cuentas. Tu WhatsApp quedó vinculado.`;
   if (accounts.length === 0) {
-    return `${hola}\n\nPara arrancar, contame cuál es tu *cuenta principal* (donde cobrás), en qué moneda y cuánto tenés hoy. Por ejemplo:\n• "mi cuenta principal es el Banco Galicia, ahí cobro en dólares. Tengo 3000 dólares y 150000 pesos"\n\nDespués sumamos el resto: "agregá Efectivo y Mercado Pago", "la Visa Galicia es del Galicia", etc.`;
+    return `${hola}\n\nPara arrancar, contame cuál es tu *cuenta principal* (donde cobrás), en qué moneda y cuánto tenés hoy. Por ejemplo:\n• "mi cuenta principal es el Banco Galicia, ahí cobro. Tengo 850000 pesos"\n(si también tenés dólares, sumalo: "…y 500 dólares")\n\nDespués sumamos el resto: "agregá Efectivo y Mercado Pago", "la Visa Galicia es del Galicia", etc.`;
   }
   return `${hola}\n\nYa podés mandarme cosas como:\n• "gasté 15000 en el super con la visa"\n• "nafta 30 lucas en efectivo"\n• una foto del ticket o un audio\n• el PDF del resumen de la tarjeta\n• "¿cuánto gasté este mes?"`;
 };
@@ -448,7 +448,7 @@ const confirmAccount = async (waId: string, uid: string, draft: AccountDraft) =>
   if (draft.accounts.some((a) => a.isMain && created.includes(a.name))) {
     lines.push(
       "",
-      "⭐ Quedó como tu cuenta principal. ¿Cuánto cobrás y qué día? (ej. \"cobro 2500 dólares todos los 5\") Así lo dejo como ingreso fijo.",
+      "⭐ Quedó como tu cuenta principal. ¿Cuánto cobrás y qué día? (ej. \"cobro 1500000 pesos todos los 5\") Así lo dejo como ingreso fijo.",
       "Y ya podés mandarme gastos, audios, fotos de tickets o el PDF del resumen de la tarjeta 🚀",
     );
   } else if (accounts.length === 0 && created.length > 0) {

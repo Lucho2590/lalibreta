@@ -25,6 +25,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { signOut } from "@/lib/firebase/auth";
 import { MonthSelector } from "./month-selector";
 import { NotificationBell } from "@/components/pwa/notification-bell";
+import { AdminLogoTap } from "@/components/admin/admin-logo-tap";
 
 export function Header({ variant = "mobile" }: { variant?: "mobile" | "desktop" }) {
   const { user } = useAuth();
@@ -45,9 +46,11 @@ export function Header({ variant = "mobile" }: { variant?: "mobile" | "desktop" 
   return (
     <header className="sticky top-0 z-30 flex h-14 items-center justify-between gap-2 border-b bg-background/90 px-4 backdrop-blur md:hidden">
       <div className="flex items-center gap-2">
-        <div className="flex size-8 items-center justify-center rounded-lg bg-brand-grad text-white">
-          <Wallet className="size-4" strokeWidth={2.25} />
-        </div>
+        <AdminLogoTap>
+          <div className="flex size-8 items-center justify-center rounded-lg bg-brand-grad text-white">
+            <Wallet className="size-4" strokeWidth={2.25} />
+          </div>
+        </AdminLogoTap>
         <MonthSelector />
       </div>
       <div className="flex items-center gap-1">
