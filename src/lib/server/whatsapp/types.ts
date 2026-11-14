@@ -125,6 +125,8 @@ export interface StatementDraftLine {
     | "payment"
     | "credit"
     | "other";
+  /** Categoría de gasto sugerida por el agente (opcional). */
+  categoryId?: string | null;
 }
 
 export interface SubscriptionProposal {

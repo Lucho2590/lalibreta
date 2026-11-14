@@ -28,7 +28,7 @@ import {
   sendText,
 } from "./client";
 import { consumeLinkCode, getLinkedUid } from "./linking";
-import { loadCategoryRules } from "../statement-import";
+import { loadCategoryRules, loadStatementDraftLines } from "../statement-import";
 import {
   REDEEM_ERRORS,
   displayNameOf,
@@ -577,7 +577,13 @@ const confirmStatement = async (
   if (draft.chargesCategoryId && !catIds.has(draft.chargesCategoryId)) draft.chargesCategoryId = null;
   draft.subscriptions = draft.subscriptions.filter((s) => catIds.has(s.categoryId));
 
-  const r = await saveStatementAdmin(uid, draft, mode);
+  // "Guardar todo": el detalle se carga renglón por renglón (incluidos los
+  // impuestos), salvo que los cargos ya estuvieran como un solo gasto.
+  const r = await saveStatementAdmin(uid, draft, mode, { chargesAsLines: true });
+  const loaded =
+    mode === "all"
+      ? await loadStatementDraftLines(uid, draft, r.accountId, r.chargesTransaction === "already-existed")
+      : null;
 
   const lines = [`✅ Resumen de *${r.accountName}* guardado.`];
   if (r.createdAccount) lines.push("• Creé la tarjeta en tus cuentas.");
@@ -597,6 +603,15 @@ const confirmStatement = async (
     lines.push(`• Cargué ${parts.join(" + ")} de impuestos y cargos como gasto.`);
   } else if (r.chargesTransaction === "already-existed") {
     lines.push("• Los impuestos y cargos de este resumen ya estaban cargados, no los dupliqué.");
+  }
+  if (loaded) {
+    if (loaded.created > 0) {
+      lines.push(
+        `• Cargué ${loaded.created} ${loaded.created === 1 ? "movimiento" : "movimientos"} del detalle (consumos, cuotas, impuestos y reintegros)${loaded.duplicates ? `; ${loaded.duplicates} ya ${loaded.duplicates === 1 ? "estaba cargado" : "estaban cargados"} y no los repetí` : ""}.`,
+      );
+    } else if (loaded.duplicates > 0) {
+      lines.push("• Los movimientos de este resumen ya estaban cargados, no los dupliqué.");
+    }
   }
   if (r.subscriptionsCreated.length > 0) {
     lines.push(`• Fijos nuevos: ${r.subscriptionsCreated.join(", ")}.`);

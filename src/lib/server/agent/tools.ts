@@ -242,7 +242,7 @@ export const TOOL_DEFINITIONS: ChatCompletionFunctionTool[] = [
     function: {
       name: "register_card_statement",
       description:
-        "Registra los datos leídos de un resumen de tarjeta de crédito (PDF o foto). El usuario lo confirma con botones antes de guardarlo. Guarda cierres y vencimientos reales, el detalle de líneas, y (si el usuario elige 'Guardar todo') carga los impuestos y cargos como un gasto y da de alta las suscripciones como gastos fijos.",
+        "Registra los datos leídos de un resumen de tarjeta de crédito (PDF o foto). El usuario lo confirma con botones antes de guardarlo. Guarda cierres y vencimientos reales y el detalle de líneas. Si el usuario elige 'Guardar todo', además carga cada consumo, cuota, suscripción, impuesto y reintegro como movimiento de la tarjeta (sin repetir lo ya cargado) y da de alta las suscripciones como gastos fijos.",
       parameters: {
         type: "object",
         properties: {
@@ -288,6 +288,11 @@ export const TOOL_DEFINITIONS: ChatCompletionFunctionTool[] = [
                   enum: [...LINE_TYPES],
                   description:
                     "purchase=compra en 1 pago, installment=cuota de compra en cuotas, subscription=débito automático recurrente (Spotify, Netflix, YouTube, gimnasio, seguros de terceros...), tax=impuestos (IVA, sellos, percepciones, IIBB, Ganancias, DB.RG...), fee=comisiones y cargos del banco (mantenimiento, renovación, seguro de vida del banco...), interest=intereses (financiación, punitorios), payment=su pago, credit=bonificaciones/devoluciones, other=otro",
+                },
+                categoryId: {
+                  type: "string",
+                  description:
+                    "id de una categoría de GASTO para este renglón (compras, cuotas, suscripciones; en reintegros, la del gasto que devuelven). Usá las preferencias del usuario si el comercio figura ahí. Omitir en pagos.",
                 },
               },
               required: ["description", "amount", "currency", "type"],
@@ -778,6 +783,7 @@ const statementSchema = z.object({
         currency: z.enum(["ARS", "USD"]),
         installment: optStr,
         type: z.enum(LINE_TYPES),
+        categoryId: optStr,
       }),
     )
     .max(400),
@@ -1140,6 +1146,8 @@ const registerStatement = (ctx: ToolContext, raw: unknown): ToolResult => {
     currency: l.currency,
     installment: l.installment ?? null,
     type: l.type,
+    // Solo categorías de gasto (los reintegros descuentan del gasto que devuelven).
+    categoryId: l.categoryId && ctx.categories.some((c) => c.id === l.categoryId && c.kind === "expense") ? l.categoryId : null,
   }));
 
   const chargesARS = round2(
@@ -1155,7 +1163,9 @@ const registerStatement = (ctx: ToolContext, raw: unknown): ToolResult => {
   );
 
   let chargesCategory: ServerCategoryInfo | undefined;
-  if (chargesARS > 0 || chargesUSD > 0) {
+  // Aunque los cargos netos den 0 o negativo (ej. una devolución de percepción),
+  // cada renglón se carga con esta categoría.
+  if (lines.some((l) => CHARGE_TYPES.has(l.type))) {
     chargesCategory =
       ctx.categories.find((c) => c.id === args.chargesCategoryId && c.kind === "expense") ??
       ctx.categories.find((c) => c.kind === "expense" && /impuest|banc|comision/.test(normalize(c.name))) ??
@@ -1249,6 +1259,7 @@ const updateStatementDraft = (ctx: ToolContext, raw: unknown): ToolResult => {
       currency: l.currency,
       installment: l.installment ?? undefined,
       type: l.type,
+      categoryId: l.categoryId ?? undefined,
     })),
     chargesCategoryId: current.chargesCategoryId ?? undefined,
     subscriptions: current.subscriptions.map((x) => ({
