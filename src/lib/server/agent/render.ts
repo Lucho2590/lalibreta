@@ -6,6 +6,7 @@ import type { ReplyButton } from "../whatsapp/client";
 import {
   draftType,
   type AccountDraft,
+  type BatchDraft,
   type CardPaymentDraft,
   type Draft,
   type ExchangeDraft,
@@ -201,8 +202,52 @@ const renderRecurring = (d: RecurringDraft) =>
     "¿Lo guardo?",
   ].join("\n");
 
+const BATCH_SHOWN = 20;
+
+const renderBatch = (d: BatchDraft) => {
+  const n = d.lines.length;
+  const incomes = d.lines.filter((l) => l.kind === "income").length;
+  const accounts = [...new Set(d.lines.map((l) => l.accountName))];
+  const out = [
+    `🧾 *${n} ${incomes === n ? (n === 1 ? "ingreso" : "ingresos") : n === 1 ? "movimiento" : "movimientos"} para cargar*`,
+    accounts.length === 1 ? `Cuenta: ${accounts[0]}` : `Cuentas: ${accounts.join(", ")}`,
+    "",
+  ];
+  const several = accounts.length > 1;
+  for (const l of d.lines.slice(0, BATCH_SHOWN)) {
+    const cuota = l.installmentNumber && l.installmentsTotal ? ` (cuota ${l.installmentNumber}/${l.installmentsTotal})` : "";
+    const sign = l.kind === "income" ? "+" : "";
+    out.push(
+      `• ${fecha(l.date)} ${l.description}: ${sign}${formatMoney(l.amount, l.currency)}${cuota} · _${l.categoryName}_${several ? ` · ${l.accountName}` : ""}`,
+    );
+  }
+  if (n > BATCH_SHOWN) out.push(`• … y ${n - BATCH_SHOWN} más`);
+
+  const total = (c: "ARS" | "USD") =>
+    Math.round(d.lines.filter((l) => l.currency === c).reduce((a, l) => a + (l.kind === "income" ? -l.amount : l.amount), 0) * 100) / 100;
+  const parts = [total("ARS") ? formatMoney(total("ARS"), "ARS") : null, total("USD") ? formatMoney(total("USD"), "USD") : null].filter(Boolean);
+  out.push("", `Total: *${parts.join(" + ") || formatMoney(0, "ARS")}*`);
+
+  const byCat = new Map<string, number>();
+  for (const l of d.lines) byCat.set(l.categoryName, (byCat.get(l.categoryName) ?? 0) + 1);
+  if (byCat.size > 1) {
+    out.push(`Categorías: ${[...byCat.entries()].sort((a, b) => b[1] - a[1]).map(([c, k]) => `${c} (${k})`).join(", ")}`);
+  }
+  if (d.lines.some((l) => l.installmentsTotal)) {
+    out.push("_Las cuotas se cargan con la compra completa, así las que faltan quedan en los próximos resúmenes._");
+  }
+  if (d.duplicates.length > 0) {
+    out.push(`_Ya tenías cargados ${d.duplicates.length}: no los repito._`);
+  }
+  if (d.skipped.length > 0) out.push(`⚠️ No puedo cargar: ${d.skipped.join("; ")}`);
+  out.push("", "Si querés cambiar una categoría o sacar alguno, decímelo. ¿Los cargo?");
+  return out.join("\n");
+};
+
 export const renderDraft = (d: Draft): string => {
   switch (draftType(d)) {
+    case "batch":
+      return renderBatch(d as BatchDraft);
     case "account":
       return renderAccount(d as AccountDraft);
     case "statement":
@@ -228,6 +273,12 @@ export const draftButtons = (d: Draft): ReplyButton[] => {
       { id: `cancel:${d.id}`, title: "❌ Cancelar" },
     ];
   }
+  if (draftType(d) === "batch") {
+    return [
+      { id: `confirm:${d.id}`, title: "✅ Cargar todo" },
+      { id: `cancel:${d.id}`, title: "❌ Cancelar" },
+    ];
+  }
   return [
     { id: `confirm:${d.id}`, title: "✅ Confirmar" },
     { id: `cancel:${d.id}`, title: "❌ Cancelar" },
@@ -236,6 +287,24 @@ export const draftButtons = (d: Draft): ReplyButton[] => {
 
 /** Versión corta del borrador para el system prompt (los resúmenes pueden ser enormes). */
 export const draftForPrompt = (d: Draft): string => {
+  if (draftType(d) === "batch") {
+    const b = d as BatchDraft;
+    return JSON.stringify({
+      type: "batch",
+      lines: b.lines.map((l) => ({
+        description: l.description,
+        amount: l.amount,
+        currency: l.currency,
+        kind: l.kind,
+        date: l.date,
+        accountId: l.accountId,
+        categoryId: l.categoryId,
+        categoryName: l.categoryName,
+        ...(l.installmentsTotal ? { installmentNumber: l.installmentNumber, installmentsTotal: l.installmentsTotal } : {}),
+      })),
+      alreadyLoaded: b.duplicates.length,
+    });
+  }
   if (draftType(d) !== "statement") return JSON.stringify(d);
   const s = d as StatementDraft;
   return JSON.stringify({

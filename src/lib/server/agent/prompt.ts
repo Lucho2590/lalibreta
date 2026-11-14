@@ -107,6 +107,8 @@ export const buildSystemPrompt = (ctx: PromptContext): string => {
         ? "Si el usuario pide corregirlo (otra tarjeta, otra categoría para los cargos, sacar una suscripción…), usá update_statement_draft con SOLO lo que cambia. No hace falta releer el documento."
         : t === "account"
           ? "Si el usuario pide corregirlas o agregar otra, llamá a propose_accounts de nuevo con la lista COMPLETA corregida: reemplaza a la anterior."
+          : t === "batch"
+            ? "Si el usuario pide corregirlo (otra categoría para algunos, sacar uno, otra tarjeta…), llamá a propose_expense_batch de nuevo con TODOS los renglones corregidos (los del borrador, con sus categoryId): reemplaza al anterior."
           : "Si el usuario pide corregirlo (otra cuenta, otro monto, etc.), llamá a propose_transaction de nuevo con los datos corregidos: reemplaza al anterior.";
     draft = `\n## Borrador pendiente de confirmación\nHay algo esperando que el usuario toque un botón:\n${draftForPrompt(ctx.pendingDraft)}\n${how}\n`;
   }
@@ -134,7 +136,14 @@ Hoy es ${formatLongDate(now)} (fecha ${todayYMD(now)}, mes ${currentMonthKey(now
 8. Pagos de tarjeta (propose_card_payment: "pagué la visa").
 9. Ingresos y gastos fijos (propose_recurring: "cobro 1500000 de sueldo todos los 5", "pago 450 lucas de alquiler el 10").
 
-Cuando el usuario manda una imagen o PDF, fijate qué es: un ticket/factura de una compra → proponé el gasto; un resumen de tarjeta → register_card_statement.
+10. Cargar VARIOS movimientos de una (propose_expense_batch): capturas del home banking o de la app de la tarjeta, fotos o archivos de una planilla/Excel, listas escritas.
+
+Cuando el usuario manda una imagen, PDF o planilla, fijate qué es:
+- Un ticket o factura de UNA compra → propose_transaction.
+- Un resumen de tarjeta completo (con cierre, vencimiento y total a pagar) → register_card_statement.
+- Una LISTA de movimientos (consumos o "próximos consumos" de la tarjeta, cuotas, una planilla de gastos, una foto de un Excel) → propose_expense_batch con TODOS los renglones. NO le pidas el resumen completo ni el PDF: cargá lo que te mandó. Si es de una tarjeta y no sabés cuál, mirá la marca/banco/últimos dígitos y compará con sus tarjetas; si hay una sola que encaje, usala; si hay duda, preguntá cuál. Si la tarjeta no existe, ofrecé crearla primero.
+- En una planilla, entendé las columnas (fecha, concepto, monto, moneda, cuotas). Ignorá totales, subtotales y encabezados. Montos negativos o entre paréntesis = reintegros. Si una columna dice el medio de pago y alguno no existe como cuenta (ej. "Efectivo" y no tiene cuenta de efectivo), no lo mandes a otra cuenta: preguntá o ofrecé crearla.
+- Bancos argentinos con más de un nombre (son el MISMO banco): BBVA = Banco Francés = BBVA Francés; Santander = Santander Río; Nación = BNA = Banco Nación; Provincia = BAPRO = Banco Provincia; Ciudad = Banco Ciudad; Naranja = Naranja X; Macro, Galicia, ICBC, Credicoop, Supervielle, Patagonia, Hipotecario, Comafi. Ej.: una captura de "Visa BBVA" es la Visa del Banco Francés.
 
 ## Reglas para registrar movimientos
 - Usá SOLO ids de las listas de abajo. Nunca inventes ids.

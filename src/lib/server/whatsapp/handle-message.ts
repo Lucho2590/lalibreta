@@ -6,6 +6,8 @@ import { Timestamp } from "firebase-admin/firestore";
 import { createAccountAdmin } from "../accounts-admin";
 import { createCategoryAdmin } from "../categories-admin";
 import { saveStatementAdmin } from "../statements-admin";
+import { saveBatchAdmin } from "../batch-admin";
+import { MAX_SPREADSHEET_BYTES, spreadsheetKind, spreadsheetToText } from "../spreadsheet";
 import {
   getBalances,
   loadAccounts,
@@ -42,6 +44,7 @@ import { loadSession, saveSession, takeDraft } from "./sessions";
 import {
   draftType,
   type AccountDraft,
+  type BatchDraft,
   type CardPaymentDraft,
   type ChatTurn,
   type ExchangeDraft,
@@ -195,7 +198,7 @@ const routeMessage = async (
       }
       const caption = message.image.caption?.trim() ?? "";
       input = {
-        text: `(imagen: ticket, factura o resumen de tarjeta) ${caption}`.trim(),
+        text: `(imagen: ticket, factura, resumen de tarjeta o lista de gastos) ${caption}`.trim(),
         imageDataUrl: `data:${media.mimeType};base64,${media.data.toString("base64")}`,
       };
       historyText = `📷 [imagen] ${caption}`.trim();
@@ -205,10 +208,44 @@ const routeMessage = async (
       if (!message.document) return;
       const doc = message.document;
       const caption = doc.caption?.trim() ?? "";
+      const sheet = spreadsheetKind(doc.mime_type, doc.filename);
+      if (sheet === "xls") {
+        await sendText(
+          waId,
+          "Ese Excel es del formato viejo (.xls) y no lo puedo abrir 😕. Guardalo como .xlsx o .csv y mandámelo de nuevo, o mandame una captura.",
+        );
+        return;
+      }
+      if (sheet) {
+        const media = await downloadMedia(doc.id);
+        if (media.data.length > MAX_SPREADSHEET_BYTES) {
+          await sendText(waId, "La planilla es muy pesada. ¿Me mandás una más chica (o solo la hoja de los gastos)?");
+          return;
+        }
+        let table: Awaited<ReturnType<typeof spreadsheetToText>>;
+        try {
+          table = await spreadsheetToText(media.data, sheet);
+        } catch (err) {
+          console.warn("[wa] no se pudo leer la planilla", err);
+          await sendText(waId, "No pude abrir esa planilla 😕. ¿Me la mandás como .xlsx o .csv, o una captura?");
+          return;
+        }
+        if (!table.text) {
+          await sendText(waId, "La planilla está vacía 🤔");
+          return;
+        }
+        const name = doc.filename ?? "planilla";
+        input = {
+          text: `(planilla: ${name}${table.truncated ? `, muestro las primeras filas de ${table.rows}` : ""}) ${caption}\n\n${table.text}`.trim(),
+        };
+        historyText = `📊 [${name}] ${caption}`.trim();
+        await sendText(waId, "Dame un toque que la leo 📊👀");
+        break;
+      }
       const isPdf = doc.mime_type === "application/pdf";
       const isImage = doc.mime_type.startsWith("image/");
       if (!isPdf && !isImage) {
-        await sendText(waId, "De archivos solo leo PDFs e imágenes 🙂");
+        await sendText(waId, "De archivos leo PDFs, imágenes y planillas (Excel o CSV) 🙂");
         return;
       }
       const media = await downloadMedia(doc.id);
@@ -233,7 +270,7 @@ const routeMessage = async (
             },
           }
         : {
-            text: `(imagen: ticket, factura o resumen de tarjeta) ${caption}`.trim(),
+            text: `(imagen: ticket, factura, resumen de tarjeta o lista de gastos) ${caption}`.trim(),
             imageDataUrl: `data:${media.mimeType};base64,${base64}`,
           };
       historyText = `📄 [${doc.filename ?? "archivo"}] ${caption}`.trim();
@@ -244,7 +281,7 @@ const routeMessage = async (
     default:
       await sendText(
         waId,
-        "Por ahora entiendo texto, audios, fotos y PDFs 🙂",
+        "Por ahora entiendo texto, audios, fotos, PDFs y planillas (Excel o CSV) 🙂",
       );
       return;
   }
@@ -322,7 +359,7 @@ const welcomeMessage = async (uid: string, profileName: string | null): Promise<
   if (accounts.length === 0) {
     return `${hola}\n\nPara arrancar, contame cuál es tu *cuenta principal* (donde cobrás), en qué moneda y cuánto tenés hoy. Por ejemplo:\n• "mi cuenta principal es el Banco Galicia, ahí cobro. Tengo 850000 pesos"\n(si también tenés dólares, sumalo: "…y 500 dólares")\n\nDespués sumamos el resto: "agregá Efectivo y Mercado Pago", "la Visa Galicia es del Galicia", etc.`;
   }
-  return `${hola}\n\nYa podés mandarme cosas como:\n• "gasté 15000 en el super con la visa"\n• "nafta 30 lucas en efectivo"\n• una foto del ticket o un audio\n• el PDF del resumen de la tarjeta\n• "¿cuánto gasté este mes?"`;
+  return `${hola}\n\nYa podés mandarme cosas como:\n• "gasté 15000 en el super con la visa"\n• "nafta 30 lucas en efectivo"\n• una foto del ticket o un audio\n• el PDF del resumen de la tarjeta\n• una captura de los consumos de la tarjeta o un Excel con tus gastos\n• "¿cuánto gasté este mes?"`;
 };
 
 /** Los PDFs con contraseña declaran un diccionario /Encrypt. */
@@ -349,6 +386,9 @@ const decideDraft = async (
   }
 
   switch (draftType(draft)) {
+    case "batch":
+      await confirmBatch(waId, uid, draft as BatchDraft);
+      return;
     case "account":
       await confirmAccount(waId, uid, draft as AccountDraft);
       return;
@@ -419,6 +459,24 @@ const confirmTransaction = async (waId: string, uid: string, draft: TransactionD
     waId,
     `✅ Guardado: *${draft.description}* por *${formatMoney(draft.amount, draft.currency ?? "ARS")}*${cuotas} (${account.name}).${createdCategory ? `\n🏷️ Creé la categoría *${category.name}*.` : ""}`,
   );
+};
+
+const confirmBatch = async (waId: string, uid: string, draft: BatchDraft) => {
+  const r = await saveBatchAdmin(uid, draft);
+  if (r.created === 0) {
+    await sendText(waId, "No pude cargar ninguno: las cuentas o categorías ya no existen. Mandámelo de nuevo.");
+    return;
+  }
+  const parts = [
+    r.totals.ARS ? formatMoney(r.totals.ARS, "ARS") : null,
+    r.totals.USD ? formatMoney(r.totals.USD, "USD") : null,
+  ].filter(Boolean);
+  const lines = [
+    `✅ Cargué ${r.created === 1 ? "1 movimiento" : `${r.created} movimientos`}${parts.length ? ` (${parts.join(" + ")})` : ""}.`,
+  ];
+  if (r.failed.length > 0) lines.push(`No pude cargar: ${r.failed.join(", ")} (la cuenta o la categoría ya no existe).`);
+  if (r.cardsPendingDates.length > 0) lines.push("", pendingDatesText(r.cardsPendingDates));
+  await sendText(waId, lines.join("\n"));
 };
 
 const rank = (t: string) => (t === "credit" || t === "reserve" ? 1 : 0);

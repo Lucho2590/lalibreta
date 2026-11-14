@@ -17,6 +17,7 @@ import { getUsdRate } from "../fx";
 import type { BalancesSnapshot } from "../queries-admin";
 import type { Currency } from "@/lib/domain/types";
 import { setAccountBalanceAdmin, setAccountParentAdmin, setCardDatesAdmin } from "../accounts-admin";
+import { PROPOSE_BATCH_TOOL, proposeBatch } from "./batch-tool";
 import { CATEGORY_ICON_IDS, createCategoryAdmin } from "../categories-admin";
 import {
   REDEEM_ERRORS,
@@ -123,6 +124,7 @@ export const TOOL_DEFINITIONS: ChatCompletionFunctionTool[] = [
       },
     },
   },
+  PROPOSE_BATCH_TOOL,
   {
     type: "function",
     function: {
@@ -1583,6 +1585,9 @@ export const executeTool = async (
   switch (name) {
     case "propose_transaction":
       return proposeTransaction(ctx, args);
+
+    case "propose_expense_batch":
+      return proposeBatch(ctx, args);
 
     case "propose_accounts":
       return proposeAccounts(ctx, args);
