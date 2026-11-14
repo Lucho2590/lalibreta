@@ -21,6 +21,8 @@ export interface AgentInput {
 export interface AgentResult {
   reply: string;
   draft: Draft | null;
+  /** Mensajes para mandar aparte, tal cual, después de la respuesta. */
+  outbox: string[];
 }
 
 const MAX_ROUNDS = 5;
@@ -41,6 +43,7 @@ export const runAgent = async (
     myShares: prompt.myShares,
     pendingDraft: prompt.pendingDraft,
     proposedDraft: null,
+    outbox: [],
   };
 
   const userContent: ChatCompletionContentPart[] = [
@@ -98,7 +101,7 @@ export const runAgent = async (
         });
         continue;
       }
-      return { reply: text || "No te entendí, ¿me lo repetís?", draft: null };
+      return { reply: text || "No te entendí, ¿me lo repetís?", draft: null, outbox: ctx.outbox };
     }
 
     messages.push({ role: "assistant", content: msg.content ?? null, tool_calls: toolCalls });
@@ -115,11 +118,12 @@ export const runAgent = async (
     }
 
     // Si ya hay borrador, el resumen lo arma el sistema: no hace falta otra vuelta.
-    if (ctx.proposedDraft) return { reply: "", draft: ctx.proposedDraft };
+    if (ctx.proposedDraft) return { reply: "", draft: ctx.proposedDraft, outbox: ctx.outbox };
   }
 
   return {
-    reply: "Uy, me enredé con eso. ¿Me lo decís de otra forma?",
+    reply: ctx.outbox.length > 0 ? "Listo 👇" : "Uy, me enredé con eso. ¿Me lo decís de otra forma?",
     draft: null,
+    outbox: ctx.outbox,
   };
 };

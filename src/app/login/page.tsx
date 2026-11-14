@@ -24,7 +24,10 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!loading && user) router.replace("/");
+    if (loading || !user) return;
+    const next = new URLSearchParams(window.location.search).get("next");
+    // Solo rutas internas.
+    router.replace(next && /^\/(?![/\\])/.test(next) ? next : "/");
   }, [user, loading, router]);
 
   // Volviendo del login de Google por redirección (app instalada): si falló, mostrarlo.
