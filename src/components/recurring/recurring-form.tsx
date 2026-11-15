@@ -20,6 +20,7 @@ import {
 import { useAuth } from "@/hooks/use-auth";
 import { useAccounts, useCategories } from "@/hooks/use-data";
 import { db } from "@/lib/firebase/client";
+import { parseAmount } from "@/lib/format";
 import { accountCurrencies, type Currency } from "@/lib/domain/types";
 import { recurringCollectionPath } from "@/lib/domain/recurring";
 import { monthKey, type TransactionKind } from "@/lib/domain/types";
@@ -51,8 +52,12 @@ export function RecurringForm({ onCreated }: { onCreated?: () => void }) {
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const amt = Number(amount);
-    if (!user || !name.trim() || !accountId || !categoryId || !amt) return;
+    const amt = parseAmount(amount);
+    if (!Number.isFinite(amt) || amt <= 0) {
+      toast.error("Monto inválido (ej. 12.500,50)");
+      return;
+    }
+    if (!user || !name.trim() || !accountId || !categoryId) return;
     setBusy(true);
     try {
       await addDoc(collection(db, recurringCollectionPath(user.uid)), {
@@ -118,9 +123,10 @@ export function RecurringForm({ onCreated }: { onCreated?: () => void }) {
         <Label htmlFor="r-amount">Monto</Label>
         <Input
           id="r-amount"
-          type="number"
+          type="text"
           inputMode="decimal"
-          step="0.01"
+          autoComplete="off"
+          placeholder="0"
           className="h-12 text-lg"
           value={amount}
           onChange={(e) => setAmount(e.target.value)}

@@ -41,3 +41,29 @@ export const formatDate = (d: Date): string =>
 
 export const formatShortDate = (d: Date): string =>
   new Intl.DateTimeFormat("es-AR", { day: "2-digit", month: "2-digit" }).format(d);
+
+/**
+ * Lee un monto como lo escribe la gente en Argentina:
+ * "12.500" → 12500, "12.500,50" → 12500.5, "12,5" → 12.5, "12.5" → 12.5,
+ * "$ 1.200" → 1200. Si no es un número, devuelve NaN.
+ * Un solo punto seguido de exactamente 3 dígitos se toma como separador de miles.
+ */
+export const parseAmount = (raw: string | number | null | undefined): number => {
+  if (typeof raw === "number") return raw;
+  let s = (raw ?? "").trim().replace(/US\$|u\$s|\$|\s/gi, "");
+  if (!s) return NaN;
+  const lastComma = s.lastIndexOf(",");
+  const lastDot = s.lastIndexOf(".");
+  if (lastComma >= 0 && lastDot >= 0) {
+    // Con los dos, el último es el decimal y el otro separa miles.
+    const [dec, thousands] = lastComma > lastDot ? [",", "."] : [".", ","];
+    s = s.split(thousands).join("").replace(dec, ".");
+  } else if (lastComma >= 0) {
+    const parts = s.split(",");
+    s = parts.length > 2 ? parts.join("") : s.replace(",", ".");
+  } else if (lastDot >= 0) {
+    const parts = s.split(".");
+    if (parts.length > 2 || parts[1].length === 3) s = parts.join("");
+  }
+  return /^-?(\d+\.?\d*|\.\d+)$/.test(s) ? Number(s) : NaN;
+};

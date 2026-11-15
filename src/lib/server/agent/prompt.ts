@@ -23,106 +23,13 @@ const ACCOUNT_TYPE_LABEL: Record<string, string> = {
   reserve: "cobacha",
 };
 
-export interface PromptContext {
-  userName: string | null;
-  agentName: string | null;
-  accounts: ServerAccountInfo[];
-  categories: ServerCategoryInfo[];
-  recurring: ServerRecurringInfo[];
-  balances: BalancesSnapshot;
-  sharedWithMe: Array<SharedWithMe & { account: ServerAccountInfo }>;
-  myShares: MyShare[];
-  /** Comercio → categoría que el usuario eligió antes (importando resúmenes). */
-  categoryRules?: Array<{ sample: string; categoryName: string }>;
-  pendingDraft: Draft | null;
-}
-
-export const buildSystemPrompt = (ctx: PromptContext): string => {
-  const now = new Date();
-  const accounts = ctx.accounts.filter((a) => a.active);
-  const money = (amounts: { ARS: number; USD: number }, currencies: Array<"ARS" | "USD">) =>
-    currencies.map((c) => formatMoney(amounts[c], c)).join(" + ");
-  const accountsList =
-    accounts.length > 0
-      ? accounts
-          .map((a) => {
-            const bal = ctx.balances.accounts.find((b) => b.id === a.id)?.amounts ?? { ARS: 0, USD: 0 };
-            if (a.type !== "credit") {
-              const inside =
-                a.type === "reserve" && a.parentId
-                  ? ` (dentro de ${ctx.accounts.find((p) => p.id === a.parentId)?.name ?? "?"})`
-                  : "";
-              const cards = accounts.filter((c) => c.type === "credit" && c.parentId === a.id).map((c) => c.name);
-              const cardsTxt = cards.length > 0 ? ` | tarjetas adentro: ${cards.join(", ")}` : "";
-              return `- id=${a.id} | nombre: "${a.name}" | tipo: ${ACCOUNT_TYPE_LABEL[a.type] ?? a.type}${inside}${a.isMain ? " | ⭐ CUENTA PRINCIPAL" : ""} | monedas: ${a.currencies.join(", ")} | saldo: ${money(bal, a.currencies)}${cardsTxt}`;
-            }
-            const parent = a.parentId ? ctx.accounts.find((p) => p.id === a.parentId) : null;
-            const dates =
-              a.defaultClosingDay && a.defaultDueDay
-                ? `cierra el día ${a.defaultClosingDay}, vence el día ${a.defaultDueDay}`
-                : "FECHAS DE CIERRE Y VENCIMIENTO PENDIENTES";
-            const debt = [
-              bal.ARS ? formatMoney(bal.ARS, "ARS") : null,
-              bal.USD ? formatMoney(bal.USD, "USD") : null,
-            ].filter(Boolean);
-            return `- id=${a.id} | nombre: "${a.name}" | tipo: tarjeta de crédito (${dates}${a.last4 ? `, terminada en ${a.last4}` : ""}${parent ? `, asociada a ${parent.name}` : ", SUELTA: no está dentro de ningún banco"}) | debe: ${debt.join(" + ") || "$ 0"}`;
-          })
-          .join("\n")
-      : "(el usuario todavía no tiene cuentas cargadas)";
-
-  const catList = (kind: "expense" | "income") => {
-    const list = ctx.categories.filter((c) => c.kind === kind);
-    return list.length > 0
-      ? list.map((c) => `- id=${c.id} | "${c.name}"`).join("\n")
-      : "(ninguna)";
-  };
-
-  const accName = new Map(ctx.accounts.map((a) => [a.id, a.name]));
-  const recurringList =
-    ctx.recurring.length > 0
-      ? ctx.recurring
-          .map((r) => `- ${r.kind === "income" ? "ingreso" : "gasto"} "${r.name}" | ${formatMoney(r.amount, r.currency)} | día ${r.dayOfMonth} | ${accName.get(r.accountId) ?? "?"}${r.active ? "" : " (pausado)"}`)
-          .join("\n")
-      : "(ninguno)";
-
-  const sharedList =
-    ctx.sharedWithMe.length > 0
-      ? ctx.sharedWithMe
-          .map(
-            (sh) =>
-              `- accountId para cargar: shared:${sh.shareId} | shareId=${sh.shareId} | "${sh.account.name}" de ${sh.ownerName} | tipo: ${ACCOUNT_TYPE_LABEL[sh.account.type] ?? sh.account.type} | monedas: ${sh.account.currencies.join(", ")}`,
-          )
-          .join("\n")
-      : "(ninguna)";
-  const mySharesList =
-    ctx.myShares.length > 0
-      ? ctx.myShares.map((sh) => `- shareId=${sh.shareId} | "${sh.accountName}" compartida con ${sh.granteeName}`).join("\n")
-      : "(ninguna)";
-
-  let draft = "";
-  if (ctx.pendingDraft) {
-    const t = draftType(ctx.pendingDraft);
-    const how =
-      t === "statement"
-        ? "Si el usuario pide corregirlo (otra tarjeta, otra categoría para los cargos, sacar una suscripción…), usá update_statement_draft con SOLO lo que cambia. No hace falta releer el documento."
-        : t === "account"
-          ? "Si el usuario pide corregirlas o agregar otra, llamá a propose_accounts de nuevo con la lista COMPLETA corregida: reemplaza a la anterior."
-          : t === "batch"
-            ? "Si el usuario pide corregirlo (otra categoría para algunos, sacar uno, otra tarjeta…), llamá a propose_expense_batch de nuevo con TODOS los renglones corregidos (los del borrador, con sus categoryId): reemplaza al anterior."
-          : "Si el usuario pide corregirlo (otra cuenta, otro monto, etc.), llamá a propose_transaction de nuevo con los datos corregidos: reemplaza al anterior.";
-    draft = `\n## Borrador pendiente de confirmación\nHay algo esperando que el usuario toque un botón:\n${draftForPrompt(ctx.pendingDraft)}\n${how}\n`;
-  }
-
-  const persona = personaFor(ctx.agentName);
-  const identity = persona
-    ? `Sos *${persona.name}*, el agente de cuentas de la app "La Libreta"${ctx.userName ? ` de ${ctx.userName}` : ""}, y hablás por WhatsApp. Tu personaje: ${persona.flavor}
-Usá el personaje con humor y de a poco: un guiño cada tanto (no en todos los mensajes), nunca a costa de la claridad. Los datos, montos y preguntas siempre van claros y primero. Si te preguntan quién sos, presentate como ${persona.name}, su agente de cuentas.`
-    : `Sos el agente de cuentas de la app "La Libreta"${ctx.userName ? ` de ${ctx.userName}` : ""}, y hablás por WhatsApp.`;
-
-  return `${identity}
+/**
+ * Reglas fijas del agente. NO interpolar nada acá: este bloque va primero en
+ * el system prompt y tiene que ser idéntico en todas las llamadas para que
+ * OpenAI lo cachee (los datos del usuario y la fecha van después).
+ */
+const STATIC_RULES = `Sos el agente de cuentas de la app "La Libreta" y hablás por WhatsApp. Tu nombre, tu personaje y los datos del usuario (cuentas, categorías, fecha de hoy) están al final, en "Datos de este usuario".
 Hablás en español rioplatense, con tono cercano y mensajes cortos, como en un chat. Se manejan pesos (ARS) y dólares (USD); si no se aclara la moneda, son pesos.
-
-Hoy es ${formatLongDate(now)} (fecha ${todayYMD(now)}, mes ${currentMonthKey(now)}), en hora de Argentina.
 
 ## Qué podés hacer
 1. Registrar gastos e ingresos: usá propose_transaction. El movimiento NO se guarda hasta que el usuario lo confirme con un botón; el sistema le manda solo el resumen y los botones. No escribas vos el resumen ni preguntes "¿confirmás?".
@@ -230,26 +137,118 @@ Cuando el usuario manda una imagen, PDF o planilla, fijate qué es:
 ## Formato WhatsApp
 Usá *negrita* con un asterisco, nada de markdown con #. Pocos emojis. No más de ~10 líneas.
 
-## Cuentas del usuario
-Esta lista es el estado REAL de ahora (se lee de la base en cada mensaje). Si antes en la conversación dijiste algo que no coincide (que una cuenta existe, que una tarjeta está dentro de un banco…), lo que vale es la lista: reconocé el error y arreglalo con la herramienta que corresponda. Nunca digas que algo ya está hecho si la lista no lo muestra o si no lo hiciste con una herramienta.
-${accountsList}
+## Sobre la lista de cuentas (en "Datos de este usuario")
+Esta lista es el estado REAL de ahora (se lee de la base en cada mensaje). Si antes en la conversación dijiste algo que no coincide (que una cuenta existe, que una tarjeta está dentro de un banco…), lo que vale es la lista: reconocé el error y arreglalo con la herramienta que corresponda. Nunca digas que algo ya está hecho si la lista no lo muestra o si no lo hiciste con una herramienta.`;
 
-## Categorías de gasto
-${catList("expense")}
+export interface PromptContext {
+  userName: string | null;
+  agentName: string | null;
+  accounts: ServerAccountInfo[];
+  categories: ServerCategoryInfo[];
+  recurring: ServerRecurringInfo[];
+  balances: BalancesSnapshot;
+  sharedWithMe: Array<SharedWithMe & { account: ServerAccountInfo }>;
+  myShares: MyShare[];
+  /** Comercio → categoría que el usuario eligió antes (importando resúmenes). */
+  categoryRules?: Array<{ sample: string; categoryName: string }>;
+  pendingDraft: Draft | null;
+}
 
-## Categorías de ingreso
-${catList("income")}
+export const buildSystemPrompt = (ctx: PromptContext): string => {
+  const now = new Date();
+  const accounts = ctx.accounts.filter((a) => a.active);
+  const money = (amounts: { ARS: number; USD: number }, currencies: Array<"ARS" | "USD">) =>
+    currencies.map((c) => formatMoney(amounts[c], c)).join(" + ");
+  const accountsList =
+    accounts.length > 0
+      ? accounts
+          .map((a) => {
+            const bal = ctx.balances.accounts.find((b) => b.id === a.id)?.amounts ?? { ARS: 0, USD: 0 };
+            if (a.type !== "credit") {
+              const inside =
+                a.type === "reserve" && a.parentId
+                  ? ` (dentro de ${ctx.accounts.find((p) => p.id === a.parentId)?.name ?? "?"})`
+                  : "";
+              const cards = accounts.filter((c) => c.type === "credit" && c.parentId === a.id).map((c) => c.name);
+              const cardsTxt = cards.length > 0 ? ` | tarjetas adentro: ${cards.join(", ")}` : "";
+              return `- id=${a.id} | nombre: "${a.name}" | tipo: ${ACCOUNT_TYPE_LABEL[a.type] ?? a.type}${inside}${a.isMain ? " | ⭐ CUENTA PRINCIPAL" : ""} | monedas: ${a.currencies.join(", ")} | saldo: ${money(bal, a.currencies)}${cardsTxt}`;
+            }
+            const parent = a.parentId ? ctx.accounts.find((p) => p.id === a.parentId) : null;
+            const dates =
+              a.defaultClosingDay && a.defaultDueDay
+                ? `cierra el día ${a.defaultClosingDay}, vence el día ${a.defaultDueDay}`
+                : "FECHAS DE CIERRE Y VENCIMIENTO PENDIENTES";
+            const debt = [
+              bal.ARS ? formatMoney(bal.ARS, "ARS") : null,
+              bal.USD ? formatMoney(bal.USD, "USD") : null,
+            ].filter(Boolean);
+            return `- id=${a.id} | nombre: "${a.name}" | tipo: tarjeta de crédito (${dates}${a.last4 ? `, terminada en ${a.last4}` : ""}${parent ? `, asociada a ${parent.name}` : ", SUELTA: no está dentro de ningún banco"}) | debe: ${debt.join(" + ") || "$ 0"}`;
+          })
+          .join("\n")
+      : "(el usuario todavía no tiene cuentas cargadas)";
 
-## Fijos (ingresos y gastos que se repiten) ya cargados
-${recurringList}
+  const catList = (kind: "expense" | "income") => {
+    const list = ctx.categories.filter((c) => c.kind === kind);
+    return list.length > 0
+      ? list.map((c) => `- id=${c.id} | "${c.name}"`).join("\n")
+      : "(ninguna)";
+  };
 
-## Categorías que el usuario ya eligió para cada comercio (usalas primero)
-${ctx.categoryRules?.length ? ctx.categoryRules.map((r) => `- ${r.sample} → ${r.categoryName}`).join("\n") : "(todavía ninguna)"}
+  const accName = new Map(ctx.accounts.map((a) => [a.id, a.name]));
+  const recurringList =
+    ctx.recurring.length > 0
+      ? ctx.recurring
+          .map((r) => `- ${r.kind === "income" ? "ingreso" : "gasto"} "${r.name}" | ${formatMoney(r.amount, r.currency)} | día ${r.dayOfMonth} | ${accName.get(r.accountId) ?? "?"}${r.active ? "" : " (pausado)"}`)
+          .join("\n")
+      : "(ninguno)";
 
-## Cuentas que OTRAS personas compartieron con el usuario
-${sharedList}
+  const sharedList =
+    ctx.sharedWithMe.length > 0
+      ? ctx.sharedWithMe
+          .map(
+            (sh) =>
+              `- accountId para cargar: shared:${sh.shareId} | shareId=${sh.shareId} | "${sh.account.name}" de ${sh.ownerName} | tipo: ${ACCOUNT_TYPE_LABEL[sh.account.type] ?? sh.account.type} | monedas: ${sh.account.currencies.join(", ")}`,
+          )
+          .join("\n")
+      : "(ninguna)";
+  const mySharesList =
+    ctx.myShares.length > 0
+      ? ctx.myShares.map((sh) => `- shareId=${sh.shareId} | "${sh.accountName}" compartida con ${sh.granteeName}`).join("\n")
+      : "(ninguna)";
 
-## Cuentas del usuario que compartió con otras personas
-${mySharesList}
-${draft}`;
+  let draft = "";
+  if (ctx.pendingDraft) {
+    const t = draftType(ctx.pendingDraft);
+    const how =
+      t === "statement"
+        ? "Si el usuario pide corregirlo (otra tarjeta, otra categoría para los cargos, sacar una suscripción…), usá update_statement_draft con SOLO lo que cambia. No hace falta releer el documento."
+        : t === "account"
+          ? "Si el usuario pide corregirlas o agregar otra, llamá a propose_accounts de nuevo con la lista COMPLETA corregida: reemplaza a la anterior."
+          : t === "batch"
+            ? "Si el usuario pide corregirlo (otra categoría para algunos, sacar uno, otra tarjeta…), llamá a propose_expense_batch de nuevo con TODOS los renglones corregidos (los del borrador, con sus categoryId): reemplaza al anterior."
+          : "Si el usuario pide corregirlo (otra cuenta, otro monto, etc.), llamá a propose_transaction de nuevo con los datos corregidos: reemplaza al anterior.";
+    draft = `\n## Borrador pendiente de confirmación\nHay algo esperando que el usuario toque un botón:\n${draftForPrompt(ctx.pendingDraft)}\n${how}\n`;
+  }
+
+  const persona = personaFor(ctx.agentName);
+  const identity = persona
+    ? `Sos *${persona.name}*, el agente de cuentas de la app "La Libreta"${ctx.userName ? ` de ${ctx.userName}` : ""}, y hablás por WhatsApp. Tu personaje: ${persona.flavor}
+Usá el personaje con humor y de a poco: un guiño cada tanto (no en todos los mensajes), nunca a costa de la claridad. Los datos, montos y preguntas siempre van claros y primero. Si te preguntan quién sos, presentate como ${persona.name}, su agente de cuentas.`
+    : `Sos el agente de cuentas de la app "La Libreta"${ctx.userName ? ` de ${ctx.userName}` : ""}, y hablás por WhatsApp.`;
+
+  const sections = [
+    `## Quién sos\n${identity}`,
+    `## Categorías de gasto\n${catList("expense")}`,
+    `## Categorías de ingreso\n${catList("income")}`,
+    `## Fijos (ingresos y gastos que se repiten) ya cargados\n${recurringList}`,
+    `## Categorías que el usuario ya eligió para cada comercio (usalas primero)\n${ctx.categoryRules?.length ? ctx.categoryRules.map((r) => `- ${r.sample} → ${r.categoryName}`).join("\n") : "(todavía ninguna)"}`,
+    `## Cuentas que OTRAS personas compartieron con el usuario\n${sharedList}`,
+    `## Cuentas del usuario que compartió con otras personas\n${mySharesList}`,
+    `## Fecha\nHoy es ${formatLongDate(now)} (fecha ${todayYMD(now)}, mes ${currentMonthKey(now)}), en hora de Argentina.`,
+    `## Cuentas del usuario\n${accountsList}`,
+  ];
+
+  // Primero las reglas fijas (idénticas para todos: OpenAI las cachea y cobra
+  // 10%), después lo del usuario, de lo más estable a lo que más cambia.
+  return `${STATIC_RULES}\n\n# Datos de este usuario\n\n${sections.join("\n\n")}\n${draft}`;
 };
