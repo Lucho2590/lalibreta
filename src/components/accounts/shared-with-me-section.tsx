@@ -21,7 +21,7 @@ import {
 } from "@/hooks/use-data";
 import { apiFetch } from "@/lib/api";
 import type { AccountShare, PendingApproval } from "@/lib/domain/types";
-import { formatCurrency, formatDate, formatMoney } from "@/lib/format";
+import { formatCurrency, formatDate, formatMoney, parseAmount } from "@/lib/format";
 import type { SharedMovementsResponse } from "@/lib/domain/shared-movements";
 
 /** Cuentas que otra persona compartió conmigo, agrupadas por esa persona. */
@@ -428,7 +428,7 @@ function SubmitForm({
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const n = Number(amount);
+    const n = parseAmount(amount);
     if (!Number.isFinite(n) || n <= 0) {
       toast.error("Monto inválido");
       return;
@@ -480,9 +480,10 @@ function SubmitForm({
         <Label htmlFor="ext-amount">Monto</Label>
         <Input
           id="ext-amount"
-          type="number"
+          type="text"
           inputMode="decimal"
-          step="0.01"
+          autoComplete="off"
+          placeholder="0"
           className="h-12 text-lg"
           value={amount}
           onChange={(e) => setAmount(e.target.value)}

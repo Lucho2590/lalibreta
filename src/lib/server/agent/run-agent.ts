@@ -16,6 +16,8 @@ export interface AgentInput {
   imageDataUrl?: string;
   /** PDF (resúmenes de tarjeta, facturas). */
   pdf?: { filename: string; dataUrl: string };
+  /** Texto ya extraído de un PDF (mucho más barato que mandar el archivo). */
+  documentText?: string;
 }
 
 export interface AgentResult {
@@ -26,6 +28,15 @@ export interface AgentResult {
 }
 
 const MAX_ROUNDS = 5;
+/** Misma key en todas las llamadas: el prefijo fijo (herramientas + reglas) cae en la misma caché. */
+const PROMPT_CACHE_KEY = "wa-agent-v1";
+/** Los turnos viejos del agente (ej. el resumen de un resumen de tarjeta) se recortan al reenviarlos. */
+const MAX_HISTORY_ASSISTANT_CHARS = 500;
+
+const historyContent = (t: ChatTurn): string =>
+  t.role === "assistant" && t.content.length > MAX_HISTORY_ASSISTANT_CHARS
+    ? `${t.content.slice(0, MAX_HISTORY_ASSISTANT_CHARS)}…`
+    : t.content;
 const LEAKED_TOOL_CALL = /functions\.[a-z_]+|"(accountId|categoryId|cardId)"\s*:/;
 
 export const runAgent = async (
@@ -49,6 +60,9 @@ export const runAgent = async (
   const userContent: ChatCompletionContentPart[] = [
     { type: "text", text: input.text || "(archivo sin texto)" },
   ];
+  if (input.documentText) {
+    userContent.push({ type: "text", text: input.documentText });
+  }
   if (input.imageDataUrl) {
     userContent.push({
       type: "image_url",
@@ -61,11 +75,11 @@ export const runAgent = async (
       file: { filename: input.pdf.filename, file_data: input.pdf.dataUrl },
     });
   }
-  const hasDocument = Boolean(input.imageDataUrl || input.pdf);
+  const hasDocument = Boolean(input.imageDataUrl || input.pdf || input.documentText);
 
   const messages: ChatCompletionMessageParam[] = [
     { role: "system", content: buildSystemPrompt(prompt) },
-    ...history.map((t) => ({ role: t.role, content: t.content }) as ChatCompletionMessageParam),
+    ...history.map((t) => ({ role: t.role, content: historyContent(t) }) as ChatCompletionMessageParam),
     { role: "user", content: userContent },
   ];
 
@@ -77,11 +91,18 @@ export const runAgent = async (
       model,
       messages,
       tools: TOOL_DEFINITIONS,
+      prompt_cache_key: PROMPT_CACHE_KEY,
+      // El tráfico es bajo: sin esto la caché en memoria se vacía a los pocos minutos.
+      prompt_cache_retention: "24h",
       ...(process.env.OPENAI_REASONING_EFFORT
         ? { reasoning_effort: process.env.OPENAI_REASONING_EFFORT as "low" }
         : {}),
     });
-    void recordAiUsage(prompt.uid, hasDocument ? "document" : "chat", completion.model || model, usageFromChat(completion.usage));
+    const usage = usageFromChat(completion.usage);
+    console.info(
+      `[agent] usage round=${round} in=${usage.inputTokens} cached=${usage.cachedTokens} out=${usage.outputTokens}`,
+    );
+    void recordAiUsage(prompt.uid, hasDocument ? "document" : "chat", completion.model || model, usage);
     const msg = completion.choices[0]?.message;
     if (!msg) break;
 

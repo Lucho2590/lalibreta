@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { FieldValue, type Timestamp } from "firebase-admin/firestore";
 import { adminDb } from "./firebase-admin";
 import { DOCUMENT_MODEL, openai } from "./agent/openai";
+import { extractPdfText } from "./agent/pdf-text";
 import { recordAiUsage, usageFromChat } from "./ai-usage";
 import { createAccountAdmin } from "./accounts-admin";
 import { createTransactionAdmin } from "./transactions-admin";
@@ -184,6 +185,8 @@ ${rules
 
   const base64 = file.data.toString("base64");
   const isPdf = file.mimeType === "application/pdf";
+  // PDF con texto: mandamos el texto (sin las imágenes de cada página, mucho más barato).
+  const pdfText = isPdf ? await extractPdfText(file.data) : null;
   const completion = await openai().chat.completions.create({
     model: DOCUMENT_MODEL,
     messages: [
@@ -191,8 +194,10 @@ ${rules
       {
         role: "user",
         content: [
-          { type: "text", text: "Este es el resumen." },
-          isPdf
+          { type: "text", text: pdfText ? "Este es el resumen (texto extraído del PDF, respetando las columnas)." : "Este es el resumen." },
+          pdfText
+            ? { type: "text", text: pdfText }
+            : isPdf
             ? { type: "file", file: { filename: file.filename || "resumen.pdf", file_data: `data:application/pdf;base64,${base64}` } }
             : { type: "image_url", image_url: { url: `data:${file.mimeType};base64,${base64}`, detail: "high" } },
         ],

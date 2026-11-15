@@ -20,6 +20,7 @@ import { ensureAgentName } from "../onboarding";
 import { runAgent, type AgentInput } from "../agent/run-agent";
 import { draftButtons, pendingDatesText, renderDraft } from "../agent/render";
 import { transcribeAudio } from "../agent/openai";
+import { extractPdfText } from "../agent/pdf-text";
 import { formatMoney } from "@/lib/format";
 import {
   downloadMedia,
@@ -60,6 +61,13 @@ const appUrl = () => process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
 const LINK_RE = /^\s*vincular\s+(\d{6})\s*$/i;
 const YES_RE = /^\s*(s[ií]|si+|dale|ok|okey|confirmo|confirmar|guardalo|guardala|creala|listo)\s*[.!👍]*\s*$/i;
 const NO_RE = /^\s*(no|nop|cancel(ar|á|a)?|descartar|borralo)\s*[.!]*\s*$/i;
+// Mensajes que no necesitan al agente (sin borrador pendiente): ahorran una llamada a OpenAI.
+const THANKS_RE = /^(\s*(muchas|mil|gracias|grax|genial|perfecto|buen[ií]simo|joya|excelente|b[aá]rbaro|crack|ok|dale)[\s.,!🙌🙏👏💪❤️😊😁]*)*\s*(gracias|grax|genial|perfecto|buen[ií]simo|excelente|b[aá]rbaro)[\s.,!🙌🙏👏💪❤️😊😁]*$/iu;
+const ACK_RE = /^\s*(ok|oka|okey|okis|dale|listo|joya|bien|j[aej]+|👍|👌|🙌|🙏|😂|🤣|😊|❤️|✅)[\s.!👍👌🙌🙏😂🤣😊❤️✅]*$/iu;
+/** Pregunta final de los resúmenes de borrador (ver render.ts). */
+const DRAFT_QUESTION_RE = /(Si querés cambiar[^\n]*)?¿L[oa]s? (guardo|registro|creo|cargo)\?\s*$/;
+/** Tipos que se ignoran en silencio (reacciones a mensajes, stickers). */
+const IGNORED_TYPES = new Set(["reaction", "sticker"]);
 
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 const MAX_PDF_BYTES = 20 * 1024 * 1024;
@@ -139,6 +147,8 @@ const routeMessage = async (
     }
   }
 
+  if (IGNORED_TYPES.has(message.type)) return;
+
   const session = await loadSession(waId, uid);
 
   // Invitación a una cuenta compartida (reenviada o "unirme 123456"): se
@@ -165,6 +175,19 @@ const routeMessage = async (
       await decideDraft(waId, uid, session.pendingDraft.id, "cancel");
       return;
     }
+  }
+
+  // "gracias", "ok", "👍" sin nada pendiente: respuesta fija, sin pasar por el agente.
+  // Si el agente acaba de preguntar algo, "dale" es una respuesta: va al agente.
+  // (El "¿Lo guardo?" de un borrador ya resuelto no cuenta como pregunta.)
+  const lastReply = (session.history.findLast((t) => t.role === "assistant")?.content ?? "")
+    .replace(DRAFT_QUESTION_RE, "");
+  if (!session.pendingDraft && text.length <= 40 && !lastReply.includes("?")) {
+    if (THANKS_RE.test(text)) {
+      await sendText(waId, "¡De nada! 🙌");
+      return;
+    }
+    if (ACK_RE.test(text)) return;
   }
 
   // === Armar la entrada para el agente según el tipo de mensaje ===
@@ -261,7 +284,15 @@ const routeMessage = async (
         return;
       }
       const base64 = media.data.toString("base64");
-      input = isPdf
+      const filename = doc.filename ?? "documento.pdf";
+      // PDF con texto: mandamos el texto (sin las imágenes de cada página, mucho más barato).
+      const pdfText = isPdf ? await extractPdfText(media.data) : null;
+      input = pdfText
+        ? {
+            text: `(PDF: ${filename}, texto extraído respetando las columnas) ${caption}`.trim(),
+            documentText: pdfText,
+          }
+        : isPdf
         ? {
             text: `(PDF: ${doc.filename ?? "documento"}) ${caption}`.trim(),
             pdf: {

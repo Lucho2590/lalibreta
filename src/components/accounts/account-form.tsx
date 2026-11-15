@@ -26,6 +26,7 @@ import {
 import { useAuth } from "@/hooks/use-auth";
 import { useAccounts } from "@/hooks/use-data";
 import { db } from "@/lib/firebase/client";
+import { parseAmount } from "@/lib/format";
 import type { Account, AccountType, Currency } from "@/lib/domain/types";
 import { ACCOUNT_ICONS, defaultIconForType } from "@/components/account-icon";
 import { clearOtherMainAccounts, updateAccount } from "@/lib/domain/accounts";
@@ -89,8 +90,8 @@ export function AccountForm({
   const moneyFields = (): Record<string, unknown> => {
     const effCurrencies: Currency[] = type === "reserve" ? [currencies[0]] : currencies;
     const opening: Partial<Record<Currency, number>> = {};
-    const ars = Number(openingARS.replace(",", "."));
-    const usd = Number(openingUSD.replace(",", "."));
+    const ars = parseAmount(openingARS) || 0;
+    const usd = parseAmount(openingUSD) || 0;
     if (effCurrencies.includes("ARS") && ars) opening.ARS = ars;
     if (effCurrencies.includes("USD") && usd) opening.USD = usd;
     const hasOpening = Object.keys(opening).length > 0;

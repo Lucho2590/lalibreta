@@ -21,7 +21,7 @@ import { useAccounts, useCategories } from "@/hooks/use-data";
 import { useAuth } from "@/hooks/use-auth";
 import { createTransactionWithInstallments } from "@/lib/domain/installments";
 import { computeFirstBillingMonth } from "@/lib/domain/cycles";
-import { formatMoney, formatMonth } from "@/lib/format";
+import { formatMoney, formatMonth, parseAmount } from "@/lib/format";
 import type { Currency, TransactionKind } from "@/lib/domain/types";
 import { accountCurrencies } from "@/lib/domain/types";
 import { useUsdRate } from "@/hooks/use-usd-rate";
@@ -32,7 +32,7 @@ import { apiFetch } from "@/lib/api";
 
 const schema = z.object({
   kind: z.enum(["expense", "income", "transfer"]),
-  amount: z.number().positive("El monto debe ser mayor a 0"),
+  amount: z.number({ error: "Ingresá un monto válido (ej. 12.500,50)" }).positive("El monto debe ser mayor a 0"),
   accountId: z.string().min(1, "Elegí una cuenta"),
   toAccountId: z.string(),
   categoryId: z.string(),
@@ -99,7 +99,7 @@ export function TransactionForm({
   const effCurrency: Currency = fromCurrencies.includes(currency) ? currency : fromCurrencies[0];
   const effToCurrency: Currency = toCurrencies.includes(toCurrency) ? toCurrency : toCurrencies[0];
   const isExchange = isTransfer && !!toAccount && effToCurrency !== effCurrency;
-  const rate = Number(rateInput.replace(",", ".")) || usdRate?.rate || 0;
+  const rate = parseAmount(rateInput) || usdRate?.rate || 0;
   const amountValue = Number(form.watch("amount")) || 0;
   const exchangedAmount =
     isExchange && rate > 0
@@ -338,11 +338,12 @@ export function TransactionForm({
         <Label htmlFor="amount">Monto</Label>
         <Input
           id="amount"
-          type="number"
+          type="text"
           inputMode="decimal"
-          step="0.01"
+          autoComplete="off"
+          placeholder="0"
           className="h-12 text-lg"
-          {...form.register("amount", { valueAsNumber: true })}
+          {...form.register("amount", { setValueAs: parseAmount })}
         />
         {form.formState.errors.amount && (
           <p className="text-xs text-destructive">{form.formState.errors.amount.message}</p>
