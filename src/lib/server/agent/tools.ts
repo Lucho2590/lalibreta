@@ -2,6 +2,7 @@ import "server-only";
 
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
+import { exchangeDiffOf } from "@/lib/domain/exchanges";
 import type { ChatCompletionFunctionTool } from "openai/resources/chat/completions";
 import {
   getCardStatement,
@@ -372,7 +373,7 @@ export const TOOL_DEFINITIONS: ChatCompletionFunctionTool[] = [
     function: {
       name: "propose_exchange",
       description:
-        "Cambio de moneda: vender dólares (\"vendí 500 USD a 1480\") o comprar (\"compré 200 dólares\"). Si el usuario no dice a cuánto, se usa la cotización oficial del BCRA. Por defecto en la cuenta principal (puede ser la misma cuenta: salen dólares y entran pesos). Se confirma con botones.",
+        "Cambio de moneda: vender dólares (\"vendí 500 USD a 1480\") o comprar (\"compré 200 dólares\"), en un banco, una billetera o con una persona (\"le cambié 300 dólares a mi señora\"). Si el usuario no dice a cuánto, se usa la cotización oficial del BCRA. Por defecto en la cuenta principal (puede ser la misma cuenta: salen dólares y entran pesos; o distintas: salen del Galicia y entran en Mercado Pago). Se confirma con botones.",
       parameters: {
         type: "object",
         properties: {
@@ -381,10 +382,15 @@ export const TOOL_DEFINITIONS: ChatCompletionFunctionTool[] = [
           rate: { type: "number", description: "Pesos por dólar, si el usuario lo dijo" },
           arsAmount: {
             type: "number",
-            description: "Pesos totales, si el usuario dijo cuántos pesos recibió/pagó en vez de la cotización",
+            description:
+              "Pesos totales que realmente recibió/pagó, si los dijo. Si dijo cotización Y pesos, pasá los dos: la diferencia (redondeo, comisión) queda registrada",
           },
           fromAccountId: { type: "string", description: "Cuenta de donde sale la plata (opcional)" },
           toAccountId: { type: "string", description: "Cuenta a donde entra (opcional; puede ser la misma)" },
+          withWhom: {
+            type: "string",
+            description: 'Dónde o con quién cambió, si lo dijo (ej. "Mercado Pago", "Mi señora", "Juan", "Cueva")',
+          },
           date: { type: "string", description: "YYYY-MM-DD, por defecto hoy" },
         },
         required: ["operation", "usdAmount"],
@@ -422,7 +428,7 @@ export const TOOL_DEFINITIONS: ChatCompletionFunctionTool[] = [
     function: {
       name: "propose_transfer",
       description:
-        "Mover plata entre cuentas propias en la MISMA moneda: \"pasé 100 lucas del Galicia a Mercado Pago\", guardar en una cobacha (\"guardé 50 lucas en la cobacha Vacaciones\") o sacar de una (\"saqué 20 lucas de la reserva\"). No es gasto ni ingreso. Para cambiar de moneda usá propose_exchange; para pagar una tarjeta, propose_card_payment. Se confirma con botones.",
+        "Mover plata entre cuentas propias en la MISMA moneda: \"pasé 100 lucas del Galicia a Mercado Pago\", \"pasé 1000 dólares del Galicia a MP\" (si el destino no tenía esa moneda, se le agrega), guardar en una cobacha (\"guardé 50 lucas en la cobacha Vacaciones\") o sacar de una (\"saqué 20 lucas de la reserva\"). No es gasto ni ingreso. Para cambiar de moneda usá propose_exchange; para pagar una tarjeta, propose_card_payment. Se confirma con botones.",
       parameters: {
         type: "object",
         properties: {
@@ -581,7 +587,7 @@ export const TOOL_DEFINITIONS: ChatCompletionFunctionTool[] = [
     function: {
       name: "get_spending_summary",
       description:
-        "Totales de un mes: ingresos, gastos, balance, gastos por categoría y por cuenta. Se puede filtrar por categoría o por cuenta.",
+        "Totales de un mes: ingresos, gastos, balance, gastos por categoría y por cuenta, y los cambios de dólares del mes (cuánto vendió/compró y a qué cotización promedio). Se puede filtrar por categoría o por cuenta.",
       parameters: {
         type: "object",
         properties: {
@@ -693,6 +699,7 @@ const exchangeSchema = z.object({
   arsAmount: z.number().positive().optional(),
   fromAccountId: optStr,
   toAccountId: optStr,
+  withWhom: z.string().trim().max(40).optional(),
   date: optYMD,
 });
 
@@ -1357,6 +1364,13 @@ const proposeExchange = async (ctx: ToolContext, raw: unknown): Promise<ToolResu
   }
   const ars = round2(args.arsAmount ?? args.usdAmount * rate);
   const usd = round2(args.usdAmount);
+  // Dijo la cotización Y los pesos que le entraron/pagó y no cierran (redondeo,
+  // comisión): se registra lo que se movió y la diferencia contra la pactada.
+  const exchangeDiff =
+    args.rate && args.arsAmount
+      ? exchangeDiffOf(args.operation === "sell_usd" ? "sell" : "buy", usd, args.rate, ars)
+      : 0;
+  if (exchangeDiff !== 0) rate = ars / usd;
   const fromAmount = fromCurrency === "USD" ? usd : ars;
   const toAmount = toCurrency === "USD" ? usd : ars;
 
@@ -1381,8 +1395,10 @@ const proposeExchange = async (ctx: ToolContext, raw: unknown): Promise<ToolResu
     toCurrency,
     toAmount,
     rate: round2(rate),
+    ...(exchangeDiff !== 0 ? { quotedRate: args.rate, exchangeDiff } : {}),
     rateSource,
     rateDate,
+    withWhom: args.withWhom || null,
     after,
     date: args.date ?? todayYMD(),
     createdAt: Date.now(),
@@ -1491,11 +1507,20 @@ const proposeTransfer = (ctx: ToolContext, raw: unknown): ToolResult => {
   }
 
   const shared = from.currencies.filter((c) => to!.currencies.includes(c));
-  const currency: Currency | undefined = args.currency ?? (shared.length === 1 ? shared[0] : shared.includes("ARS") ? "ARS" : undefined);
-  if (!currency || !from.currencies.includes(currency) || !to.currencies.includes(currency)) {
+  const currency: Currency | undefined =
+    args.currency ??
+    (shared.length === 1 ? shared[0] : shared.includes("ARS") ? "ARS" : from.currencies.length === 1 ? from.currencies[0] : undefined);
+  if (!currency) return { error: "No queda claro si son pesos o dólares: preguntale." };
+  if (!from.currencies.includes(currency)) {
     return {
-      error: `"${from.name}" y "${to.name}" no comparten esa moneda. Si es un cambio de pesos a dólares (o al revés), usá propose_exchange.`,
+      error: `"${from.name}" no maneja ${currencyWords([currency])}. Si es un cambio de pesos a dólares (o al revés), usá propose_exchange.`,
     };
+  }
+  // Destino sin esa moneda (ej. Mercado Pago solo con pesos y le pasa dólares):
+  // se le agrega al confirmar. Las cobachas son de una sola moneda.
+  const addCurrencyToDestination = !to.currencies.includes(currency);
+  if (addCurrencyToDestination && to.type === "reserve") {
+    return { error: `La cobacha "${to.name}" no maneja ${currencyWords([currency])}.` };
   }
 
   const amount = round2(args.amount);
@@ -1522,6 +1547,7 @@ const proposeTransfer = (ctx: ToolContext, raw: unknown): ToolResult => {
     description,
     date: args.date ?? todayYMD(),
     after,
+    ...(addCurrencyToDestination ? { addCurrencyToDestination: true } : {}),
     createdAt: Date.now(),
   };
   ctx.proposedDraft = draft;
@@ -1850,7 +1876,7 @@ export const executeTool = async (
       );
       return {
         ...summary,
-        note: "byCurrency: totales en cada moneda. byCategoryARS/byAccountARS: en pesos, con los dólares convertidos a la cotización BCRA (usdRateUsed).",
+        note: "byCurrency: totales en cada moneda. byCategoryARS/byAccountARS: en pesos, con los dólares convertidos a la cotización BCRA (usdRateUsed). exchanges: dólares vendidos/comprados en el mes, pesos recibidos/pagados y cotización promedio (los cambios no son ingresos ni gastos).",
       };
     }
 

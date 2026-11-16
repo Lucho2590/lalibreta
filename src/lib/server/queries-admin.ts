@@ -15,6 +15,7 @@ import {
   type Money,
 } from "@/lib/domain/balances";
 import { buildSharedByTxId } from "@/lib/domain/shared-effective";
+import { summarizeExchanges } from "@/lib/domain/exchanges";
 import type {
   AccountType,
   CategoryKind,
@@ -162,6 +163,24 @@ export interface MonthSummary {
   byAccountARS: NamedTotal[];
   usdRateUsed: number | null;
   movements: number;
+  /** Cambios de dólares del mes (sin filtro de categoría; con filtro de cuenta, los que la tocan). */
+  exchanges: {
+    sold: { usd: number; ars: number; avgRate: number; count: number; diff: number };
+    bought: { usd: number; ars: number; avgRate: number; count: number; diff: number };
+    list: Array<{
+      date: string;
+      side: "sell" | "buy";
+      usd: number;
+      ars: number;
+      rate: number;
+      /** Cotización pactada y diferencia en pesos (redondeo/comisión), si hubo. */
+      quotedRate?: number;
+      diff?: number;
+      description: string;
+      from: string;
+      to: string;
+    }>;
+  } | null;
 }
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
@@ -197,9 +216,36 @@ export const getMonthSummary = async (
       .map(([id, total]) => ({ name: names.get(id) ?? "Sin nombre", total: r2(total) }))
       .sort((a, b) => b.total - a.total);
 
+  // Cambios: las dos patas de cada uno (con filtro de cuenta, si alguna es de esa cuenta).
+  const txIds = filter.accountId
+    ? new Set(all.filter((i) => i.accountId === filter.accountId).map((i) => i.transactionId))
+    : null;
+  const ex = filter.categoryId
+    ? null
+    : summarizeExchanges(all.filter((i) => !txIds || txIds.has(i.transactionId)));
+  const ymd = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Argentina/Buenos_Aires" });
+
   return {
     month: monthKey,
     byCurrency,
+    exchanges:
+      ex && ex.ops.length > 0
+        ? {
+            sold: ex.sold,
+            bought: ex.bought,
+            list: ex.ops.slice(0, 20).map((o) => ({
+              date: ymd.format(o.date),
+              side: o.side,
+              usd: o.usd,
+              ars: o.ars,
+              rate: o.rate,
+              ...(o.diff ? { quotedRate: o.quotedRate ?? undefined, diff: o.diff } : {}),
+              description: o.description,
+              from: accName.get(o.fromAccountId) ?? "—",
+              to: accName.get(o.toAccountId) ?? "—",
+            })),
+          }
+        : null,
     byCategoryARS: toNamed(sumByCategory(installments, monthKey, adj, toARS), catName),
     byAccountARS: toNamed(sumByAccount(installments, monthKey, adj, toARS), accName),
     usdRateUsed: usdRate,
@@ -318,6 +364,14 @@ export interface RecentTransaction {
   installments: number;
   accountName: string;
   categoryName: string;
+  /** Transferencias y cambios: destino, tipo y (en un cambio) lo que entró y la cotización. */
+  transfer?: {
+    type: string;
+    toAccountName: string;
+    toAmount?: number;
+    toCurrency?: Currency;
+    rate?: number;
+  };
 }
 
 export const listRecentTransactions = async (
@@ -346,6 +400,18 @@ export const listRecentTransactions = async (
       installments: Number(t.installments ?? 1),
       accountName: accName.get(t.accountId as string) ?? "—",
       categoryName: catName.get(t.categoryId as string) ?? "—",
+      ...(t.kind === "transfer"
+        ? {
+            transfer: {
+              type: String(t.transferType ?? "transfer"),
+              toAccountName: accName.get(t.toAccountId as string) ?? "—",
+              ...(t.toAmount != null
+                ? { toAmount: Number(t.toAmount), toCurrency: t.toCurrency as Currency }
+                : {}),
+              ...(t.rate != null ? { rate: Number(t.rate) } : {}),
+            },
+          }
+        : {}),
     };
   });
 };

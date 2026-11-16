@@ -160,6 +160,12 @@ const renderExchange = (d: ExchangeDraft) => {
     d.fromAccountId === d.toAccountId
       ? `Cuenta: ${d.fromAccountName}`
       : `De: ${d.fromAccountName} → A: ${d.toAccountName}`,
+    ...(d.exchangeDiff && d.quotedRate
+      ? [
+          `Pactado a ${formatMoney(d.quotedRate, "ARS")}: diferencia de *${d.exchangeDiff > 0 ? "+" : "−"}${formatMoney(Math.abs(d.exchangeDiff), "ARS")}* ${d.exchangeDiff > 0 ? "a favor" : "en contra"} _(queda registrada)_`,
+        ]
+      : []),
+    ...(d.withWhom ? [`Con: ${d.withWhom}`] : []),
     `Fecha: ${fmtDate(d.date)}`,
   ];
   if (d.after.length > 0) {
@@ -196,6 +202,9 @@ const renderTransfer = (d: TransferDraft) => {
     `*${formatMoney(d.amount, d.currency)}*`,
     `De: ${d.fromAccountName} → A: ${d.toAccountName}`,
     `Fecha: ${fmtDate(d.date)}`,
+    ...(d.addCurrencyToDestination
+      ? [`_${d.toAccountName} no tenía ${d.currency === "USD" ? "dólares" : "pesos"}: se los agrego._`]
+      : []),
     "",
     "Te quedaría:",
     ...d.after.map((a) => `• ${a.accountName}: ${formatMoney(a.amount, a.currency)}`),

@@ -32,6 +32,7 @@ import { buildSharedByTxId } from "@/lib/domain/shared-effective";
 import { formatCurrency, formatMoney, formatMonth, formatShortDate } from "@/lib/format";
 import { summarizeCardMonth } from "@/lib/domain/card-summary";
 import { RecurringBanner } from "@/components/dashboard/recurring-banner";
+import { ExchangeSummaryCard } from "@/components/transactions/exchange-summary-card";
 import { ApprovalsBanner } from "@/components/dashboard/approvals-banner";
 import { TodayAgenda } from "@/components/dashboard/today-agenda";
 import { Onboarding } from "@/components/dashboard/onboarding";
@@ -228,6 +229,9 @@ export default function Dashboard() {
               </CardContent>
             </Card>
           </section>
+
+          {/* Solo aparece si hubo cambios de dólares en el mes. */}
+          <ExchangeSummaryCard installments={installments} maxItems={4} />
 
           <section className="grid gap-4 md:grid-cols-2">
             <Card className="rounded-3xl">

@@ -24,7 +24,9 @@ import { computeFirstBillingMonth } from "@/lib/domain/cycles";
 import { formatMoney, formatMonth, parseAmount } from "@/lib/format";
 import type { Currency, TransactionKind } from "@/lib/domain/types";
 import { accountCurrencies } from "@/lib/domain/types";
+import { updateAccount } from "@/lib/domain/accounts";
 import { useUsdRate } from "@/hooks/use-usd-rate";
+import { ExchangeForm } from "./exchange-form";
 import { ShareSection, type ShareSplit } from "./share-section";
 import { buildParticipantsList, createSharedExpense } from "@/lib/domain/shared";
 import { upsertContact } from "@/lib/domain/contacts";
@@ -64,13 +66,61 @@ export interface SavedTransactionInfo {
   sharedExpenseId: string | null;
 }
 
+/** Pestañas del formulario: los tipos de movimiento + cambio de dólares. */
+export type FormMode = TransactionKind | "exchange";
+
+const MODES: Array<{ value: FormMode; label: string }> = [
+  { value: "expense", label: "Gasto" },
+  { value: "income", label: "Ingreso" },
+  { value: "transfer", label: "Transferir" },
+  { value: "exchange", label: "Cambio" },
+];
+
 export function TransactionForm({
   defaultKind = "expense",
   initial,
   onSubmitted,
   onSaved,
 }: {
-  defaultKind?: TransactionKind;
+  defaultKind?: FormMode;
+  initial?: TransactionFormInitial;
+  onSubmitted?: () => void;
+  /** Se llama con el gasto/ingreso guardado (no con transferencias). */
+  onSaved?: (info: SavedTransactionInfo) => void | Promise<void>;
+}) {
+  const [mode, setMode] = useState<FormMode>(defaultKind);
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-4 gap-1 rounded-2xl bg-muted p-1">
+        {MODES.map((opt) => (
+          <button
+            key={opt.value}
+            type="button"
+            onClick={() => setMode(opt.value)}
+            className={`h-10 rounded-xl text-sm font-medium transition ${
+              mode === opt.value ? "bg-background shadow-sm" : "text-muted-foreground"
+            }`}
+          >
+            {opt.label}
+          </button>
+        ))}
+      </div>
+      {mode === "exchange" ? (
+        <ExchangeForm onSubmitted={onSubmitted} />
+      ) : (
+        <MovementForm kind={mode} initial={initial} onSubmitted={onSubmitted} onSaved={onSaved} />
+      )}
+    </div>
+  );
+}
+
+function MovementForm({
+  kind,
+  initial,
+  onSubmitted,
+  onSaved,
+}: {
+  kind: TransactionKind;
   initial?: TransactionFormInitial;
   onSubmitted?: () => void;
   /** Se llama con el gasto/ingreso guardado (no con transferencias). */
@@ -92,7 +142,7 @@ export function TransactionForm({
   const form = useForm<FormValues>({
     resolver,
     defaultValues: {
-      kind: defaultKind,
+      kind,
       amount: initial?.amount && initial.amount > 0 ? initial.amount : 0,
       accountId: "",
       toAccountId: "",
@@ -104,7 +154,10 @@ export function TransactionForm({
     },
   });
 
-  const kind = form.watch("kind");
+  // La pestaña manda: mantenemos el valor del form sincronizado.
+  useEffect(() => {
+    form.setValue("kind", kind);
+  }, [kind, form]);
   const accountId = form.watch("accountId");
   const toAccountId = form.watch("toAccountId");
   const dateStr = form.watch("date");
@@ -115,13 +168,25 @@ export function TransactionForm({
   const toAccount = accounts.find((a) => a.id === toAccountId);
   const isCredit = account?.type === "credit" && kind === "expense";
   const isTransfer = kind === "transfer";
+  const isCardPayment = isTransfer && toAccount?.type === "credit";
 
   // Monedas posibles según la cuenta elegida (las tarjetas aceptan $ y US$).
   const fromCurrencies: Currency[] = account ? accountCurrencies(account) : ["ARS", "USD"];
   const toCurrencies: Currency[] = toAccount ? accountCurrencies(toAccount) : ["ARS", "USD"];
   const effCurrency: Currency = fromCurrencies.includes(currency) ? currency : fromCurrencies[0];
-  const effToCurrency: Currency = toCurrencies.includes(toCurrency) ? toCurrency : toCurrencies[0];
-  const isExchange = isTransfer && !!toAccount && effToCurrency !== effCurrency;
+  // Transferencias: la misma moneda de un lado y del otro (los cambios van en
+  // la pestaña Cambio). Solo el pago de una tarjeta puede cancelar deuda en
+  // otra moneda (ej. pagar la parte en dólares con pesos).
+  const effToCurrency: Currency = isCardPayment
+    ? toCurrencies.includes(toCurrency)
+      ? toCurrency
+      : toCurrencies[0]
+    : effCurrency;
+  // Destino sin esa moneda (ej. pasar dólares a Mercado Pago, que solo tenía pesos):
+  // se le agrega al guardar. Las cobachas son de una sola moneda: ahí no.
+  const toMissingCurrency =
+    isTransfer && !!toAccount && !isCardPayment && !accountCurrencies(toAccount).includes(effCurrency);
+  const isExchange = isCardPayment && effToCurrency !== effCurrency;
   const rate = parseAmount(rateInput) || usdRate?.rate || 0;
   const amountValue = Number(form.watch("amount")) || 0;
   const exchangedAmount =
@@ -130,10 +195,8 @@ export function TransactionForm({
       : null;
 
   const selectableAccounts = accounts.filter((a) => a.active !== false);
-  // Destinos: las otras cuentas, y la misma si maneja dos monedas (cambio).
-  const transferTargets = selectableAccounts.filter(
-    (a) => a.id !== accountId || (a.type !== "credit" && accountCurrencies(a).length > 1),
-  );
+  // Destinos: las otras cuentas (para cambiar de moneda está la pestaña Cambio).
+  const transferTargets = selectableAccounts.filter((a) => a.id !== accountId);
   const filteredCategories = categories.filter(
     (c) => c.kind === (kind === "transfer" ? "expense" : kind),
   );
@@ -167,9 +230,18 @@ export function TransactionForm({
           toast.error("Elegí la cuenta destino");
           return;
         }
-        if (values.toAccountId === values.accountId && effToCurrency === effCurrency) {
-          toast.error("En la misma cuenta solo se puede cambiar de moneda");
+        if (values.toAccountId === values.accountId) {
+          toast.error("Elegí otra cuenta de destino");
           return;
+        }
+        if (toMissingCurrency && toAccount) {
+          if (toAccount.type === "reserve") {
+            toast.error(`${toAccount.name} es una cobacha en ${effCurrency === "USD" ? "pesos" : "dólares"}`);
+            return;
+          }
+          await updateAccount(user.uid, toAccount.id, {
+            currencies: [...accountCurrencies(toAccount), effCurrency],
+          });
         }
         if (isExchange && !(rate > 0)) {
           toast.error("Falta la cotización");
@@ -200,9 +272,7 @@ export function TransactionForm({
         toast.success(
           toAccount?.type === "credit"
             ? "Pago de tarjeta registrado"
-            : isExchange
-              ? "Cambio registrado"
-              : "Transferencia registrada",
+            : "Transferencia registrada",
         );
       } else {
         if (!account) {
@@ -343,27 +413,6 @@ export function TransactionForm({
 
   return (
     <form onSubmit={submit} className="space-y-4">
-      <div className="grid grid-cols-3 gap-1 rounded-2xl bg-muted p-1">
-        {(
-          [
-            { value: "expense", label: "Gasto" },
-            { value: "income", label: "Ingreso" },
-            { value: "transfer", label: "Transfer." },
-          ] as const
-        ).map((opt) => (
-          <button
-            key={opt.value}
-            type="button"
-            onClick={() => form.setValue("kind", opt.value)}
-            className={`h-10 rounded-xl text-sm font-medium transition ${
-              kind === opt.value ? "bg-background shadow-sm" : "text-muted-foreground"
-            }`}
-          >
-            {opt.label}
-          </button>
-        ))}
-      </div>
-
       <div className="space-y-1">
         <Label htmlFor="amount">Monto</Label>
         <Input
@@ -426,20 +475,30 @@ export function TransactionForm({
                   placeholder="Cuenta destino"
                   items={transferTargets.map((a) => ({
                     value: a.id,
-                    label: a.id === accountId ? `${a.name} (cambio de moneda)` : a.name,
+                    label: a.name,
                   }))}
                 />
               </SelectTrigger>
               <SelectContent>
                 {transferTargets.map((acc) => (
                   <SelectItem key={acc.id} value={acc.id}>
-                    {acc.id === accountId ? `${acc.name} (cambio de moneda)` : acc.name}
+                    {acc.name}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
-            {toAccount && toCurrencies.length > 1 && (
-              <CurrencyToggle value={effToCurrency} options={toCurrencies} onChange={setToCurrency} />
+            {isCardPayment && toCurrencies.length > 1 && (
+              <>
+                <p className="mt-1.5 text-xs text-muted-foreground">¿Qué parte de la tarjeta pagás?</p>
+                <CurrencyToggle value={effToCurrency} options={toCurrencies} onChange={setToCurrency} />
+              </>
+            )}
+            {toMissingCurrency && toAccount && (
+              <p className="mt-1.5 text-xs text-muted-foreground">
+                {toAccount.type === "reserve"
+                  ? `${toAccount.name} no maneja ${effCurrency === "USD" ? "dólares" : "pesos"}.`
+                  : `${toAccount.name} no tenía ${effCurrency === "USD" ? "dólares" : "pesos"}: se los agrego al guardar.`}
+              </p>
             )}
           </div>
 

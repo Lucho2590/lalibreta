@@ -38,6 +38,9 @@ export interface CreateTransactionInput {
   toCurrency?: Currency;
   toAmount?: number;
   rate?: number;
+  /** Cambios: cotización pactada y diferencia en pesos (redondeo/comisión). */
+  quotedRate?: number;
+  exchangeDiff?: number;
 }
 
 export const createTransactionWithInstallments = async (
@@ -59,6 +62,12 @@ export const createTransactionWithInstallments = async (
     }
     const transferType: TransferType =
       input.transferType ?? (toCurrency !== currency ? "exchange" : "transfer");
+    // Diferencia de un cambio contra la cotización pactada: va en la transacción
+    // y en las patas (los resúmenes del mes se arman con las patas).
+    const diffFields =
+      toCurrency !== currency && input.exchangeDiff && input.quotedRate
+        ? { quotedRate: input.quotedRate, exchangeDiff: input.exchangeDiff }
+        : {};
     const txRef = doc(collection(db, transactionsCollectionPath(uid)));
     const sourceRef = doc(collection(db, installmentsCollectionPath(uid)));
     const destRef = doc(collection(db, installmentsCollectionPath(uid)));
@@ -81,7 +90,7 @@ export const createTransactionWithInstallments = async (
       currency,
       transferType,
       ...(toCurrency !== currency
-        ? { toCurrency, toAmount, ...(input.rate ? { rate: input.rate } : {}) }
+        ? { toCurrency, toAmount, ...(input.rate ? { rate: input.rate } : {}), ...diffFields }
         : {}),
       createdAt: Timestamp.now(),
     };
@@ -99,6 +108,7 @@ export const createTransactionWithInstallments = async (
       kind: "transfer" as const,
       description: input.description,
       transferType,
+      ...diffFields,
     };
     // Cada pata lleva su moneda y su monto (en un cambio difieren).
     batch.set(sourceRef, {
