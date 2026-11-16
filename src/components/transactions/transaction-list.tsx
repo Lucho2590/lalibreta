@@ -16,6 +16,8 @@ import { CategoryIcon } from "@/components/category-icon";
 import type { SharedAdjustment } from "@/lib/domain/balance";
 import { otherUid, personRefFromAccountId, profileName } from "@/lib/domain/people";
 import { apiPost, errorText } from "@/lib/api";
+import { isPersonAccountId } from "@/lib/domain/people";
+import { SplitExistingSheet } from "@/components/people/split-existing";
 
 interface Props {
   items: Installment[];
@@ -59,6 +61,8 @@ export function TransactionList({
     };
   }, [connections, contacts, user]);
   const [open, setOpen] = useState<Set<string>>(new Set());
+  // Gasto ya cargado que se va a dividir con otras personas.
+  const [splitting, setSplitting] = useState<Installment | null>(null);
   const toggle = (id: string) =>
     setOpen((prev) => {
       const next = new Set(prev);
@@ -306,6 +310,24 @@ export function TransactionList({
                 </div>
               )}
             </div>
+            {/* Dividir un gasto mío ya cargado (no repartido todavía). */}
+            {adjustment &&
+              it.kind === "expense" &&
+              !splitInfo &&
+              !it.splitId &&
+              !it.projected &&
+              !isPersonAccountId(it.accountId) && (
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="text-muted-foreground"
+                  onClick={() => setSplitting(it)}
+                  aria-label="Dividir con otras personas"
+                  title="Dividir con otras personas"
+                >
+                  <Users className="size-4" />
+                </Button>
+              )}
             <Button
               size="icon"
               variant="ghost"
@@ -350,6 +372,7 @@ export function TransactionList({
 
   return (
     <div className="space-y-2">
+      <SplitExistingSheet key={splitting?.id ?? "none"} item={splitting} onClose={() => setSplitting(null)} />
       {entries.map((e) => {
         if (e.type === "row") return renderRow(e.it);
         const acc = accountMap.get(e.accountId);
