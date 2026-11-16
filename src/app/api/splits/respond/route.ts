@@ -11,6 +11,7 @@ export const POST = authedPost<{
   addToBooks?: boolean;
   categoryId?: string | null;
   reason?: string | null;
+  always?: boolean;
 }>(async (user, body) => {
   if (!body.splitId || typeof body.accept !== "boolean") throw new PeopleError("Falta splitId o accept");
   await respondSplit(user, body.splitId, {
@@ -18,5 +19,6 @@ export const POST = authedPost<{
     addToBooks: !!body.addToBooks,
     categoryId: body.categoryId ?? null,
     reason: body.reason ?? null,
+    always: !!body.always,
   });
 });

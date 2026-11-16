@@ -21,7 +21,10 @@ import { setAccountBalanceAdmin, setAccountParentAdmin, setCardDatesAdmin } from
 import { PROPOSE_BATCH_TOOL, proposeBatch } from "./batch-tool";
 import { AGENDA_TOOLS, AGENDA_TOOL_NAMES, runAgendaTool } from "./agenda-tool";
 import type { AgentPending, AgentPerson } from "../people";
-import { loadPeopleContext } from "../people";
+import { ensureOfflineContact, loadPeopleContext } from "../people";
+import { createSplitRule, deleteSplitRule, loadSplitRules } from "../split-rules";
+import { normalizeMerchant } from "@/lib/domain/merchants";
+import { adminDb } from "../firebase-admin";
 import { PeopleError, respondConnection } from "../connections";
 import { respondSplit } from "../splits";
 import { respondPersonTransfer } from "../person-transfers";
@@ -150,6 +153,7 @@ export const TOOL_DEFINITIONS: ChatCompletionFunctionTool[] = [
                 },
               },
               mode: { type: "string", enum: ["installments", "lump"], description: "En cuotas: si te lo paga en cuotas (default) o todo junto" },
+              always: { type: "boolean", description: 'true si pide dividir SIEMPRE así este gasto ("todos los meses", "siempre")' },
             },
             required: ["people"],
             additionalProperties: false,
@@ -702,6 +706,38 @@ export const TOOL_DEFINITIONS: ChatCompletionFunctionTool[] = [
   {
     type: "function",
     function: {
+      name: "split_always",
+      description:
+        'Dividir SIEMPRE un gasto que se repite (ya cargado antes): "el seguro dividilo siempre a medias con Orne", o dejar de hacerlo ("dejá de dividir Claro"). Se aplica a lo cargado desde este mes y a todo lo que entre de ahí en más.',
+      parameters: {
+        type: "object",
+        properties: {
+          action: { type: "string", enum: ["set", "remove"] },
+          merchant: { type: "string", description: 'Comercio/servicio como figura en sus gastos ("Federación Patronal", "Claro")' },
+          people: {
+            type: "array",
+            description: "set: con quién y cuánto",
+            items: {
+              type: "object",
+              properties: {
+                person: { type: "string" },
+                newName: { type: "string" },
+                percent: { type: "number" },
+                amount: { type: "number" },
+              },
+              additionalProperties: false,
+            },
+          },
+          mode: { type: "string", enum: ["installments", "lump"] },
+        },
+        required: ["action", "merchant"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "respond_pending",
       description:
         'Responde algo de "Para responder": una conexión, un gasto que le asignaron (split) o una transferencia que registró otra persona.',
@@ -714,6 +750,7 @@ export const TOOL_DEFINITIONS: ChatCompletionFunctionTool[] = [
           accountId: { type: "string", description: "transfer: su cuenta donde entró/salió la plata" },
           addToBooks: { type: "boolean", description: "split: sumarlo a sus gastos (default true)" },
           categoryId: { type: "string", description: "split: categoría de gasto si lo suma" },
+          always: { type: "boolean", description: 'split: "aceptá siempre" (los próximos de ese gasto se aceptan solos)' },
           reason: { type: "string", description: "Si rechaza, por qué" },
         },
         required: ["id", "type", "accept"],
@@ -760,6 +797,7 @@ const proposeSchema = z.object({
         .min(1)
         .max(10),
       mode: z.enum(["installments", "lump"]).optional(),
+      always: z.boolean().optional(),
     })
     .optional(),
 });
@@ -844,6 +882,22 @@ const transferSchema = z.object({
 });
 
 const debtsSchema = z.object({ person: optStr });
+const splitAlwaysSchema = z.object({
+  action: z.enum(["set", "remove"]),
+  merchant: z.string().trim().min(1).max(80),
+  people: z
+    .array(
+      z.object({
+        person: optStr,
+        newName: z.string().trim().max(60).optional(),
+        percent: z.number().positive().max(100).optional(),
+        amount: z.number().positive().optional(),
+      }),
+    )
+    .max(10)
+    .optional(),
+  mode: z.enum(["installments", "lump"]).optional(),
+});
 const respondPendingSchema = z.object({
   id: z.string().min(1),
   type: z.enum(["connection", "split", "transfer"]),
@@ -852,6 +906,7 @@ const respondPendingSchema = z.object({
   addToBooks: z.boolean().optional(),
   categoryId: optStr,
   reason: optStr,
+  always: z.boolean().optional(),
 });
 
 /** Persona de la lista (o alguien nuevo sin app). */
@@ -1065,7 +1120,7 @@ const proposeTransaction = (ctx: ToolContext, raw: unknown): ToolResult => {
     const { amounts, error } = computeShares(round2(args.amount), people.map((p) => ({ shareType: p.shareType, value: p.value })));
     if (error) return { error };
     people.forEach((p, i) => (p.amount = amounts[i]));
-    split = { mode: args.split.mode ?? "installments", people };
+    split = { mode: args.split.mode ?? "installments", people, always: !!args.split.always };
   }
 
   const isCreditExpense = account.type === "credit" && args.kind === "expense";
@@ -2131,6 +2186,56 @@ export const executeTool = async (
       };
     }
 
+    case "split_always": {
+      const parsed = splitAlwaysSchema.safeParse(args);
+      if (!parsed.success) return issues(parsed.error);
+      const a = parsed.data;
+      const key = normalizeMerchant(a.merchant);
+      const rules = await loadSplitRules(ctx.uid);
+      if (a.action === "remove") {
+        const rule = rules.find((r) => r.key === key || sameName(r.label, a.merchant) || normalize(r.label).includes(normalize(a.merchant)));
+        if (!rule) return { error: `«${a.merchant}» no se divide siempre. Se dividen siempre: ${rules.map((r) => r.label).join(", ") || "nada"}.` };
+        await deleteSplitRule(ctx.uid, rule.id);
+        return { ok: true, message: `Listo: «${rule.label}» ya no se divide solo (lo ya dividido queda).` };
+      }
+      if (!a.people?.length) return { error: "Falta con quién y cuánto (people)." };
+      // Un gasto de ese comercio (el más reciente) para reconocerlo y validar las partes.
+      const txs = await adminDb().collection(`users/${ctx.uid}/transactions`).where("kind", "==", "expense").get();
+      const sample = txs.docs
+        .map((d) => ({ id: d.id, ...(d.data() as { description?: string; purchaseDate?: { toMillis(): number } }) }))
+        .filter((t) => {
+          const k = normalizeMerchant(String(t.description ?? ""));
+          return k === key || (key.length >= 4 && (k.includes(key) || key.includes(k)) && k.length >= 4);
+        })
+        .sort((x, y) => (y.purchaseDate?.toMillis() ?? 0) - (x.purchaseDate?.toMillis() ?? 0))[0];
+      if (!sample) {
+        return { error: `No encontré gastos de «${a.merchant}». Cuando lo cargue, dividilo con split y always: true.` };
+      }
+      const participants = [];
+      for (const p of a.people) {
+        const who = resolveAgentPerson(ctx, p.person, p.newName);
+        if ("error" in who) return { error: who.error };
+        if (p.percent == null && p.amount == null) return { error: `Falta cuánto le toca a ${who.name}.` };
+        participants.push({
+          ref: who.ref ?? (await ensureOfflineContact(ctx.uid, who.newName ?? who.name)),
+          shareType: (p.percent != null ? "percent" : "amount") as "percent" | "amount",
+          value: p.percent ?? p.amount!,
+        });
+      }
+      try {
+        const r = await createSplitRule(ctx.uid, { txId: sample.id, mode: a.mode ?? "installments", participants });
+        return {
+          ok: true,
+          label: r.label,
+          dividedNow: r.applied,
+          message: `Desde ahora «${r.label}» se divide solo${r.applied ? `; ya dividí ${r.applied} cargado${r.applied === 1 ? "" : "s"} desde este mes` : ""}. A los que usan la app les llega para aceptar.`,
+        };
+      } catch (err) {
+        if (err instanceof PeopleError) return { error: err.message };
+        throw err;
+      }
+    }
+
     case "respond_pending": {
       const parsed = respondPendingSchema.safeParse(args);
       if (!parsed.success) return issues(parsed.error);
@@ -2151,8 +2256,14 @@ export const executeTool = async (
             addToBooks,
             categoryId: addToBooks ? a.categoryId : null,
             reason: a.reason ?? null,
+            always: !!a.always,
           });
-          return { ok: true, message: a.accept ? (addToBooks ? "Aceptado y sumado a sus gastos." : "Aceptado.") : "Rechazado; le avisamos." };
+          return {
+            ok: true,
+            message: a.accept
+              ? `${addToBooks ? "Aceptado y sumado a sus gastos." : "Aceptado."}${a.always ? " Los próximos de ese gasto se aceptan solos (si se divide siempre)." : ""}`
+              : "Rechazado; le avisamos.",
+          };
         }
         let accountId = a.accountId;
         if (a.accept && !accountId) {

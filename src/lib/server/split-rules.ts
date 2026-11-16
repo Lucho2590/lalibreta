@@ -9,6 +9,7 @@ import {
   checkSplitParticipants,
   createSplit,
   relinkSplit,
+  type AutoAccept,
   type ParticipantInput,
 } from "./splits";
 import { currentMonthKey } from "./time";
@@ -30,6 +31,8 @@ export interface SplitRule {
   label: string;
   participants: Array<ParticipantInput & { name: string }>;
   mode: SplitMode;
+  /** Los que aceptan siempre: uid → si lo suman a sus gastos y con qué categoría. */
+  autoAccept?: AutoAccept;
   createdAt?: Timestamp;
 }
 
@@ -60,7 +63,13 @@ export const applySplitRules = async (
     try {
       const splitId = await createSplit(
         { uid },
-        { txId, mode: rule.mode, participants: rule.participants.map(({ ref, shareType, value }) => ({ ref, shareType, value })) },
+        {
+          txId,
+          mode: rule.mode,
+          participants: rule.participants.map(({ ref, shareType, value }) => ({ ref, shareType, value })),
+          ruleId: rule.id,
+          autoAccept: rule.autoAccept,
+        },
       );
       out.push({ txId, splitId, label: rule.label, names: rule.participants.map((p) => p.name) });
     } catch (err) {
@@ -84,6 +93,14 @@ export const createSplitRule = async (
   if (!key) throw new PeopleError("Ese gasto no tiene un nombre para reconocerlo");
   const existing = (await rulesCol(uid).where("key", "==", key).get()).docs[0];
   const ref = existing?.ref ?? rulesCol(uid).doc();
+  // Si ya existía: los que aceptaban siempre lo siguen haciendo solo si su parte no cambió.
+  const prev = existing ? ({ id: existing.id, ...existing.data() } as SplitRule) : null;
+  const autoAccept: AutoAccept = {};
+  for (const [puid, a] of Object.entries(prev?.autoAccept ?? {})) {
+    const before = prev!.participants.find((p) => p.ref === `u:${puid}`);
+    const now = input.participants.find((p) => p.ref === `u:${puid}`);
+    if (before && now && before.shareType === now.shareType && before.value === now.value) autoAccept[puid] = a;
+  }
   const rule: Omit<SplitRule, "id"> = {
     key,
     label: tx.description,
@@ -94,8 +111,13 @@ export const createSplitRule = async (
       name: p.name,
     })),
     mode: input.mode,
+    autoAccept,
   };
   await ref.set({ ...rule, createdAt: FieldValue.serverTimestamp() });
+  // El reparto del gasto de ejemplo también queda atado a la regla (para "aceptar siempre").
+  for (const splitId of await activeSplitIdsForTx(uid, input.txId)) {
+    await adminDb().doc(`splits/${splitId}`).update({ ruleId: ref.id });
+  }
 
   // Gastos ya cargados de ese comercio (de este mes en adelante) sin dividir.
   const from = currentMonthKey();

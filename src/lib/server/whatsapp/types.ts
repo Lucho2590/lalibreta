@@ -99,6 +99,8 @@ export interface SplitDraftPerson {
 export interface SplitDraft {
   mode: "installments" | "lump";
   people: SplitDraftPerson[];
+  /** Y de ahora en más, dividir siempre así los gastos de este comercio. */
+  always?: boolean;
 }
 
 /** Plata con una persona: le pasé / me pasó / le presté. */

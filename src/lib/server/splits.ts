@@ -169,7 +169,7 @@ const askToAccept = async (s: Split, p: SplitParticipant) => {
   await notify(p.uid, {
     kind: "split-request",
     title: `${s.ownerName} te asignó parte de un gasto`,
-    body: `${s.description}: te toca ${shareText(s, p.amount)}. Entrá para aceptarlo.`,
+    body: `${s.description}: te toca ${shareText(s, p.amount)}. Entrá para aceptarlo${s.ruleId ? " (se repite: podés aceptarlo siempre)" : ""}.`,
     url: `/compartidas/gasto/${s.id}`,
     whatsappText: `💸 *${s.ownerName}* te asignó parte de un gasto: *${s.description}*, te toca *${shareText(s, p.amount)}*. Decime "aceptá el gasto de ${s.ownerName}" o entrá a la app.`,
     dedupeKey: `split-request-${s.id}-${p.uid}-${Date.now()}`,
@@ -177,9 +177,20 @@ const askToAccept = async (s: Split, p: SplitParticipant) => {
 };
 
 /** Reparte un gasto mío ya cargado. */
+/** Aceptación permanente de un participante (de una regla "dividir siempre"). */
+export type AutoAccept = Record<string, { addToBooks: boolean; categoryId: string | null }>;
+
 export const createSplit = async (
   owner: { uid: string },
-  input: { txId: string; mode: SplitMode; participants: ParticipantInput[] },
+  input: {
+    txId: string;
+    mode: SplitMode;
+    participants: ParticipantInput[];
+    /** Viene de un "dividir siempre". */
+    ruleId?: string | null;
+    /** Los que aceptan siempre los de esa regla: quedan aceptados al toque. */
+    autoAccept?: AutoAccept;
+  },
 ): Promise<string> => {
   const existing = await col().where("ownerTxId", "==", input.txId).get();
   if (existing.docs.some((d) => d.data().ownerUid === owner.uid && d.data().status === "active")) {
@@ -187,9 +198,32 @@ export const createSplit = async (
   }
   const tx = await loadOwnerExpense(owner.uid, input.txId);
   if (!(tx.totalAmount > 0)) throw new PeopleError("El gasto no tiene monto");
-  const participants = await buildParticipants(owner.uid, tx.totalAmount, input.participants);
-  const profile = await loadProfile(owner.uid);
+  const built = await buildParticipants(owner.uid, tx.totalAmount, input.participants);
   const ref = col().doc();
+  // Los que aceptan siempre: aceptados al toque (y a sus gastos, si la categoría sigue existiendo).
+  const participants: SplitParticipant[] = [];
+  for (const p of built) {
+    const auto = p.uid ? input.autoAccept?.[p.uid] : undefined;
+    if (!p.uid || !auto || p.status !== "pending") {
+      participants.push(p);
+      continue;
+    }
+    let addToBooks = auto.addToBooks && !!auto.categoryId;
+    if (addToBooks) {
+      const cat = (await adminDb().doc(`users/${p.uid}/categories/${auto.categoryId}`).get()).data();
+      addToBooks = cat?.kind === "expense";
+    }
+    participants.push({
+      ...p,
+      status: "accepted",
+      respondedAt: Timestamp.now(),
+      autoAccept: true,
+      addToBooks,
+      categoryId: addToBooks ? auto.categoryId : null,
+      participantTxId: addToBooks ? participantTxId(ref.id) : null,
+    });
+  }
+  const profile = await loadProfile(owner.uid);
   const split: Omit<Split, "id"> = {
     ownerUid: owner.uid,
     ownerName: profileName(profile),
@@ -206,10 +240,28 @@ export const createSplit = async (
     participants,
     uids: indexUids(owner.uid, participants),
     status: "active",
+    ruleId: input.ruleId ?? null,
   };
   await ref.set({ ...split, createdAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp() });
   const created = { id: ref.id, ...split };
-  for (const p of participants) await askToAccept(created, p);
+  for (const p of participants) {
+    if (p.autoAccept && p.uid) {
+      if (p.participantTxId && p.categoryId) {
+        const batch = adminDb().batch();
+        await writeParticipantBooks(batch, p.uid, created, p, p.categoryId);
+        await batch.commit();
+      }
+      await notify(p.uid, {
+        kind: "split-response",
+        title: `Se sumó tu parte de ${created.description}`,
+        body: `${shareText(created, p.amount)} para ${created.ownerName}. Lo aceptás siempre: si querés cambiarlo, entrá al gasto.`,
+        url: `/compartidas/gasto/${created.id}`,
+        dedupeKey: `split-auto-${created.id}-${p.uid}`,
+      });
+    } else {
+      await askToAccept(created, p);
+    }
+  }
   return ref.id;
 };
 
@@ -285,7 +337,14 @@ const checkCategory = async (uid: string, categoryId: string | null | undefined)
 export const respondSplit = async (
   user: { uid: string },
   splitId: string,
-  input: { accept: boolean; addToBooks?: boolean; categoryId?: string | null; reason?: string | null },
+  input: {
+    accept: boolean;
+    addToBooks?: boolean;
+    categoryId?: string | null;
+    reason?: string | null;
+    /** Aceptar siempre los próximos de este "dividir siempre". */
+    always?: boolean;
+  },
 ): Promise<void> => {
   if (input.accept && input.addToBooks) await checkCategory(user.uid, input.categoryId);
   const ref = col().doc(splitId);
@@ -314,6 +373,7 @@ export const respondSplit = async (
       addToBooks: !!txId,
       categoryId: txId ? input.categoryId! : null,
       participantTxId: txId,
+      autoAccept: !!(input.accept && input.always && split.ruleId),
     };
     const participants = split.participants.map((p, i) => (i === idx ? updated : p));
     t.update(ref, { participants, updatedAt: FieldValue.serverTimestamp() });
@@ -322,6 +382,7 @@ export const respondSplit = async (
   if (!result) return;
   const { split, me } = result;
   const accepted = me.status === "accepted";
+  if (me.autoAccept && split.ruleId) await saveAutoAccept(split, user.uid, me);
   await notify(split.ownerUid, {
     kind: "split-response",
     title: accepted ? `${me.name} aceptó su parte` : `${me.name} no aceptó su parte`,
@@ -544,4 +605,39 @@ export const checkSplitParticipants = async (ownerUid: string, txId: string, inp
   const tx = await loadOwnerExpense(ownerUid, txId);
   const participants = await buildParticipants(ownerUid, tx.totalAmount, inputs);
   return { tx, participants };
+};
+
+/** Guarda (o saca) en la regla del dueño que este participante acepta siempre. */
+const saveAutoAccept = async (split: Split, uid: string, p: SplitParticipant | null) => {
+  if (!split.ruleId) return;
+  const ref = adminDb().doc(`users/${split.ownerUid}/splitRules/${split.ruleId}`);
+  if (!(await ref.get()).exists) throw new PeopleError("Ese gasto ya no se divide siempre");
+  await ref.update({
+    [`autoAccept.${uid}`]: p ? { addToBooks: p.addToBooks, categoryId: p.categoryId } : FieldValue.delete(),
+  });
+};
+
+/** El participante prende o apaga "aceptar siempre" (sobre un gasto que ya aceptó). */
+export const setSplitAutoAccept = async (user: { uid: string }, splitId: string, enabled: boolean): Promise<void> => {
+  const ref = col().doc(splitId);
+  const snap = await ref.get();
+  if (!snap.exists) throw new PeopleError("Ese gasto ya no existe", 404);
+  const split = toSplit(snap);
+  const idx = split.participants.findIndex((p) => p.uid === user.uid);
+  if (idx === -1) throw new PeopleError("No participás de este gasto", 403);
+  const me = split.participants[idx];
+  if (!split.ruleId) throw new PeopleError("Este gasto no se repite");
+  if (enabled && me.status !== "accepted") throw new PeopleError("Primero aceptalo");
+  await saveAutoAccept(split, user.uid, enabled ? me : null);
+  const participants = split.participants.map((p, i) => (i === idx ? { ...p, autoAccept: enabled } : p));
+  await ref.update({ participants, updatedAt: FieldValue.serverTimestamp() });
+  if (enabled) {
+    await notify(split.ownerUid, {
+      kind: "split-response",
+      title: `${me.name} acepta siempre ${split.description}`,
+      body: "Los próximos se le suman solos.",
+      url: `/compartidas/gasto/${split.id}`,
+      dedupeKey: `split-always-${split.ruleId}-${user.uid}`,
+    });
+  }
 };

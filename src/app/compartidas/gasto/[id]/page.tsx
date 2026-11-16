@@ -48,6 +48,7 @@ export default function SplitDetailPage({ params }: { params: Promise<{ id: stri
   const [categoryId, setCategoryId] = useState<string | null>(null);
   const [reason, setReason] = useState("");
   const [rejecting, setRejecting] = useState(false);
+  const [acceptAlways, setAcceptAlways] = useState(true);
   const [editing, setEditing] = useState<SplitState | null>(null);
 
   useEffect(() => {
@@ -104,6 +105,7 @@ export default function SplitDetailPage({ params }: { params: Promise<{ id: stri
           addToBooks: accept && addToBooks,
           categoryId: accept && addToBooks ? categoryId : null,
           reason: accept ? null : reason,
+          always: accept && !!split.ruleId && acceptAlways,
         }),
       accept ? (addToBooks ? "Aceptado y sumado a tus gastos" : "Aceptado") : "Le avisamos que no lo aceptaste",
     );
@@ -222,6 +224,23 @@ export default function SplitDetailPage({ params }: { params: Promise<{ id: stri
                     placeholder="¿En qué categoría?"
                   />
                 )}
+                {split.ruleId && (
+                  <label className="flex cursor-pointer items-start gap-2 rounded-xl border p-3 text-sm">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5 size-4 accent-brand"
+                      checked={acceptAlways}
+                      onChange={(e) => setAcceptAlways(e.target.checked)}
+                    />
+                    <span>
+                      <span className="font-medium">Aceptar siempre</span>
+                      <span className="block text-xs text-muted-foreground">
+                        {split.ownerName.split(" ")[0]} lo divide todos los meses: los próximos de «{split.description}» se te suman solos
+                        {addToBooks ? " (con esta categoría)" : ""}.
+                      </span>
+                    </span>
+                  </label>
+                )}
                 {rejecting ? (
                   <div className="space-y-2">
                     <Input placeholder="¿Por qué? (opcional)" value={reason} onChange={(e) => setReason(e.target.value)} />
@@ -253,6 +272,27 @@ export default function SplitDetailPage({ params }: { params: Promise<{ id: stri
             {me.status === "accepted" && (
               <div className="space-y-2">
                 <p className="text-sm text-success">✓ Aceptaste tu parte.</p>
+                {split.ruleId && (
+                  <div className="flex items-center justify-between gap-3 rounded-xl border p-3">
+                    <div>
+                      <Label htmlFor="always" className="text-sm">Aceptar siempre</Label>
+                      <p className="text-xs text-muted-foreground">
+                        Los próximos de «{split.description}» se te suman solos, sin que tengas que aceptarlos.
+                      </p>
+                    </div>
+                    <Switch
+                      id="always"
+                      checked={!!me.autoAccept}
+                      disabled={busy}
+                      onCheckedChange={(v) =>
+                        run(
+                          () => apiPost("/api/splits/auto-accept", { splitId: split.id, enabled: v }),
+                          v ? "Listo: los próximos se aceptan solos" : "Los próximos vas a tener que aceptarlos",
+                        )
+                      }
+                    />
+                  </div>
+                )}
                 {me.addToBooks ? (
                   <div className="flex items-center justify-between gap-2 text-sm">
                     <span className="text-muted-foreground">
@@ -310,6 +350,7 @@ export default function SplitDetailPage({ params }: { params: Promise<{ id: stri
               <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ${STATUS[p.status].cls}`}>
                 {p.status === "pending" && <Clock className="mr-0.5 inline size-3" />}
                 {STATUS[p.status].label}
+                {p.autoAccept && p.status === "accepted" && " · siempre"}
               </span>
               <span className="w-28 shrink-0 text-right font-semibold tabular-nums">{formatMoney(p.amount, split.currency)}</span>
             </div>

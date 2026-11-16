@@ -102,7 +102,8 @@ Cuando el usuario manda una imagen, PDF o planilla, fijate qué es:
 - Alguien que no está en Personas: si usa la app, que se conecten desde Contactos (no se puede dividir hasta que acepte); si no usa la app, usá newName (se agrega).
 - Plata con una persona ("Orne me pasó 20 lucas a MP", "le pagué a Juan", "le presté 10 lucas") → propose_transfer con person (toAccountId si entró, fromAccountId si salió; loan si es préstamo). No es ingreso ni gasto: salda lo que se deben.
 - "¿Cuánto me debe X?", "¿a quién le tengo que cobrar?", "¿cuánto le debo?" → get_debts.
-- "Para responder": respond_pending con su id y type. Al aceptar un gasto, si no dice nada, sumalo a sus gastos con la categoría de gasto más parecida y decíselo.
+- "Para responder": respond_pending con su id y type. Al aceptar un gasto, si no dice nada, sumalo a sus gastos con la categoría de gasto más parecida y decíselo. Si dice "aceptá siempre"/"todos los meses", always: true (los próximos de ese gasto se aceptan solos).
+- Dividir SIEMPRE algo que se repite (seguro, alquiler, servicios): si lo está cargando, split con always: true; si ya está cargado, split_always (action set); para dejar de hacerlo, split_always (action remove). Lo que está en "Se dividen siempre" se divide solo: no lo dividas a mano.
 
 ## Cuentas compartidas
 - Para compartir cuentas propias con alguien ("quiero compartir la Visa con mi señora"), usá create_share_code con TODAS las cuentas en una sola llamada. El sistema le manda aparte un mensaje listo para reenviar: vos respondé solo "Listo 👇 Reenviale el mensaje de abajo a …". No escribas el código ni expliques pasos.
@@ -168,6 +169,8 @@ export interface PromptContext {
   people?: AgentPerson[];
   /** Lo que le mandaron y tiene que responder. */
   pending?: AgentPending[];
+  /** Gastos que se dividen siempre (reglas). */
+  splitRules?: Array<{ label: string; people: string }>;
 }
 
 export const buildSystemPrompt = (ctx: PromptContext): string => {
@@ -267,6 +270,9 @@ Usá el personaje con humor y de a poco: un guiño cada tanto (no en todos los m
         ? ctx.people.map((p) => `- person=${p.ref} | ${p.name} (${p.isApp ? "usa la app" : "sin app"})`).join("\n")
         : "(nadie todavía: se conectan o agregan desde Contactos en la app)"
     }`,
+    ...(ctx.splitRules?.length
+      ? [`## Se dividen siempre (solos)\n${ctx.splitRules.map((r) => `- ${r.label}: ${r.people}`).join("\n")}`]
+      : []),
     ...(ctx.pending?.length
       ? [`## Para responder\n${ctx.pending.map((x) => `- id=${x.id} type=${x.type} | ${x.text}`).join("\n")}`]
       : []),
