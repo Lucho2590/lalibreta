@@ -28,7 +28,7 @@ type Mine = { activity: Activity; me: ActivityParticipant };
 
 export default function AgendaPage() {
   const { user } = useAuth();
-  const { data, loading } = useActivities();
+  const { data, loading, error } = useActivities();
   const today = ymdAR();
   const [formFor, setFormFor] = useState<{ activity?: Activity } | null>(null);
   const [expenseFor, setExpenseFor] = useState<{ activity: Activity; split: boolean } | null>(null);
@@ -176,7 +176,18 @@ export default function AgendaPage() {
 
       {loading && <p className="text-sm text-muted-foreground">Cargando…</p>}
 
-      {!loading && mine.length === 0 && (
+      {!loading && error && mine.length === 0 && (
+        <Card className="rounded-3xl border-destructive/30">
+          <CardContent className="py-10 text-center">
+            <p className="text-sm font-medium">No pudimos cargar tu agenda</p>
+            <p className="mx-auto mt-1 max-w-sm text-xs text-muted-foreground">
+              Probá recargar la página en un rato. Si sigue pasando, avisanos.
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
+      {!loading && !error && mine.length === 0 && (
         <Card className="rounded-3xl">
           <CardContent className="py-16 text-center">
             <div className="mx-auto mb-3 flex size-12 items-center justify-center rounded-2xl bg-muted">
