@@ -86,6 +86,15 @@ export function TransactionList({ items, sharedByTxId, ownerUid }: Props) {
           : undefined;
         const isExchange = it.transferType === "exchange" || (otherLeg && currencyOf(otherLeg) !== cur);
         const isCardPayment = it.transferType === "card-payment";
+        // Cotización del cambio (pesos por dólar), a partir de las dos patas.
+        const exchangeRate =
+          isExchange && otherLeg
+            ? (() => {
+                const usdLeg = cur === "USD" ? it : otherLeg;
+                const arsLeg = cur === "USD" ? otherLeg : it;
+                return usdLeg.amount > 0 ? arsLeg.amount / usdLeg.amount : null;
+              })()
+            : null;
         const transferLabel = isCardPayment ? "Pago de tarjeta" : isExchange ? "Cambio" : "Transferencia";
         const [fromName, toName] =
           it.transferRole === "destination"
@@ -153,7 +162,7 @@ export function TransactionList({ items, sharedByTxId, ownerUid }: Props) {
                 </div>
                 <div className="text-xs text-muted-foreground">
                   {isTransfer
-                    ? `${fromName === toName ? (fromName ?? "—") : `${fromName ?? "—"} → ${toName ?? "—"}`} · ${formatShortDate(it.billingDate.toDate())}`
+                    ? `${fromName === toName ? (fromName ?? "—") : `${fromName ?? "—"} → ${toName ?? "—"}`}${!isCardPayment && exchangeRate ? ` · a ${formatMoney(Math.round(exchangeRate * 100) / 100, "ARS")}` : ""} · ${formatShortDate(it.billingDate.toDate())}`
                     : `${cat?.name ?? "—"} · ${acc?.name ?? "—"} · ${formatShortDate(it.billingDate.toDate())}`}
                 </div>
                 {isShared && shareInfo?.shared && (
@@ -186,6 +195,19 @@ export function TransactionList({ items, sharedByTxId, ownerUid }: Props) {
                       ? `+${formatMoney(displayAmount, cur)}`
                       : `-${formatMoney(displayAmount, cur)}`}
                 </div>
+                {isExchange && !!it.exchangeDiff && (
+                  <div
+                    className={`text-[10px] font-medium tabular-nums ${it.exchangeDiff < 0 ? "text-destructive" : "text-success"}`}
+                    title={
+                      it.quotedRate
+                        ? `Diferencia contra la cotización pactada (${formatMoney(it.quotedRate, "ARS")}): redondeo o comisión`
+                        : "Diferencia por redondeo o comisión"
+                    }
+                  >
+                    dif. {it.exchangeDiff > 0 ? "+" : "−"}
+                    {formatMoney(Math.abs(it.exchangeDiff), "ARS")}
+                  </div>
+                )}
                 {showDiff && (
                   <div className="text-[10px] text-muted-foreground line-through tabular-nums">
                     {formatMoney(shareInfo!.totalAmount, cur)}

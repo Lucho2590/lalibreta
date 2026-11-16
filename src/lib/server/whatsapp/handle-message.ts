@@ -2,7 +2,7 @@ import "server-only";
 
 import { adminDb } from "../firebase-admin";
 import { createTransactionAdmin, createTransferAdmin } from "../transactions-admin";
-import { Timestamp } from "firebase-admin/firestore";
+import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { createAccountAdmin } from "../accounts-admin";
 import { createCategoryAdmin } from "../categories-admin";
 import { saveStatementAdmin } from "../statements-admin";
@@ -671,10 +671,12 @@ const confirmExchange = async (waId: string, uid: string, d: ExchangeDraft) => {
     toAmount: d.toAmount,
     toCurrency: d.toCurrency,
     rate: d.rate,
+    ...(d.exchangeDiff && d.quotedRate ? { quotedRate: d.quotedRate, exchangeDiff: d.exchangeDiff } : {}),
     date: dateFromYMD(d.date),
-    description: selling
-      ? `Venta de ${formatMoney(d.fromAmount, "USD")}`
-      : `Compra de ${formatMoney(d.toAmount, "USD")}`,
+    description:
+      (selling
+        ? `Venta de ${formatMoney(d.fromAmount, "USD")}`
+        : `Compra de ${formatMoney(d.toAmount, "USD")}`) + (d.withWhom ? ` · ${d.withWhom}` : ""),
     transferType: "exchange",
   });
   const bal = await getBalances(uid);
@@ -749,6 +751,12 @@ const confirmTransfer = async (waId: string, uid: string, d: TransferDraft) => {
   if (!from || !to) {
     await sendText(waId, "No pude registrarlo porque una de las cuentas ya no existe.");
     return;
+  }
+  if (!to.currencies.includes(d.currency)) {
+    await adminDb()
+      .doc(`users/${uid}/accounts/${to.id}`)
+      .update({ currencies: FieldValue.arrayUnion(...to.currencies, d.currency) });
+    to.currencies = [...to.currencies, d.currency];
   }
   await createTransferAdmin({
     ownerUid: uid,

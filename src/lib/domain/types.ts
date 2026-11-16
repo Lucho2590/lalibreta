@@ -202,7 +202,12 @@ export interface Transaction {
   transferType?: TransferType;
   toCurrency?: Currency;
   toAmount?: number;
+  /** Cotización efectiva (pesos por dólar que realmente se movieron). */
   rate?: number;
+  /** Cambios: cotización pactada, si difiere de la efectiva (redondeo, comisión, cambio parcial). */
+  quotedRate?: number;
+  /** Cambios: diferencia en pesos contra dólares × cotización pactada. Positivo = a favor. */
+  exchangeDiff?: number;
   createdAt: Timestamp;
 }
 
@@ -237,6 +242,9 @@ export interface Installment {
   transferRole?: "source" | "destination";
   transferCounterpartId?: string;
   transferType?: TransferType;
+  /** Cambios: cotización pactada y diferencia en pesos (ver Transaction). */
+  quotedRate?: number;
+  exchangeDiff?: number;
   /** Moneda de amount. Default ARS. */
   currency?: Currency;
   /** Si lo cargó otra persona desde una cuenta compartida. */
