@@ -183,6 +183,12 @@ export interface ExchangeDraft {
   rateSource: "user" | "BCRA";
   /** Fecha de la cotización BCRA usada (YYYY-MM-DD). */
   rateDate: string | null;
+  /** Dónde o con quién cambió ("Mercado Pago", "Mi señora"). Va en la descripción. */
+  withWhom?: string | null;
+  /** Cotización pactada si los pesos no cierran (rate pasa a ser la efectiva). */
+  quotedRate?: number;
+  /** Diferencia en pesos contra la pactada (redondeo/comisión). Positivo = a favor. */
+  exchangeDiff?: number;
   /** Saldos que quedarían después del cambio (para mostrar). */
   after: Array<{ accountName: string; currency: "ARS" | "USD"; amount: number }>;
   /** YYYY-MM-DD */
@@ -230,6 +236,8 @@ export interface TransferDraft {
   /** YYYY-MM-DD */
   date: string;
   after: Array<{ accountName: string; currency: "ARS" | "USD"; amount: number }>;
+  /** La cuenta destino no tenía esta moneda: se le agrega al confirmar. */
+  addCurrencyToDestination?: boolean;
   createdAt: number;
 }
 

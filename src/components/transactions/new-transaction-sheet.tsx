@@ -7,10 +7,11 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
-import { TransactionForm } from "./transaction-form";
+import { TransactionForm, type FormMode } from "./transaction-form";
 
 interface SheetState {
-  open: () => void;
+  /** Abre el formulario, opcionalmente en un modo (ej. "exchange" para un cambio de dólares). */
+  open: (mode?: FormMode) => void;
   close: () => void;
 }
 
@@ -18,7 +19,12 @@ const Ctx = createContext<SheetState>({ open: () => {}, close: () => {} });
 
 export function NewTransactionSheetProvider({ children }: { children: React.ReactNode }) {
   const [isOpen, setOpen] = useState(false);
-  const open = useCallback(() => setOpen(true), []);
+  const [mode, setMode] = useState<FormMode>("expense");
+  // Sin argumento (o con un evento de click) abre en "Gasto".
+  const open = useCallback((m?: FormMode) => {
+    setMode(typeof m === "string" ? m : "expense");
+    setOpen(true);
+  }, []);
   const close = useCallback(() => setOpen(false), []);
 
   return (
@@ -33,7 +39,7 @@ export function NewTransactionSheetProvider({ children }: { children: React.Reac
             <SheetTitle>Nuevo movimiento</SheetTitle>
           </SheetHeader>
           <div className="px-5 pb-6 pt-2">
-            <TransactionForm onSubmitted={close} />
+            <TransactionForm key={mode} defaultKind={mode} onSubmitted={close} />
           </div>
         </SheetContent>
       </Sheet>

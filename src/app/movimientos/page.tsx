@@ -15,6 +15,7 @@ import {
 } from "@/hooks/use-data";
 import { useAuth } from "@/hooks/use-auth";
 import { TransactionList } from "@/components/transactions/transaction-list";
+import { ExchangeSummaryCard } from "@/components/transactions/exchange-summary-card";
 import { useNewTransactionSheet } from "@/components/transactions/new-transaction-sheet";
 import { formatCurrency, formatDate, formatMoney, formatMonth } from "@/lib/format";
 import { isCardCredit, isRealIncome } from "@/lib/domain/types";
@@ -51,9 +52,20 @@ export default function MovimientosPage() {
       if (kindFilter === "expense" && i.kind !== "expense") return false;
       if (kindFilter === "income" && !isRealIncome(i) && !(isCardView && isCardCredit(i))) return false;
       if (kindFilter === "transfer" && i.kind !== "transfer") return false;
+      if (kindFilter === "exchange" && !(i.kind === "transfer" && i.transferType === "exchange")) return false;
       return true;
     });
   }, [installments, accountFilter, kindFilter, isCardView]);
+
+  // Cambios de moneda: las dos patas de cada cambio (con filtro de cuenta, los
+  // cambios en los que participa esa cuenta, de cualquier lado).
+  const exchangeLegs = useMemo(() => {
+    if (!accountFilter) return installments;
+    const txIds = new Set(
+      installments.filter((i) => i.accountId === accountFilter).map((i) => i.transactionId),
+    );
+    return installments.filter((i) => txIds.has(i.transactionId));
+  }, [installments, accountFilter]);
 
   // Los totales de arriba respetan el filtro de cuenta (no el de tipo).
   const statBase = useMemo(
@@ -188,6 +200,7 @@ export default function MovimientosPage() {
             <TabsTrigger value="expense">Gastos</TabsTrigger>
             <TabsTrigger value="income">Ingresos</TabsTrigger>
             <TabsTrigger value="transfer">Transfer.</TabsTrigger>
+            <TabsTrigger value="exchange">Cambios</TabsTrigger>
           </TabsList>
         </Tabs>
 
@@ -202,6 +215,15 @@ export default function MovimientosPage() {
           </button>
         )}
       </div>
+
+      {/* Cambios de dólares: resumen del mes (cuánto vendió/compró y a qué promedio). */}
+      {!loading && !isCardView && (kindFilter === "exchange" || kindFilter === "transfer") && (
+        <ExchangeSummaryCard
+          installments={exchangeLegs}
+          showList={false}
+          showEmpty={kindFilter === "exchange"}
+        />
+      )}
 
       {loading ? (
         <SkeletonList />

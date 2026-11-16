@@ -323,6 +323,9 @@ export interface ServerTransferInput {
   toAmount?: number;
   toCurrency?: Currency;
   rate?: number;
+  /** Cambios: cotización pactada y diferencia en pesos (redondeo/comisión). */
+  quotedRate?: number;
+  exchangeDiff?: number;
   date: Date;
   description: string;
   transferType: TransferType;
@@ -344,6 +347,10 @@ export const createTransferAdmin = async (input: ServerTransferInput): Promise<s
   const txRef = db.collection(`users/${input.ownerUid}/transactions`).doc();
   const insCol = db.collection(`users/${input.ownerUid}/installments`);
   const isExchange = toCurrency !== input.currency;
+  const diffFields =
+    isExchange && input.exchangeDiff && input.quotedRate
+      ? { quotedRate: input.quotedRate, exchangeDiff: input.exchangeDiff }
+      : {};
 
   const batch = db.batch();
   batch.set(txRef, {
@@ -359,7 +366,7 @@ export const createTransferAdmin = async (input: ServerTransferInput): Promise<s
     currency: input.currency,
     transferType: input.transferType,
     ...(isExchange
-      ? { toCurrency, toAmount, ...(input.rate ? { rate: input.rate } : {}) }
+      ? { toCurrency, toAmount, ...(input.rate ? { rate: input.rate } : {}), ...diffFields }
       : {}),
     createdAt: FieldValue.serverTimestamp(),
   });
@@ -374,6 +381,7 @@ export const createTransferAdmin = async (input: ServerTransferInput): Promise<s
     kind: "transfer",
     description: input.description,
     transferType: input.transferType,
+    ...diffFields,
   };
   batch.set(insCol.doc(), {
     ...base,
