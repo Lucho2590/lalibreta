@@ -43,7 +43,7 @@ import {
 import { notify } from "../notifications";
 import { ensureOfflineContact, loadPeopleContext } from "../people";
 import { createSplit } from "../splits";
-import { applySplitRules } from "../split-rules";
+import { applySplitRules, createSplitRule } from "../split-rules";
 import { createPersonTransfer } from "../person-transfers";
 import { PeopleError } from "../connections";
 import { loadSession, saveSession, takeDraft } from "./sessions";
@@ -362,6 +362,12 @@ const routeMessage = async (
       pendingDraft: session.pendingDraft,
       people: peopleCtx.people,
       pending: peopleCtx.pending,
+      splitRules: peopleCtx.rules.map((r) => ({
+        label: r.label,
+        people: r.participants
+          .map((p) => `${p.name} ${p.shareType === "percent" ? `${p.value}%` : formatMoney(p.value, "ARS")}`)
+          .join(", "),
+      })),
     },
     session.history,
     input,
@@ -512,9 +518,14 @@ const confirmTransaction = async (waId: string, uid: string, draft: TransactionD
         participants.push({ ref, shareType: p.shareType, value: p.value });
       }
       await createSplit({ uid }, { txId, mode: draft.split.mode, participants });
+      if (draft.split.always) {
+        const rule = await createSplitRule(uid, { txId, mode: draft.split.mode, participants });
+        splitText += `\n🔁 De ahora en más, *${rule.label}* se divide siempre así${rule.applied ? ` (ya dividí ${rule.applied} más de este mes)` : ""}.`;
+      }
       const apps = draft.split.people.filter((p) => p.isApp).map((p) => p.name.split(" ")[0]);
       const offline = draft.split.people.filter((p) => !p.isApp).map((p) => p.name.split(" ")[0]);
       splitText = [
+        splitText,
         apps.length ? `\n👥 A ${apps.join(" y ")} le${apps.length > 1 ? "s" : ""} llegó para aceptar su parte.` : "",
         offline.length ? `\n📝 Anoté que ${offline.join(" y ")} te debe${offline.length > 1 ? "n" : ""} su parte; te voy a recordar cobrar.` : "",
       ].join("");

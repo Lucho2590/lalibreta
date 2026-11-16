@@ -62,6 +62,7 @@ const renderTransaction = (d: TransactionDraft) => {
       );
     }
     lines.push(`• Vos: ${formatMoney(Math.round((d.amount - others) * 100) / 100, cur)}`);
+    if (d.split.always) lines.push(`🔁 Y de ahora en más, «${d.description}» se divide siempre así.`);
   }
   lines.push("", "¿Lo guardo?");
   return lines.join("\n");

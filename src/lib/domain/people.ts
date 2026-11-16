@@ -97,6 +97,8 @@ export interface SplitParticipant {
   addToBooks: boolean;
   categoryId: string | null;
   participantTxId: string | null;
+  /** Acepta siempre los de esta regla ("dividir siempre"): los próximos se aceptan solos. */
+  autoAccept?: boolean;
 }
 
 /** splits/{id} — solo lo escribe el server. */
@@ -122,6 +124,8 @@ export interface Split {
   /** Dueño + participantes con la app (reglas y consultas). */
   uids: string[];
   status: "active" | "cancelled";
+  /** Si salió de un "dividir siempre" (users/{owner}/splitRules/{ruleId}). */
+  ruleId?: string | null;
   createdAt?: { toDate(): Date } | null;
   updatedAt?: { toDate(): Date } | null;
 }

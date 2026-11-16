@@ -3,6 +3,7 @@ import "server-only";
 import { adminDb } from "./firebase-admin";
 import { loadSplitsFor } from "./splits";
 import { loadTransfersFor } from "./person-transfers";
+import { loadSplitRules, type SplitRule } from "./split-rules";
 import {
   contactRef,
   otherUid,
@@ -36,16 +37,19 @@ export interface PeopleContext {
   pending: AgentPending[];
   splits: Split[];
   transfers: PersonTransfer[];
+  /** "Dividir siempre" (comercios que se dividen solos). */
+  rules: SplitRule[];
 }
 
 /** Personas (conexiones aceptadas + contactos sin app) y lo pendiente, para el agente. */
 export const loadPeopleContext = async (uid: string): Promise<PeopleContext> => {
   const db = adminDb();
-  const [connSnap, contactsSnap, splits, transfers] = await Promise.all([
+  const [connSnap, contactsSnap, splits, transfers, rules] = await Promise.all([
     db.collection("connections").where("uids", "array-contains", uid).get(),
     db.collection(`users/${uid}/contacts`).get(),
     loadSplitsFor(uid),
     loadTransfersFor(uid),
+    loadSplitRules(uid),
   ]);
   const connections = connSnap.docs.map((d) => ({ id: d.id, ...d.data() }) as Connection);
   const people: AgentPerson[] = [];
@@ -73,7 +77,7 @@ export const loadPeopleContext = async (uid: string): Promise<PeopleContext> => 
       pending.push({
         id: s.id,
         type: "split",
-        text: `${s.ownerName} te asignó ${formatMoney(me.amount, s.currency)}${n > 1 ? ` en ${n} cuotas` : ""} de "${s.description}"`,
+        text: `${s.ownerName} te asignó ${formatMoney(me.amount, s.currency)}${n > 1 ? ` en ${n} cuotas` : ""} de "${s.description}"${s.ruleId ? " (se repite todos los meses: puede aceptarlo siempre)" : ""}`,
       });
     }
   }
@@ -87,7 +91,7 @@ export const loadPeopleContext = async (uid: string): Promise<PeopleContext> => 
       });
     }
   }
-  return { people: people.sort((a, b) => a.name.localeCompare(b.name, "es")), pending, splits, transfers };
+  return { people: people.sort((a, b) => a.name.localeCompare(b.name, "es")), pending, splits, transfers, rules };
 };
 
 /**
