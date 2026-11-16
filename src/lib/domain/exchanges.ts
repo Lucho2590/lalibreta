@@ -126,3 +126,18 @@ export const summarizeExchanges = (installments: LegLike[]): ExchangeSummary => 
     ops,
   };
 };
+
+/**
+ * A qué cotización pasar los dólares del mes a pesos para el balance "todo en
+ * pesos": la de venta del usuario en el mes (promedio); si no vendió, la de
+ * compra; si no, el oficial BCRA.
+ */
+export const monthUsdConversion = (
+  installments: LegLike[],
+  bcraRate: number | null | undefined,
+): { rate: number; label: string } | null => {
+  const ex = summarizeExchanges(installments);
+  if (ex.sold.count) return { rate: ex.sold.avgRate, label: "tu promedio de venta del mes" };
+  if (ex.bought.count) return { rate: ex.bought.avgRate, label: "tu promedio de compra del mes" };
+  return bcraRate ? { rate: bcraRate, label: "dólar oficial BCRA" } : null;
+};

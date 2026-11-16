@@ -67,3 +67,13 @@ export const parseAmount = (raw: string | number | null | undefined): number => 
   }
   return /^-?(\d+\.?\d*|\.\d+)$/.test(s) ? Number(s) : NaN;
 };
+
+/**
+ * Para inputs de monto: lo que escribió el usuario, prolijo ("74915.06" →
+ * "74.915,06"). Si no es un número, lo deja como está.
+ */
+export const formatAmountInput = (raw: string): string => {
+  const n = parseAmount(raw);
+  if (!Number.isFinite(n)) return raw;
+  return new Intl.NumberFormat("es-AR", { maximumFractionDigits: 2 }).format(n);
+};

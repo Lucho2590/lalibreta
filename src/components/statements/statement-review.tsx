@@ -389,6 +389,35 @@ export function StatementReview({
                           reintegro
                         </span>
                       )}
+                      {/* Servicios y suscripciones que se debitan todos los meses: se estiman
+                          en el resumen siguiente (y se reemplazan por el real al importarlo). */}
+                      {!payment && !credit && !r.installmentNumber && r.amount > 0 &&
+                        (r.type === "purchase" || r.type === "subscription" || r.type === "other") && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setRows((prev) =>
+                                prev.map((x) =>
+                                  x.index === r.index
+                                    ? { ...x, type: x.type === "subscription" ? "purchase" : "subscription" }
+                                    : x,
+                                ),
+                              )
+                            }
+                            title={
+                              r.type === "subscription"
+                                ? "Se repite todos los meses: lo estimo en el próximo resumen. Tocá para sacarlo."
+                                : "¿Se debita todos los meses (servicio, seguro, suscripción)? Tocá para estimarlo en el próximo resumen."
+                            }
+                            className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium transition ${
+                              r.type === "subscription"
+                                ? "bg-brand/10 text-brand"
+                                : "border border-dashed text-muted-foreground hover:bg-muted"
+                            }`}
+                          >
+                            {r.type === "subscription" ? "🔁 se repite" : "🔁 ¿todos los meses?"}
+                          </button>
+                        )}
                       {r.duplicateOf && (
                         <Link
                           href={`/movimientos?account=${accountChoice}`}

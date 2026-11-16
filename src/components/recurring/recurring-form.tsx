@@ -25,6 +25,9 @@ import { accountCurrencies, type Currency } from "@/lib/domain/types";
 import { recurringCollectionPath } from "@/lib/domain/recurring";
 import { monthKey, type TransactionKind } from "@/lib/domain/types";
 
+/** Nombres que son claramente un cobro, no un gasto. */
+const INCOME_WORDS = /\b(sueldo|salario|honorarios?|aguinaldo|cobro|freelance|jubilacion|pension)\b/;
+
 export function RecurringForm({ onCreated }: { onCreated?: () => void }) {
   const { user } = useAuth();
   const { data: accounts } = useAccounts();
@@ -49,6 +52,27 @@ export function RecurringForm({ onCreated }: { onCreated?: () => void }) {
   const currencyOptions: Currency[] = selectedAccount ? accountCurrencies(selectedAccount) : ["ARS", "USD"];
   const effCurrency: Currency = currencyOptions.includes(currency) ? currency : currencyOptions[0];
   const filteredCategories = categories.filter((c) => c.kind === kind);
+  const [autoKind, setAutoKind] = useState(false);
+
+  // Al escribir el nombre: si coincide con una categoría ("Sueldo", "Alquiler"),
+  // se elige esa categoría y su tipo; si suena a cobro (sueldo, honorarios…),
+  // pasa a ingreso fijo. Así un "Sueldo" no termina cargado como gasto.
+  const onNameChange = (value: string) => {
+    setName(value);
+    const norm = (t: string) => t.normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase();
+    const match = categories.find((c) => norm(c.name) === norm(value));
+    if (match) {
+      if (match.kind !== kind) setAutoKind(true);
+      setKind(match.kind);
+      setCategoryId(match.id);
+      return;
+    }
+    if (kind === "expense" && INCOME_WORDS.test(norm(value))) {
+      setKind("income");
+      setCategoryId("");
+      setAutoKind(true);
+    }
+  };
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -90,7 +114,10 @@ export function RecurringForm({ onCreated }: { onCreated?: () => void }) {
       <div className="grid grid-cols-2 gap-2 rounded-2xl bg-muted p-1">
         <button
           type="button"
-          onClick={() => setKind("expense")}
+          onClick={() => {
+            setKind("expense");
+            setAutoKind(false);
+          }}
           className={`h-10 rounded-xl text-sm font-medium transition ${
             kind === "expense" ? "bg-background shadow-sm" : "text-muted-foreground"
           }`}
@@ -99,7 +126,10 @@ export function RecurringForm({ onCreated }: { onCreated?: () => void }) {
         </button>
         <button
           type="button"
-          onClick={() => setKind("income")}
+          onClick={() => {
+            setKind("income");
+            setAutoKind(false);
+          }}
           className={`h-10 rounded-xl text-sm font-medium transition ${
             kind === "income" ? "bg-background shadow-sm" : "text-muted-foreground"
           }`}
@@ -115,8 +145,13 @@ export function RecurringForm({ onCreated }: { onCreated?: () => void }) {
           className="h-12"
           placeholder="Ej: Alquiler, Internet, Sueldo"
           value={name}
-          onChange={(e) => setName(e.target.value)}
+          onChange={(e) => onNameChange(e.target.value)}
         />
+        {autoKind && (
+          <p className="text-xs text-muted-foreground">
+            Lo pasé a {kind === "income" ? "ingreso" : "gasto"} fijo. Si no es así, cambialo arriba.
+          </p>
+        )}
       </div>
 
       <div className="space-y-1">

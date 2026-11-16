@@ -91,3 +91,76 @@ export const sumByAccount = (
   adj?: SharedAdjustment,
   toARS?: ToARS,
 ): Map<string, number> => sumBy(installments, monthKey, (i) => i.accountId, adj, toARS);
+
+export interface AccountFlow {
+  /** Ingresos de verdad (sueldo, cobros…). */
+  income: number;
+  /** Gastos (descontando la parte de otros en los compartidos). */
+  expense: number;
+  /** Plata que entró desde otra cuenta propia (transferencias y cambios). */
+  transfersIn: number;
+  /** Plata que salió a otra cuenta propia (transferencias, cambios, pagos de tarjeta). */
+  transfersOut: number;
+  /** Todo lo que entró / salió y la diferencia. */
+  in: number;
+  out: number;
+  net: number;
+}
+
+/**
+ * Entradas y salidas del mes de UNA cuenta (o un grupo: la cuenta con sus
+ * cobachas/tarjetas) en una moneda. A diferencia de computeMonthlyBalance,
+ * acá las transferencias SÍ cuentan: mirando una cuenta, lo que te pasaste
+ * desde otra entró. Los movimientos dentro del grupo en la misma moneda
+ * (ej. guardar en una cobacha de la misma cuenta) no cuentan.
+ */
+export const computeAccountFlow = (
+  installments: Installment[],
+  monthKey: string,
+  accountIds: ReadonlySet<string>,
+  adj?: SharedAdjustment,
+  currency: Currency = "ARS",
+): AccountFlow => {
+  const legsByTx = new Map<string, Installment[]>();
+  for (const ins of installments) {
+    if (ins.kind !== "transfer") continue;
+    legsByTx.set(ins.transactionId, [...(legsByTx.get(ins.transactionId) ?? []), ins]);
+  }
+  let income = 0;
+  let expense = 0;
+  let transfersIn = 0;
+  let transfersOut = 0;
+  for (const ins of installments) {
+    if (!accountIds.has(ins.accountId)) continue;
+    if (monthOf(ins) !== monthKey) continue;
+    if (currencyOf(ins) !== currency) continue;
+    if (ins.kind === "income") {
+      if (ins.cardCredit) expense -= ins.amount;
+      else income += ins.amount;
+    } else if (ins.kind === "expense") {
+      expense += expenseAmount(ins, adj);
+    } else if (ins.kind === "transfer") {
+      const other = legsByTx.get(ins.transactionId)?.find((l) => l.id !== ins.id);
+      const counterpartId = other?.accountId ?? ins.transferCounterpartId;
+      const internal =
+        !!counterpartId &&
+        accountIds.has(counterpartId) &&
+        (!other || currencyOf(other) === currency);
+      if (internal) continue;
+      if (ins.transferRole === "destination") transfersIn += ins.amount;
+      else transfersOut += ins.amount;
+    }
+  }
+  const r = (n: number) => Math.round(n * 100) / 100;
+  const inTotal = income + transfersIn;
+  const outTotal = expense + transfersOut;
+  return {
+    income: r(income),
+    expense: r(expense),
+    transfersIn: r(transfersIn),
+    transfersOut: r(transfersOut),
+    in: r(inTotal),
+    out: r(outTotal),
+    net: r(inTotal - outTotal),
+  };
+};

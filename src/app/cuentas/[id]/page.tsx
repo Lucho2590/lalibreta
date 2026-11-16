@@ -17,10 +17,11 @@ import { useMonth } from "@/hooks/use-month";
 import { CardCycleEditor } from "@/components/accounts/card-cycle-editor";
 import { ShareAccountSection } from "@/components/accounts/share-account-section";
 import { formatDate, formatMoney, formatMonth } from "@/lib/format";
-import { TAX_CATEGORY, nextMonthKey, summarizeCardMonth, type Money } from "@/lib/domain/card-summary";
+import { TAX_CATEGORY, cardFloorMonth, nextMonthKey, summarizeCardMonth, type Money } from "@/lib/domain/card-summary";
 import type { AccountType, Currency } from "@/lib/domain/types";
 import { accountCurrencies, currencyOf, monthOf } from "@/lib/domain/types";
 import { computeAccountBalances } from "@/lib/domain/balances";
+import { computeAccountFlow } from "@/lib/domain/balance";
 import {
   buildSharedByTxId,
   getEffectiveInstallmentInfo,
@@ -90,12 +91,33 @@ export default function AccountDetailPage({ params }: { params: Promise<{ id: st
       ? (["ARS", "USD"] as Currency[]).filter((c) => c === "ARS" || balance[c] !== 0)
       : accountCurrencies(account);
 
+  // Entradas y salidas del mes (cuenta + sus cobachas), contando transferencias y
+  // cambios: lo que se pasó desde otra cuenta entró a esta. Los consumos de las
+  // tarjetas asociadas no: salen cuando se paga la tarjeta.
+  const flowIds = new Set([account.id, ...children.filter((c) => c.type === "reserve").map((c) => c.id)]);
+  const adj = user ? { sharedByTxId, ownerUid: user.uid } : undefined;
+  const flow = {
+    ARS: computeAccountFlow(installments, monthKey, flowIds, adj, "ARS"),
+    USD: computeAccountFlow(installments, monthKey, flowIds, adj, "USD"),
+  };
+  const flowCurrencies = (["ARS", "USD"] as Currency[]).filter(
+    (c) => flow[c].in !== 0 || flow[c].out !== 0,
+  );
+  /** "US$ 420 desde otras cuentas" (la parte de transferencias de lo que entró/salió). */
+  const transfersText = (dir: "in" | "out") => {
+    const parts = flowCurrencies
+      .map((c) => ({ c, v: dir === "in" ? flow[c].transfersIn : flow[c].transfersOut }))
+      .filter((x) => x.v !== 0)
+      .map((x) => formatMoney(x.v, x.c));
+    return parts.length ? `${parts.join(" + ")} ${dir === "in" ? "desde" : "a"} otras cuentas` : null;
+  };
+
   // Tarjeta: resumen del mes de pago elegido (igual al "Total a pagar" del banco)
   // y lo que va juntando el resumen siguiente.
   const taxIds = new Set(categories.filter((c) => TAX_CATEGORY.test(c.name)).map((c) => c.id));
-  const card = summarizeCardMonth(installments, [account.id], monthKey, taxIds);
+  const card = summarizeCardMonth(installments, [account.id], monthKey, taxIds, cardFloorMonth(account));
   const nextKey = nextMonthKey(monthKey);
-  const nextCard = summarizeCardMonth(installments, [account.id], nextKey, taxIds);
+  const nextCard = summarizeCardMonth(installments, [account.id], nextKey, taxIds, cardFloorMonth(account));
   const [nextY, nextM] = nextKey.split("-").map(Number);
 
   return (
@@ -202,6 +224,25 @@ export default function AccountDetailPage({ params }: { params: Promise<{ id: st
                 {balanceCurrencies.map((c) => formatMoney(balance[c], c)).join("  ·  ")}
               </div>
             </div>
+            {flowCurrencies.length > 0 && (
+              <div className="mt-3 grid grid-cols-2 gap-3">
+                {(["in", "out"] as const).map((dir) => (
+                  <div key={dir} className="rounded-2xl bg-white/10 px-4 py-2.5">
+                    <div className="text-[11px] uppercase tracking-wider opacity-80">
+                      {dir === "in" ? "Entró" : "Salió"} en {formatMonth(year, month).split(" ")[0].toLowerCase()}
+                    </div>
+                    {flowCurrencies.map((c) => (
+                      <div key={c} className="font-semibold tabular-nums">
+                        {formatMoney(flow[c][dir], c)}
+                      </div>
+                    ))}
+                    {transfersText(dir) && (
+                      <div className="text-[11px] opacity-80">{transfersText(dir)}</div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
       </div>
