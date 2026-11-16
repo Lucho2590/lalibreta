@@ -3,9 +3,9 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Perfil público mínimo: cualquier usuario autenticado puede LEER para
-    // resolver email -> uid en el flujo de gastos compartidos. Solo el dueño
-    // puede ESCRIBIR su propio doc.
+    // Perfil público mínimo: cualquier usuario autenticado puede LEER (nombre
+    // y foto de las personas con las que se conecta). Solo el dueño puede
+    // ESCRIBIR su propio doc.
     match /users/{uid} {
       allow read: if request.auth != null;
       allow write: if request.auth != null && request.auth.uid == uid;
@@ -17,18 +17,30 @@ service cloud.firestore {
       }
     }
 
-    // Gastos compartidos. El doc es accesible por owner + participantes.
-    // El accept/reject pasa siempre por una route handler (que escribe con
-    // Admin SDK) para evitar reglas complejas de validación parcial.
+    // Cuentas con gente: conexiones entre usuarios, gastos repartidos y
+    // transferencias entre personas. Los ven los usuarios involucrados (uids);
+    // todo se escribe desde route handlers (/api/connections, /api/splits,
+    // /api/people/*) con Admin SDK, que validan conexión y estados.
+    match /connections/{id} {
+      allow read: if request.auth != null && request.auth.uid in resource.data.uids;
+      allow write: if false;
+    }
+    match /splits/{id} {
+      allow read: if request.auth != null && request.auth.uid in resource.data.uids;
+      allow write: if false;
+    }
+    match /p2pTransfers/{id} {
+      allow read: if request.auth != null && request.auth.uid in resource.data.uids;
+      allow write: if false;
+    }
+
+    // Gastos compartidos (modelo viejo, reemplazado por splits): solo lectura.
     match /sharedExpenses/{id} {
       allow read: if request.auth != null && (
         resource.data.ownerUid == request.auth.uid ||
         request.auth.uid in resource.data.participantUids
       );
-      allow create: if request.auth != null
-        && request.resource.data.ownerUid == request.auth.uid;
-      allow update, delete: if request.auth != null
-        && resource.data.ownerUid == request.auth.uid;
+      allow write: if false;
     }
 
     // Agenda. La ven el dueño y los participantes (por uid, o por email si

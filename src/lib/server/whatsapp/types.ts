@@ -78,7 +78,46 @@ export interface TransactionDraft {
   cardDatesPending?: boolean;
   /** Gasto sobre una cuenta que otra persona compartió: va a la cuenta del dueño. */
   shared?: { shareId: string; ownerUid: string; ownerName: string } | null;
+  /** Dividirlo con otras personas (al confirmar se arma el reparto). */
+  split?: SplitDraft | null;
   /** epoch ms */
+  createdAt: number;
+}
+
+export interface SplitDraftPerson {
+  /** null si es alguien nuevo sin la app (se agrega como contacto al confirmar). */
+  ref: `u:${string}` | `c:${string}` | null;
+  newName?: string | null;
+  name: string;
+  isApp: boolean;
+  shareType: "percent" | "amount";
+  value: number;
+  /** Su parte, ya calculada. */
+  amount: number;
+}
+
+export interface SplitDraft {
+  mode: "installments" | "lump";
+  people: SplitDraftPerson[];
+}
+
+/** Plata con una persona: le pasé / me pasó / le presté. */
+export interface PersonTransferDraft {
+  type: "person-transfer";
+  id: string;
+  ref: `u:${string}` | `c:${string}` | null;
+  /** Alguien nuevo sin la app: se agrega como contacto al confirmar. */
+  newName?: string | null;
+  personName: string;
+  isApp: boolean;
+  direction: "in" | "out";
+  kind: "payment" | "loan";
+  accountId: string;
+  accountName: string;
+  amount: number;
+  currency: "ARS" | "USD";
+  /** YYYY-MM-DD */
+  date: string;
   createdAt: number;
 }
 
@@ -301,7 +340,8 @@ export type Draft =
   | ExchangeDraft
   | CardPaymentDraft
   | RecurringDraft
-  | TransferDraft;
+  | TransferDraft
+  | PersonTransferDraft;
 
 export type DraftType = NonNullable<Draft["type"]>;
 

@@ -1,18 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import {
-  CheckCircle2,
-  Circle,
-  Plus,
-  RefreshCcw,
-  Trash2,
-  Users,
-} from "lucide-react";
+import Link from "next/link";
+import { useState } from "react";
+import { Check, Plus, Send, Trash2, UserPlus, Users, X } from "lucide-react";
 import { toast } from "sonner";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import {
   Sheet,
   SheetContent,
@@ -21,204 +16,268 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { useAuth } from "@/hooks/use-auth";
-import { useContacts } from "@/hooks/use-data";
+import { useConnections, useContacts } from "@/hooks/use-data";
 import { ContactForm } from "@/components/contacts/contact-form";
-import { apiFetch } from "@/lib/api";
-import { deleteContact, updateContactLink } from "@/lib/domain/contacts";
+import { apiPost, errorText } from "@/lib/api";
+import { deleteContact } from "@/lib/domain/contacts";
+import { otherUid, profileName, type Connection } from "@/lib/domain/people";
 import type { Contact } from "@/lib/domain/types";
+
+const initial = (s: string | null | undefined) => (s?.trim()?.[0] ?? "?").toUpperCase();
+
+function PersonRow({
+  name,
+  sub,
+  photo,
+  href,
+  children,
+}: {
+  name: string;
+  sub?: string | null;
+  photo?: string | null;
+  href?: string;
+  children?: React.ReactNode;
+}) {
+  return (
+  <div className="flex items-center gap-3 py-2.5">
+    <Avatar className="size-10">
+      {photo && <AvatarImage src={photo} alt="" />}
+      <AvatarFallback>{initial(name)}</AvatarFallback>
+    </Avatar>
+    <div className="min-w-0 flex-1">
+      {href ? (
+        <Link href={href} className="block truncate text-sm font-semibold hover:underline">
+          {name}
+        </Link>
+      ) : (
+        <div className="truncate text-sm font-semibold">{name}</div>
+      )}
+      {sub && <div className="truncate text-xs text-muted-foreground">{sub}</div>}
+    </div>
+    {children}
+  </div>
+);
+}
 
 export default function ContactsPage() {
   const { user } = useAuth();
-  const { data: contacts, loading } = useContacts();
+  const { data: connections, loading: loadingConn } = useConnections();
+  const { data: contacts, loading: loadingContacts } = useContacts();
+  const [email, setEmail] = useState("");
+  const [sending, setSending] = useState(false);
+  const [busyId, setBusyId] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
 
-  // Re-chequea en background los contactos no vinculados, una vez por carga,
-  // por si se registraron después de haberlos agregado.
-  useEffect(() => {
-    if (!user || contacts.length === 0) return;
-    const unlinked = contacts.filter((c) => !c.linkedUid);
-    if (unlinked.length === 0 || unlinked.length > 50) return;
-    let cancelled = false;
-    (async () => {
-      for (const c of unlinked) {
-        if (cancelled) break;
-        try {
-          const r = await apiFetch(
-            `/api/users/lookup?email=${encodeURIComponent(c.email)}`,
-          );
-          if (!r.ok) continue;
-          const data = (await r.json()) as {
-            uid: string;
-            displayName: string | null;
-            photoURL: string | null;
-          };
-          await updateContactLink(user.uid, c.id, {
-            linkedUid: data.uid,
-            displayName: c.displayName ?? data.displayName,
-            photoURL: c.photoURL ?? data.photoURL,
-          });
-        } catch (err) {
-          console.warn("[contacts] re-link falló", err);
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-    // Solo cuando cambia la cantidad de contactos no vinculados.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.uid, contacts.length]);
+  const me = user?.uid ?? "";
+  const incoming = connections.filter((c) => c.status === "pending" && c.addresseeUid === me);
+  const outgoing = connections.filter((c) => c.status === "pending" && c.requesterUid === me);
+  const connected = connections
+    .filter((c) => c.status === "accepted")
+    .sort((a, b) => profileName(a.profiles[otherUid(a, me)]).localeCompare(profileName(b.profiles[otherUid(b, me)]), "es"));
+  const offline = contacts.filter((c) => !c.linkedUid && c.kind !== "app");
 
-  const remove = async (c: Contact) => {
-    if (!user) return;
-    if (!confirm(`¿Eliminar ${c.displayName ?? c.email} de la agenda?`)) return;
+  const send = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!email.trim()) return;
+    setSending(true);
+    try {
+      const r = await apiPost<{ status: string; name: string }>("/api/connections/request", { email });
+      toast.success(r.status === "accepted" ? `Ya estás conectado con ${r.name}` : `Le mandamos la solicitud a ${r.name}`);
+      setEmail("");
+    } catch (err) {
+      toast.error(errorText(err));
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const act = async (c: Connection, path: string, body: object, ok: string, ask?: string) => {
+    if (ask && !confirm(ask)) return;
+    setBusyId(c.id);
+    try {
+      await apiPost(path, { id: c.id, ...body });
+      toast.success(ok);
+    } catch (err) {
+      toast.error(errorText(err));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const removeOffline = async (c: Contact) => {
+    if (!user || !confirm(`¿Borrar a ${c.displayName ?? c.email}? Lo que ya anotaste con esa persona queda en el historial.`)) return;
     try {
       await deleteContact(user.uid, c.id);
-      toast.success("Contacto eliminado");
+      toast.success("Contacto borrado");
     } catch (err) {
-      toast.error("No se pudo eliminar");
-      console.error(err);
+      toast.error(errorText(err));
     }
   };
-
-  const refreshAll = async () => {
-    if (!user || refreshing) return;
-    setRefreshing(true);
-    try {
-      let updated = 0;
-      for (const c of contacts) {
-        const r = await apiFetch(
-          `/api/users/lookup?email=${encodeURIComponent(c.email)}`,
-        );
-        if (r.ok) {
-          const data = (await r.json()) as {
-            uid: string;
-            displayName: string | null;
-            photoURL: string | null;
-          };
-          if (c.linkedUid !== data.uid) updated += 1;
-          await updateContactLink(user.uid, c.id, {
-            linkedUid: data.uid,
-            displayName: c.displayName ?? data.displayName,
-            photoURL: c.photoURL ?? data.photoURL,
-          });
-        } else if (c.linkedUid) {
-          // Si estaba linkeado pero ya no aparece (raro), lo desvinculamos.
-          updated += 1;
-          await updateContactLink(user.uid, c.id, { linkedUid: null });
-        }
-      }
-      toast.success(
-        updated > 0 ? `Verificado · ${updated} actualizados` : "Todo al día",
-      );
-    } catch (err) {
-      toast.error("Falló la verificación");
-      console.error(err);
-    } finally {
-      setRefreshing(false);
-    }
-  };
-
-  const initialFor = (c: Contact) =>
-    (c.displayName?.[0] ?? c.email[0] ?? "?").toUpperCase();
 
   return (
     <div className="space-y-6">
-      <div className="flex items-end justify-between">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Contactos</h1>
-          <p className="text-sm text-muted-foreground">
-            Gente con quien compartís gastos
+      <div>
+        <h1 className="text-2xl font-bold tracking-tight">Contactos</h1>
+        <p className="text-sm text-muted-foreground">
+          Conectate con la gente con la que compartís gastos
+        </p>
+      </div>
+
+      {incoming.length > 0 && (
+        <Card className="rounded-3xl ring-2 ring-brand/30">
+          <CardHeader className="pb-1">
+            <CardTitle className="flex items-center gap-1.5 text-sm font-semibold">
+              <UserPlus className="size-4" /> Quieren conectarse con vos
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="divide-y">
+            {incoming.map((c) => {
+              const p = c.profiles[c.requesterUid];
+              return (
+                <PersonRow key={c.id} name={profileName(p)} sub={p?.email} photo={p?.photoURL}>
+                  <Button
+                    size="sm"
+                    disabled={busyId === c.id}
+                    onClick={() => act(c, "/api/connections/respond", { accept: true }, `Conectado con ${profileName(p)}`)}
+                  >
+                    <Check className="mr-1 size-4" /> Aceptar
+                  </Button>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    disabled={busyId === c.id}
+                    aria-label="Rechazar"
+                    onClick={() => act(c, "/api/connections/respond", { accept: false }, "Solicitud rechazada")}
+                  >
+                    <X className="size-4" />
+                  </Button>
+                </PersonRow>
+              );
+            })}
+          </CardContent>
+        </Card>
+      )}
+
+      <Card className="rounded-3xl">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-semibold">Conectarte con alguien que usa La Libreta</CardTitle>
+          <p className="text-xs text-muted-foreground">
+            Le llega una solicitud. Cuando acepta, pueden repartir gastos (cada uno acepta su parte) y registrar
+            transferencias entre ustedes.
           </p>
-        </div>
-        <div className="flex gap-2">
-          {contacts.length > 0 && (
-            <Button
-              variant="outline"
-              size="icon"
-              onClick={refreshAll}
-              disabled={refreshing}
-              aria-label="Verificar registrados"
-              title="Verificar registrados"
-            >
-              <RefreshCcw className={`size-4 ${refreshing ? "animate-spin" : ""}`} />
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={send} className="flex gap-2">
+            <Input
+              type="email"
+              className="h-11"
+              placeholder="Su email en La Libreta"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+            />
+            <Button type="submit" className="h-11" disabled={sending || !email.trim()}>
+              <Send className="mr-1 size-4" /> {sending ? "Enviando…" : "Conectar"}
             </Button>
+          </form>
+        </CardContent>
+      </Card>
+
+      <Card className="rounded-3xl">
+        <CardHeader className="pb-1">
+          <CardTitle className="flex items-center gap-1.5 text-sm font-semibold">
+            <Users className="size-4" /> Conectados
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="divide-y">
+          {loadingConn && <p className="py-2 text-xs text-muted-foreground">Cargando…</p>}
+          {!loadingConn && connected.length === 0 && (
+            <p className="py-2 text-xs text-muted-foreground">Todavía no te conectaste con nadie.</p>
           )}
+          {connected.map((c) => {
+            const uid = otherUid(c, me);
+            const p = c.profiles[uid];
+            return (
+              <PersonRow key={c.id} name={profileName(p)} sub={p?.email} photo={p?.photoURL} href={`/compartidas/persona/u:${uid}`}>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="text-muted-foreground"
+                  disabled={busyId === c.id}
+                  onClick={() =>
+                    act(
+                      c,
+                      "/api/connections/remove",
+                      {},
+                      "Desconectados",
+                      `¿Desconectarte de ${profileName(p)}? Lo pendiente entre ustedes se cancela; lo aceptado queda en el historial.`,
+                    )
+                  }
+                >
+                  Desconectar
+                </Button>
+              </PersonRow>
+            );
+          })}
+          {outgoing.map((c) => {
+            const p = c.profiles[c.addresseeUid];
+            return (
+              <PersonRow key={c.id} name={profileName(p)} sub="Solicitud enviada · esperando respuesta" photo={p?.photoURL}>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="text-muted-foreground"
+                  disabled={busyId === c.id}
+                  onClick={() => act(c, "/api/connections/remove", {}, "Solicitud cancelada")}
+                >
+                  Cancelar
+                </Button>
+              </PersonRow>
+            );
+          })}
+        </CardContent>
+      </Card>
+
+      <Card className="rounded-3xl">
+        <CardHeader className="flex flex-row items-start justify-between gap-2 pb-1">
+          <div>
+            <CardTitle className="text-sm font-semibold">Sin la app</CardTitle>
+            <p className="text-xs text-muted-foreground">
+              Gente a la que le pagás cosas o le prestás plata: la app te recuerda cobrarle.
+            </p>
+          </div>
           <Sheet open={open} onOpenChange={setOpen}>
-            <SheetTrigger
-              render={<Button className="bg-brand-grad text-white hover:opacity-95" />}
-            >
-              <Plus className="mr-1 size-4" /> Nuevo contacto
+            <SheetTrigger render={<Button size="sm" variant="outline" />}>
+              <Plus className="mr-1 size-4" /> Agregar
             </SheetTrigger>
             <SheetContent side="bottom" className="sheet-md-modal p-0">
               <SheetHeader className="px-5 pt-5">
-                <SheetTitle>Nuevo contacto</SheetTitle>
+                <SheetTitle>Persona sin la app</SheetTitle>
               </SheetHeader>
               <div className="px-5 pb-6 pt-3">
                 <ContactForm onCreated={() => setOpen(false)} />
               </div>
             </SheetContent>
           </Sheet>
-        </div>
-      </div>
-
-      {loading && <p className="text-sm text-muted-foreground">Cargando…</p>}
-
-      {!loading && contacts.length === 0 && (
-        <Card className="rounded-3xl">
-          <CardContent className="py-16 text-center">
-            <div className="mx-auto mb-3 flex size-12 items-center justify-center rounded-2xl bg-muted">
-              <Users className="size-5 text-muted-foreground" />
-            </div>
-            <p className="text-sm font-medium">Tu agenda está vacía</p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Agregá personas por email — si están en la app las vinculamos automáticamente.
-            </p>
-          </CardContent>
-        </Card>
-      )}
-
-      <div className="grid gap-2 md:grid-cols-2">
-        {contacts.map((c) => {
-          const linked = !!c.linkedUid;
-          return (
-            <Card key={c.id} className="rounded-2xl">
-              <CardContent className="flex items-center gap-3 py-3.5">
-                <Avatar className="size-10">
-                  {c.photoURL && <AvatarImage src={c.photoURL} alt="" />}
-                  <AvatarFallback>{initialFor(c)}</AvatarFallback>
-                </Avatar>
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-semibold">
-                    {c.displayName || c.email}
-                  </div>
-                  <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                    <span className="truncate">{c.email}</span>
-                  </div>
-                </div>
-                {linked ? (
-                  <span className="inline-flex items-center gap-1 rounded-full bg-success/10 px-2.5 py-1 text-[11px] font-medium text-success">
-                    <CheckCircle2 className="size-3" /> En la app
-                  </span>
-                ) : (
-                  <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2.5 py-1 text-[11px] font-medium text-muted-foreground">
-                    <Circle className="size-3" /> Sin registrar
-                  </span>
-                )}
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  onClick={() => remove(c)}
-                  aria-label="Eliminar"
-                >
-                  <Trash2 className="size-4" />
-                </Button>
-              </CardContent>
-            </Card>
-          );
-        })}
-      </div>
+        </CardHeader>
+        <CardContent className="divide-y">
+          {loadingContacts && <p className="py-2 text-xs text-muted-foreground">Cargando…</p>}
+          {!loadingContacts && offline.length === 0 && (
+            <p className="py-2 text-xs text-muted-foreground">No agregaste a nadie todavía.</p>
+          )}
+          {offline.map((c) => (
+            <PersonRow
+              key={c.id}
+              name={c.displayName || c.email || "Contacto"}
+              sub={[c.phone, c.email].filter(Boolean).join(" · ") || null}
+              href={`/compartidas/persona/c:${c.id}`}
+            >
+              <Button size="icon" variant="ghost" aria-label="Borrar" onClick={() => removeOffline(c)}>
+                <Trash2 className="size-4" />
+              </Button>
+            </PersonRow>
+          ))}
+        </CardContent>
+      </Card>
     </div>
   );
 }

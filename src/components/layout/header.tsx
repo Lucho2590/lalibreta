@@ -80,7 +80,7 @@ export function Header({ variant = "mobile" }: { variant?: "mobile" | "desktop" 
             <Wallet className="mr-2 size-4" /> Ingresos
           </DropdownMenuItem>
           <DropdownMenuItem render={<Link href="/compartidas" />}>
-            <Handshake className="mr-2 size-4" /> Compartidas
+            <Handshake className="mr-2 size-4" /> Cuentas con gente
           </DropdownMenuItem>
           <DropdownMenuItem render={<Link href="/aprobaciones" />}>
             <ClipboardCheck className="mr-2 size-4" /> Aprobaciones

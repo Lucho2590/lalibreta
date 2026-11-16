@@ -10,9 +10,7 @@ import {
   useAccounts,
   useAllInstallments,
   useCategories,
-  useSharedAsOwner,
 } from "@/hooks/use-data";
-import { useAuth } from "@/hooks/use-auth";
 import { useMonth } from "@/hooks/use-month";
 import { CardCycleEditor } from "@/components/accounts/card-cycle-editor";
 import { ShareAccountSection } from "@/components/accounts/share-account-section";
@@ -22,11 +20,6 @@ import type { AccountType, Currency } from "@/lib/domain/types";
 import { accountCurrencies, currencyOf, monthOf } from "@/lib/domain/types";
 import { computeAccountBalances } from "@/lib/domain/balances";
 import { computeAccountFlow } from "@/lib/domain/balance";
-import {
-  buildSharedByTxId,
-  getEffectiveInstallmentInfo,
-} from "@/lib/domain/shared-effective";
-import { useMemo } from "react";
 
 const typeLabel: Record<AccountType, string> = {
   cash: "Efectivo",
@@ -40,17 +33,13 @@ const typeLabel: Record<AccountType, string> = {
 
 export default function AccountDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
-  const { user } = useAuth();
   const { data: accounts } = useAccounts();
   const { data: installments } = useAllInstallments();
   const { data: categories } = useCategories();
-  const { data: shared } = useSharedAsOwner();
   const { monthKey, year, month } = useMonth();
-  const sharedByTxId = useMemo(() => buildSharedByTxId(shared), [shared]);
-  const effectiveAmount = (i: (typeof installments)[number]) =>
-    user
-      ? getEffectiveInstallmentInfo(i, sharedByTxId, user.uid).effectiveAmount
-      : i.amount;
+  // Lo que realmente sale de la cuenta / cobra la tarjeta: monto entero (aunque
+  // el gasto esté repartido con otras personas).
+  const effectiveAmount = (i: (typeof installments)[number]) => i.amount;
 
   const account = accounts.find((a) => a.id === id);
   if (!account) {
@@ -95,10 +84,9 @@ export default function AccountDetailPage({ params }: { params: Promise<{ id: st
   // cambios: lo que se pasó desde otra cuenta entró a esta. Los consumos de las
   // tarjetas asociadas no: salen cuando se paga la tarjeta.
   const flowIds = new Set([account.id, ...children.filter((c) => c.type === "reserve").map((c) => c.id)]);
-  const adj = user ? { sharedByTxId, ownerUid: user.uid } : undefined;
   const flow = {
-    ARS: computeAccountFlow(installments, monthKey, flowIds, adj, "ARS"),
-    USD: computeAccountFlow(installments, monthKey, flowIds, adj, "USD"),
+    ARS: computeAccountFlow(installments, monthKey, flowIds, "ARS"),
+    USD: computeAccountFlow(installments, monthKey, flowIds, "USD"),
   };
   const flowCurrencies = (["ARS", "USD"] as Currency[]).filter(
     (c) => flow[c].in !== 0 || flow[c].out !== 0,

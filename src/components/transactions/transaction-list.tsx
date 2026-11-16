@@ -6,19 +6,21 @@ import { ArrowLeftRight, ChevronDown, CreditCard, Trash2, Users } from "lucide-r
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { useAccounts, useCategories } from "@/hooks/use-data";
+import { useAccounts, useCategories, useConnections, useContacts } from "@/hooks/use-data";
 import { useAuth } from "@/hooks/use-auth";
 import { deleteTransactionAndInstallments } from "@/lib/domain/installments";
-import type { Installment, SharedExpense } from "@/lib/domain/types";
+import type { Installment } from "@/lib/domain/types";
 import { formatMoney, formatShortDate } from "@/lib/format";
 import { currencyOf } from "@/lib/domain/types";
 import { CategoryIcon } from "@/components/category-icon";
-import { getEffectiveInstallmentInfo } from "@/lib/domain/shared-effective";
+import type { SharedAdjustment } from "@/lib/domain/balance";
+import { otherUid, personRefFromAccountId, profileName } from "@/lib/domain/people";
+import { apiPost, errorText } from "@/lib/api";
 
 interface Props {
   items: Installment[];
-  sharedByTxId?: Map<string, SharedExpense>;
-  ownerUid?: string;
+  /** Gastos repartidos: muestra mi parte y con quién se repartió. */
+  adjustment?: SharedAdjustment;
   /**
    * Lista de UNA cuenta: las transferencias se muestran como entrada (+) o
    * salida (−) de esa cuenta en vez de neutras.
@@ -30,8 +32,7 @@ interface Props {
 
 export function TransactionList({
   items,
-  sharedByTxId,
-  ownerUid,
+  adjustment,
   perspectiveAccountId,
   groupCards = true,
 }: Props) {
@@ -41,6 +42,22 @@ export function TransactionList({
 
   const accountMap = useMemo(() => new Map(accounts.map((a) => [a.id, a])), [accounts]);
   const categoryMap = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories]);
+  // Nombres de personas (para "Le debés a…" y transferencias con gente).
+  const { data: connections } = useConnections();
+  const { data: contacts } = useContacts();
+  const personName = useMemo(() => {
+    const names = new Map<string, string>();
+    for (const c of connections) {
+      if (!user) continue;
+      const uid = otherUid(c, user.uid);
+      names.set(`u:${uid}`, profileName(c.profiles?.[uid]));
+    }
+    for (const c of contacts) names.set(`c:${c.id}`, c.displayName || c.email || "Contacto");
+    return (accountId: string | null | undefined) => {
+      const ref = personRefFromAccountId(accountId);
+      return ref ? (names.get(ref) ?? "una persona") : null;
+    };
+  }, [connections, contacts, user]);
   const [open, setOpen] = useState<Set<string>>(new Set());
   const toggle = (id: string) =>
     setOpen((prev) => {
@@ -50,14 +67,37 @@ export function TransactionList({
       return next;
     });
 
-  const remove = async (transactionId: string) => {
+  const remove = async (it: Installment) => {
     if (!user) return;
-    if (!confirm("¿Eliminar este movimiento?")) return;
+    const split = it.kind === "expense" ? adjustment?.byTxId.get(it.transactionId)?.split : undefined;
     try {
-      await deleteTransactionAndInstallments(user.uid, transactionId);
+      // Gasto mío repartido: se cancela el reparto (y se les avisa).
+      if (split) {
+        const names = split.participants.map((p) => p.name).join(", ");
+        if (!confirm(`Este gasto está repartido con ${names}. Si lo borrás, se cancela el reparto y se les avisa. ¿Borrarlo?`)) return;
+        await apiPost("/api/splits/cancel", { splitId: split.id, deleteOwnerTx: true });
+        toast.success("Gasto borrado y reparto cancelado");
+        return;
+      }
+      // Mi parte de un gasto que pagó otro: se saca de mis gastos (la deuda sigue).
+      if (it.splitId) {
+        if (!confirm("Es tu parte de un gasto que pagó otra persona. ¿Sacarla de tus gastos? (lo que le debés no cambia)")) return;
+        await apiPost("/api/splits/books", { splitId: it.splitId, addToBooks: false });
+        toast.success("Lo sacaste de tus gastos");
+        return;
+      }
+      // Transferencia con una persona: se borra para los dos.
+      if (it.p2pTransferId) {
+        if (!confirm("Se borra para las dos personas y deja de contar para lo que se deben. ¿Borrarla?")) return;
+        await apiPost("/api/people/transfers/cancel", { id: it.p2pTransferId });
+        toast.success("Transferencia borrada");
+        return;
+      }
+      if (!confirm("¿Eliminar este movimiento?")) return;
+      await deleteTransactionAndInstallments(user.uid, it.transactionId);
       toast.success("Eliminado");
     } catch (err) {
-      toast.error("No se pudo eliminar");
+      toast.error(errorText(err));
       console.error(err);
     }
   };
@@ -89,8 +129,6 @@ export function TransactionList({
     (a, b) => b.billingDate.toMillis() - a.billingDate.toMillis(),
   );
 
-  const effectiveOwner = ownerUid ?? user?.uid ?? "";
-  const shareIndex = sharedByTxId;
 
   const renderRow = (it: Installment, nested = false) => {
       const acc = accountMap.get(it.accountId);
@@ -105,6 +143,9 @@ export function TransactionList({
         : undefined;
       const isExchange = it.transferType === "exchange" || (otherLeg && currencyOf(otherLeg) !== cur);
       const isCardPayment = it.transferType === "card-payment";
+      const isP2P = it.transferType === "p2p";
+      // Persona: la contraparte de una transferencia con gente, o a quién le debo mi parte.
+      const person = isP2P ? personName(it.transferCounterpartId) : personName(it.accountId);
       // Cotización del cambio (pesos por dólar), a partir de las dos patas.
       const exchangeRate =
         isExchange && otherLeg
@@ -114,31 +155,38 @@ export function TransactionList({
               return usdLeg.amount > 0 ? arsLeg.amount / usdLeg.amount : null;
             })()
           : null;
-      const transferLabel = isCardPayment ? "Pago de tarjeta" : isExchange ? "Cambio" : "Transferencia";
+      const transferLabel = isCardPayment
+        ? "Pago de tarjeta"
+        : isP2P
+          ? it.transferRole === "destination"
+            ? "Me pasó"
+            : "Le pasé"
+          : isExchange
+            ? "Cambio"
+            : "Transferencia";
       // Mirando una cuenta: ¿esta pata entró o salió de ella? (un cambio dentro
       // de la misma cuenta sigue mostrándose como "US$ → $").
+      // Con una persona siempre se ve si entró o salió.
       const flowSign =
         isTransfer &&
-        perspectiveAccountId &&
-        it.accountId === perspectiveAccountId &&
-        !(otherLeg && otherLeg.accountId === it.accountId)
+        (isP2P ||
+          (perspectiveAccountId &&
+            it.accountId === perspectiveAccountId &&
+            !(otherLeg && otherLeg.accountId === it.accountId)))
           ? it.transferRole === "destination"
             ? "+"
             : "−"
           : null;
+      const counterpartName = isP2P ? person : counterpart?.name;
       const [fromName, toName] =
         it.transferRole === "destination"
-          ? [counterpart?.name, acc?.name]
-          : [acc?.name, counterpart?.name];
+          ? [counterpartName, acc?.name]
+          : [acc?.name, counterpartName];
 
-      const shareInfo =
-        shareIndex && effectiveOwner && it.kind === "expense"
-          ? getEffectiveInstallmentInfo(it, shareIndex, effectiveOwner)
-          : null;
-      const isShared = shareInfo?.isShared ?? false;
-      const displayAmount = isShared ? shareInfo!.effectiveAmount : it.amount;
-      const showDiff =
-        isShared && shareInfo!.effectiveAmount !== shareInfo!.totalAmount;
+      // Gasto mío repartido: muestro mi parte (y el total tachado).
+      const splitInfo = it.kind === "expense" ? adjustment?.byTxId.get(it.transactionId) : undefined;
+      const displayAmount = splitInfo ? Math.round(it.amount * splitInfo.factor * 100) / 100 : it.amount;
+      const showDiff = !!splitInfo && Math.abs(displayAmount - it.amount) >= 0.01;
 
       return (
         <Card key={it.id} className={`rounded-2xl transition hover:shadow-sm ${nested ? "bg-muted/20 shadow-none" : ""}`}>
@@ -193,17 +241,29 @@ export function TransactionList({
               <div className="text-xs text-muted-foreground">
                 {isTransfer
                   ? `${fromName === toName ? (fromName ?? "—") : `${fromName ?? "—"} → ${toName ?? "—"}`}${!isCardPayment && exchangeRate ? ` · a ${formatMoney(Math.round(exchangeRate * 100) / 100, "ARS")}` : ""} · ${formatShortDate(it.billingDate.toDate())}`
-                  : `${cat?.name ?? "—"} · ${acc?.name ?? "—"} · ${formatShortDate(it.billingDate.toDate())}`}
+                  : `${cat?.name ?? "—"} · ${person ? `Pagó ${person} (le debés tu parte)` : (acc?.name ?? "—")} · ${formatShortDate(it.billingDate.toDate())}`}
               </div>
-              {isShared && shareInfo?.shared && (
+              {splitInfo && (
                 <Link
-                  href={`/compartidas/${shareInfo.shared.id}`}
+                  href={`/compartidas/gasto/${splitInfo.split.id}`}
                   className="mt-1 inline-flex items-center gap-1 rounded-full bg-brand/10 px-2 py-0.5 text-[10px] font-medium text-brand hover:bg-brand/20"
                 >
                   <Users className="size-3" />
-                  Compartido · total {formatMoney(shareInfo.totalAmount, cur)}
-                  {shareInfo.othersCount > 0 &&
-                    ` · ${shareInfo.acceptedCount}/${shareInfo.othersCount} aceptaron`}
+                  Dividido con {splitInfo.split.participants.map((p) => p.name.split(" ")[0]).join(", ")}
+                  {splitInfo.pendingCount > 0
+                    ? ` · ${splitInfo.pendingCount} sin responder`
+                    : splitInfo.rejectedCount > 0
+                      ? ` · ${splitInfo.rejectedCount} no aceptó`
+                      : ""}
+                </Link>
+              )}
+              {it.splitId && (
+                <Link
+                  href={`/compartidas/gasto/${it.splitId}`}
+                  className="mt-1 inline-flex items-center gap-1 rounded-full bg-brand/10 px-2 py-0.5 text-[10px] font-medium text-brand hover:bg-brand/20"
+                >
+                  <Users className="size-3" />
+                  Tu parte de un gasto compartido
                 </Link>
               )}
             </div>
@@ -242,7 +302,7 @@ export function TransactionList({
               )}
               {showDiff && (
                 <div className="text-[10px] text-muted-foreground line-through tabular-nums">
-                  {formatMoney(shareInfo!.totalAmount, cur)}
+                  {formatMoney(it.amount, cur)}
                 </div>
               )}
             </div>
@@ -250,7 +310,7 @@ export function TransactionList({
               size="icon"
               variant="ghost"
               className="text-muted-foreground"
-              onClick={() => remove(it.transactionId)}
+              onClick={() => remove(it)}
               aria-label="Eliminar"
             >
               <Trash2 className="size-4" />
@@ -283,13 +343,8 @@ export function TransactionList({
 
   const groupTotal = (list: Installment[]) => {
     const t: Record<"ARS" | "USD", number> = { ARS: 0, USD: 0 };
-    for (const i of list) {
-      const amount =
-        i.kind === "expense" && shareIndex && effectiveOwner
-          ? getEffectiveInstallmentInfo(i, shareIndex, effectiveOwner).effectiveAmount
-          : i.amount;
-      t[currencyOf(i)] += i.kind === "income" ? -amount : amount;
-    }
+    // Lo que cobra la tarjeta: montos enteros (aunque haya gastos repartidos).
+    for (const i of list) t[currencyOf(i)] += i.kind === "income" ? -i.amount : i.amount;
     return t;
   };
 

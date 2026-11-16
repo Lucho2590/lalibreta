@@ -20,6 +20,13 @@ import type { Currency } from "@/lib/domain/types";
 import { setAccountBalanceAdmin, setAccountParentAdmin, setCardDatesAdmin } from "../accounts-admin";
 import { PROPOSE_BATCH_TOOL, proposeBatch } from "./batch-tool";
 import { AGENDA_TOOLS, AGENDA_TOOL_NAMES, runAgendaTool } from "./agenda-tool";
+import type { AgentPending, AgentPerson } from "../people";
+import { loadPeopleContext } from "../people";
+import { PeopleError, respondConnection } from "../connections";
+import { respondSplit } from "../splits";
+import { respondPersonTransfer } from "../person-transfers";
+import { computeShares, type PersonRef } from "@/lib/domain/people";
+import { computePeopleLedger, ledgerTotal } from "@/lib/domain/debts";
 import { CATEGORY_ICON_IDS, createCategoryAdmin } from "../categories-admin";
 import {
   REDEEM_ERRORS,
@@ -44,6 +51,7 @@ import type {
   TransferDraft,
   StatementDraftLine,
   TransactionDraft,
+  PersonTransferDraft,
 } from "../whatsapp/types";
 
 export interface ToolContext {
@@ -63,6 +71,10 @@ export interface ToolContext {
   proposedDraft: Draft | null;
   /** Mensajes que el sistema manda aparte, tal cual (ej. la invitación para reenviar). */
   outbox: string[];
+  /** Gente con la que puede dividir gastos o transferir (conectados + sin app). */
+  people: AgentPerson[];
+  /** Lo que le mandaron y tiene que responder. */
+  pending: AgentPending[];
 }
 
 const ACCOUNT_TYPES = ["cash", "debit", "credit", "checking", "savings", "digital", "reserve"] as const;
@@ -119,6 +131,28 @@ export const TOOL_DEFINITIONS: ChatCompletionFunctionTool[] = [
           cardClosedAtPurchase: {
             type: "boolean",
             description: "true si la tarjeta ya había cerrado al momento de la compra",
+          },
+          split: {
+            type: "object",
+            description: 'Solo gastos: dividirlo con otras personas ("la mitad es de Orne", "30 lucas son de Juan").',
+            properties: {
+              people: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    person: { type: "string", description: "person de la lista Personas" },
+                    newName: { type: "string", description: "Alguien SIN la app que no está en Personas (se agrega)" },
+                    percent: { type: "number" },
+                    amount: { type: "number" },
+                  },
+                  additionalProperties: false,
+                },
+              },
+              mode: { type: "string", enum: ["installments", "lump"], description: "En cuotas: si te lo paga en cuotas (default) o todo junto" },
+            },
+            required: ["people"],
+            additionalProperties: false,
           },
         },
         required: ["kind", "amount", "description", "accountId", "date"],
@@ -443,6 +477,13 @@ export const TOOL_DEFINITIONS: ChatCompletionFunctionTool[] = [
           amount: { type: "number" },
           currency: { type: "string", enum: ["ARS", "USD"] },
           date: { type: "string", description: "YYYY-MM-DD, por defecto hoy" },
+          person: {
+            type: "string",
+            description:
+              'Con una persona (de Personas): "Orne me pasó 20 lucas a MP" → person + toAccountId; "le pasé/presté a Juan" → person + fromAccountId',
+          },
+          newName: { type: "string", description: "Alguien SIN la app que no está en Personas (se agrega)" },
+          loan: { type: "boolean", description: "true si es un préstamo (le presté)" },
         },
         required: ["amount"],
         additionalProperties: false,
@@ -645,7 +686,42 @@ export const TOOL_DEFINITIONS: ChatCompletionFunctionTool[] = [
         additionalProperties: false,
       },
     },
-  },  ...AGENDA_TOOLS,
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_debts",
+      description: 'Cuánto le debe cada persona al usuario y cuánto debe él ("¿cuánto me debe Orne?", "¿a quién le tengo que cobrar?").',
+      parameters: {
+        type: "object",
+        properties: { person: { type: "string", description: "person de Personas (opcional)" } },
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "respond_pending",
+      description:
+        'Responde algo de "Para responder": una conexión, un gasto que le asignaron (split) o una transferencia que registró otra persona.',
+      parameters: {
+        type: "object",
+        properties: {
+          id: { type: "string" },
+          type: { type: "string", enum: ["connection", "split", "transfer"] },
+          accept: { type: "boolean" },
+          accountId: { type: "string", description: "transfer: su cuenta donde entró/salió la plata" },
+          addToBooks: { type: "boolean", description: "split: sumarlo a sus gastos (default true)" },
+          categoryId: { type: "string", description: "split: categoría de gasto si lo suma" },
+          reason: { type: "string", description: "Si rechaza, por qué" },
+        },
+        required: ["id", "type", "accept"],
+        additionalProperties: false,
+      },
+    },
+  },
+  ...AGENDA_TOOLS,
 ];
 
 // ---------- Schemas ----------
@@ -670,6 +746,22 @@ const proposeSchema = z.object({
   date: z.string().refine(isYMD, "date debe ser YYYY-MM-DD"),
   installments: z.number().int().min(1).max(36).optional(),
   cardClosedAtPurchase: z.boolean().optional(),
+  split: z
+    .object({
+      people: z
+        .array(
+          z.object({
+            person: optStr,
+            newName: z.string().trim().max(60).optional(),
+            percent: z.number().positive().max(100).optional(),
+            amount: z.number().positive().optional(),
+          }),
+        )
+        .min(1)
+        .max(10),
+      mode: z.enum(["installments", "lump"]).optional(),
+    })
+    .optional(),
 });
 
 const accountItemSchema = z.object({
@@ -746,7 +838,36 @@ const transferSchema = z.object({
   amount: z.number().positive(),
   currency: z.enum(["ARS", "USD"]).optional(),
   date: optYMD,
+  person: optStr,
+  newName: z.string().trim().max(60).optional(),
+  loan: z.boolean().optional(),
 });
+
+const debtsSchema = z.object({ person: optStr });
+const respondPendingSchema = z.object({
+  id: z.string().min(1),
+  type: z.enum(["connection", "split", "transfer"]),
+  accept: z.boolean(),
+  accountId: optStr,
+  addToBooks: z.boolean().optional(),
+  categoryId: optStr,
+  reason: optStr,
+});
+
+/** Persona de la lista (o alguien nuevo sin app). */
+const resolveAgentPerson = (ctx: ToolContext, person?: string, newName?: string) => {
+  if (person) {
+    const p = ctx.people.find((x) => x.ref === person);
+    if (!p) return { error: `"${person}" no está en Personas. Si usa la app, que se conecten desde Contactos; si no, usá newName.` };
+    return { ref: p.ref as PersonRef | null, name: p.name, isApp: p.isApp, newName: null as string | null };
+  }
+  if (newName) {
+    const same = ctx.people.find((x) => sameName(x.name, newName));
+    if (same) return { ref: same.ref as PersonRef | null, name: same.name, isApp: same.isApp, newName: null as string | null };
+    return { ref: null, name: newName, isApp: false, newName };
+  }
+  return { error: "Falta la persona (person o newName)." };
+};
 
 const balanceSchema = z.object({
   accountId: z.string().min(1),
@@ -921,6 +1042,32 @@ const proposeTransaction = (ctx: ToolContext, raw: unknown): ToolResult => {
     return { error: "Falta la categoría: pasá categoryId (existente) o newCategoryName (nueva)." };
   }
 
+  // Dividirlo con otras personas.
+  let split: TransactionDraft["split"] = null;
+  if (args.split) {
+    if (args.kind !== "expense") return { error: "Solo los gastos se pueden dividir." };
+    if (sharedEntry) return { error: "Un gasto en una cuenta compartida no se puede dividir." };
+    const people: NonNullable<TransactionDraft["split"]>["people"] = [];
+    for (const p of args.split.people) {
+      const who = resolveAgentPerson(ctx, p.person, p.newName);
+      if ("error" in who) return { error: who.error };
+      if (p.percent == null && p.amount == null) return { error: `Falta cuánto le toca a ${who.name} (percent o amount).` };
+      people.push({
+        ref: who.ref,
+        newName: who.newName,
+        name: who.name,
+        isApp: who.isApp,
+        shareType: p.percent != null ? "percent" : "amount",
+        value: p.percent ?? p.amount!,
+        amount: 0,
+      });
+    }
+    const { amounts, error } = computeShares(round2(args.amount), people.map((p) => ({ shareType: p.shareType, value: p.value })));
+    if (error) return { error };
+    people.forEach((p, i) => (p.amount = amounts[i]));
+    split = { mode: args.split.mode ?? "installments", people };
+  }
+
   const isCreditExpense = account.type === "credit" && args.kind === "expense";
   const draft: TransactionDraft = {
     type: "transaction",
@@ -942,6 +1089,7 @@ const proposeTransaction = (ctx: ToolContext, raw: unknown): ToolResult => {
     installments: isCreditExpense ? (args.installments ?? 1) : 1,
     cardClosedAtPurchase: isCreditExpense ? (args.cardClosedAtPurchase ?? false) : false,
     cardDatesPending: isCreditExpense && (!account.defaultClosingDay || !account.defaultDueDay),
+    split,
     createdAt: Date.now(),
   };
   ctx.proposedDraft = draft;
@@ -1493,6 +1641,37 @@ const proposeTransfer = (ctx: ToolContext, raw: unknown): ToolResult => {
   const args = parsed.data;
   const byId = (id?: string) => (id ? ctx.accounts.find((a) => a.id === id && a.active) : undefined);
 
+  // Con una persona: le pasé / me pasó / le presté.
+  if (args.person || args.newName) {
+    const who = resolveAgentPerson(ctx, args.person, args.newName);
+    if ("error" in who) return { error: who.error };
+    if (args.fromAccountId && args.toAccountId) return { error: "Con una persona va una sola cuenta: la tuya (fromAccountId si salió, toAccountId si entró)." };
+    const direction: "in" | "out" = args.toAccountId ? "in" : "out";
+    const accountId = args.toAccountId ?? args.fromAccountId;
+    const account = byId(accountId) ?? (accountId ? undefined : ctx.accounts.find((a) => a.isMain && a.active));
+    if (!account) return { error: accountId ? "Esa cuenta no existe." : "¿De qué cuenta salió o a cuál entró? Preguntale." };
+    if (account.type === "credit") return { error: "Con una persona va una cuenta, no una tarjeta." };
+    const currency: Currency = args.currency ?? (account.currencies.length === 1 ? account.currencies[0] : "ARS");
+    const draft: PersonTransferDraft = {
+      type: "person-transfer",
+      id: newId(),
+      ref: who.ref,
+      newName: who.newName,
+      personName: who.name,
+      isApp: who.isApp,
+      direction,
+      kind: args.loan ? "loan" : "payment",
+      accountId: account.id,
+      accountName: account.name,
+      amount: round2(args.amount),
+      currency,
+      date: args.date ?? todayYMD(),
+      createdAt: Date.now(),
+    };
+    ctx.proposedDraft = draft;
+    return { ok: true, message: BUILT_MESSAGE };
+  }
+
   let from = byId(args.fromAccountId);
   let to = byId(args.toAccountId);
   if (args.fromAccountId && !from) return { error: "La cuenta de origen no existe." };
@@ -1927,6 +2106,66 @@ export const executeTool = async (
           avgChargesPctOfConsumption: a.pctN ? round2(a.pct / a.pctN) : null,
         })),
       };
+    }
+
+    case "get_debts": {
+      const parsed = debtsSchema.safeParse(args);
+      if (!parsed.success) return issues(parsed.error);
+      const { splits, transfers } = await loadPeopleContext(ctx.uid);
+      const ledger = computePeopleLedger({ me: ctx.uid, splits, transfers, nowMonth: currentMonthKey() });
+      const rows = [...ledger.values()]
+        .filter((l) => !parsed.data.person || l.ref === parsed.data.person)
+        .map((l) => ({
+          person: l.ref,
+          name: l.name,
+          usesApp: l.isApp,
+          // + = te debe; − = le debés. due = vencido; upcoming = cuotas que vienen.
+          ARS: { total: ledgerTotal(l, "ARS"), due: l.due.ARS, upcoming: l.upcoming.ARS },
+          USD: { total: ledgerTotal(l, "USD"), due: l.due.USD, upcoming: l.upcoming.USD },
+          last: l.entries.slice(0, 5).map((e) => ({ date: e.date, what: e.description, amount: e.amount, currency: e.currency })),
+        }));
+      return {
+        people: rows,
+        pending: ctx.pending,
+        note: "Montos positivos: esa persona le debe al usuario; negativos: el usuario le debe. Sin monedas mezcladas.",
+      };
+    }
+
+    case "respond_pending": {
+      const parsed = respondPendingSchema.safeParse(args);
+      if (!parsed.success) return issues(parsed.error);
+      const a = parsed.data;
+      try {
+        if (a.type === "connection") {
+          await respondConnection({ uid: ctx.uid }, a.id, a.accept);
+          return { ok: true, message: a.accept ? "Conectados." : "Solicitud rechazada." };
+        }
+        if (a.type === "split") {
+          const addToBooks = a.accept && a.addToBooks !== false;
+          if (addToBooks) {
+            const cat = ctx.categories.find((c) => c.id === a.categoryId && c.kind === "expense");
+            if (!cat) return { error: "Para sumarlo a sus gastos hace falta categoryId (de gasto). Elegí la más parecida." };
+          }
+          await respondSplit({ uid: ctx.uid }, a.id, {
+            accept: a.accept,
+            addToBooks,
+            categoryId: addToBooks ? a.categoryId : null,
+            reason: a.reason ?? null,
+          });
+          return { ok: true, message: a.accept ? (addToBooks ? "Aceptado y sumado a sus gastos." : "Aceptado.") : "Rechazado; le avisamos." };
+        }
+        let accountId = a.accountId;
+        if (a.accept && !accountId) {
+          const main = ctx.accounts.find((x) => x.isMain && x.active && x.type !== "credit");
+          if (!main) return { error: "¿En qué cuenta entró (o de cuál salió)? Preguntale." };
+          accountId = main.id;
+        }
+        await respondPersonTransfer({ uid: ctx.uid }, a.id, { accept: a.accept, accountId: accountId ?? null });
+        return { ok: true, message: a.accept ? "Transferencia confirmada." : "Le avisamos que no la reconoce." };
+      } catch (err) {
+        if (err instanceof PeopleError) return { error: err.message };
+        throw err;
+      }
     }
 
     case "list_recent_transactions": {

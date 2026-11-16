@@ -32,3 +32,17 @@ export const apiJson = async <T>(
   }
   return res.json() as Promise<T>;
 };
+
+/**
+ * POST con body JSON. Si falla, tira un Error con el mensaje del server
+ * ({ error }) para mostrarlo tal cual en un toast.
+ */
+export const apiPost = async <T = { ok: true }>(path: string, body: unknown): Promise<T> => {
+  const res = await apiFetch(path, { method: "POST", body: JSON.stringify(body) });
+  const data = (await res.json().catch(() => ({}))) as T & { error?: string };
+  if (!res.ok) throw new Error(data.error ?? `No se pudo completar (${res.status})`);
+  return data;
+};
+
+/** Mensaje de un error para mostrar al usuario. */
+export const errorText = (err: unknown) => (err instanceof Error ? err.message : "No se pudo completar");

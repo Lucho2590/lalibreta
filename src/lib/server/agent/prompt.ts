@@ -12,6 +12,7 @@ import { currentMonthKey, formatLongDate, todayYMD } from "../time";
 import { draftForPrompt } from "./render";
 import { personaFor } from "../onboarding";
 import type { MyShare, SharedWithMe } from "../sharing";
+import type { AgentPending, AgentPerson } from "../people";
 
 const ACCOUNT_TYPE_LABEL: Record<string, string> = {
   cash: "efectivo",
@@ -96,6 +97,13 @@ Cuando el usuario manda una imagen, PDF o planilla, fijate qué es:
 - Los gastos y pagos de tarjeta no salen de una cobacha, salvo que el usuario lo diga.
 - Transferencias comunes entre cuentas propias ("pasé 100 lucas del Galicia a Mercado Pago") también van con propose_transfer.
 
+## Gente: gastos divididos, transferencias y deudas
+- Dividir un gasto ("la mitad es de Orne", "30 lucas son de Juan"): propose_transaction con split (person de "Personas"; percent o amount). Con cuotas, mode installments (le paga en cuotas, default) o lump (todo junto). Los que usan la app lo tienen que aceptar; a los sin app se les anota que deben.
+- Alguien que no está en Personas: si usa la app, que se conecten desde Contactos (no se puede dividir hasta que acepte); si no usa la app, usá newName (se agrega).
+- Plata con una persona ("Orne me pasó 20 lucas a MP", "le pagué a Juan", "le presté 10 lucas") → propose_transfer con person (toAccountId si entró, fromAccountId si salió; loan si es préstamo). No es ingreso ni gasto: salda lo que se deben.
+- "¿Cuánto me debe X?", "¿a quién le tengo que cobrar?", "¿cuánto le debo?" → get_debts.
+- "Para responder": respond_pending con su id y type. Al aceptar un gasto, si no dice nada, sumalo a sus gastos con la categoría de gasto más parecida y decíselo.
+
 ## Cuentas compartidas
 - Para compartir cuentas propias con alguien ("quiero compartir la Visa con mi señora"), usá create_share_code con TODAS las cuentas en una sola llamada. El sistema le manda aparte un mensaje listo para reenviar: vos respondé solo "Listo 👇 Reenviale el mensaje de abajo a …". No escribas el código ni expliques pasos.
 - Si el usuario te pasa un código de 6 dígitos que le dieron para una cuenta compartida ("mi marido me pasó 482913"), usá join_shared_account.
@@ -156,6 +164,10 @@ export interface PromptContext {
   /** Comercio → categoría que el usuario eligió antes (importando resúmenes). */
   categoryRules?: Array<{ sample: string; categoryName: string }>;
   pendingDraft: Draft | null;
+  /** Gente con la que puede dividir gastos o transferir. */
+  people?: AgentPerson[];
+  /** Lo que le mandaron y tiene que responder. */
+  pending?: AgentPending[];
 }
 
 export const buildSystemPrompt = (ctx: PromptContext): string => {
@@ -250,6 +262,14 @@ Usá el personaje con humor y de a poco: un guiño cada tanto (no en todos los m
     `## Cuentas del usuario que compartió con otras personas\n${mySharesList}`,
     `## Fecha\nHoy es ${formatLongDate(now)} (fecha ${todayYMD(now)}, mes ${currentMonthKey(now)}), en hora de Argentina.`,
     `## Cuentas del usuario\n${accountsList}`,
+    `## Personas (para dividir gastos y transferencias)\n${
+      ctx.people?.length
+        ? ctx.people.map((p) => `- person=${p.ref} | ${p.name} (${p.isApp ? "usa la app" : "sin app"})`).join("\n")
+        : "(nadie todavía: se conectan o agregan desde Contactos en la app)"
+    }`,
+    ...(ctx.pending?.length
+      ? [`## Para responder\n${ctx.pending.map((x) => `- id=${x.id} type=${x.type} | ${x.text}`).join("\n")}`]
+      : []),
   ];
 
   // Primero las reglas fijas (idénticas para todos: OpenAI las cachea y cobra

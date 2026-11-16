@@ -11,7 +11,11 @@ export interface UserProfile {
 
 export interface Contact {
   id: string;
-  email: string;
+  /** Los contactos sin la app pueden no tener email. */
+  email?: string | null;
+  phone?: string | null;
+  /** "app": usuario conectado; "offline": no usa la app. */
+  kind?: "app" | "offline" | null;
   displayName?: string | null;
   linkedUid?: string | null;
   photoURL?: string | null;
@@ -19,23 +23,7 @@ export interface Contact {
   updatedAt?: Timestamp;
 }
 
-export type ShareParticipantStatus =
-  | "owner"
-  | "pending"
-  | "accepted"
-  | "rejected";
 
-export interface ShareParticipant {
-  uid: string | null;
-  email: string;
-  displayName?: string | null;
-  percentage: number;
-  amount: number;
-  status: ShareParticipantStatus;
-  respondedAt?: Timestamp | null;
-}
-
-export type SharedExpenseStatus = "active" | "cancelled";
 
 // === Cuentas con extensión ===
 
@@ -87,22 +75,6 @@ export interface PendingApproval {
   respondedAt?: Timestamp | null;
 }
 
-export interface SharedExpense {
-  id: string;
-  ownerUid: string;
-  ownerEmail: string;
-  ownerDisplayName?: string | null;
-  description: string;
-  totalAmount: number;
-  date: Timestamp;
-  ownerTransactionId?: string;
-  participants: ShareParticipant[];
-  participantUids: string[];
-  participantEmails: string[];
-  status: SharedExpenseStatus;
-  createdAt: Timestamp;
-  updatedAt?: Timestamp;
-}
 
 export type AccountType =
   | "cash"
@@ -137,8 +109,10 @@ export const accountCurrencies = (a: {
  * - transfer: mover plata entre cuentas (misma moneda)
  * - exchange: cambio de moneda (vender/comprar dólares), puede ser en la misma cuenta
  * - card-payment: pago de una tarjeta de crédito desde una cuenta
+ * - p2p: plata que le pasé a una persona o que me pasó (una sola pata, con
+ *   transferCounterpartId = "person:<ref>")
  */
-export type TransferType = "transfer" | "exchange" | "card-payment";
+export type TransferType = "transfer" | "exchange" | "card-payment" | "p2p";
 
 export type CategoryKind = "expense" | "income";
 
@@ -208,6 +182,10 @@ export interface Transaction {
   quotedRate?: number;
   /** Cambios: diferencia en pesos contra dólares × cotización pactada. Positivo = a favor. */
   exchangeDiff?: number;
+  /** Mi parte de un gasto que pagó otra persona (splits/{splitId}). */
+  splitId?: string;
+  /** Transferencia con una persona (p2pTransfers/{id}). */
+  p2pTransferId?: string;
   createdAt: Timestamp;
 }
 
@@ -245,6 +223,9 @@ export interface Installment {
   /** Cambios: cotización pactada y diferencia en pesos (ver Transaction). */
   quotedRate?: number;
   exchangeDiff?: number;
+  /** Mi parte de un gasto que pagó otra persona / transferencia con una persona. */
+  splitId?: string;
+  p2pTransferId?: string;
   /** Moneda de amount. Default ARS. */
   currency?: Currency;
   /** Si lo cargó otra persona desde una cuenta compartida. */

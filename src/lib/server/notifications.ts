@@ -132,8 +132,16 @@ export const notify = async (uid: string, input: NotifyInput): Promise<NotifyRes
       createdAt: FieldValue.serverTimestamp(),
     });
     result.stored = true;
-    // Los avisos de cuentas compartidas se pueden apagar (quedan solo en la bandeja).
-    if (input.kind.startsWith("share") || input.kind === "shared-expense") {
+    // Los avisos de cuentas compartidas y las respuestas de la gente se pueden
+    // apagar (quedan solo en la bandeja). Las solicitudes llegan siempre.
+    if (
+      input.kind.startsWith("share") ||
+      input.kind === "shared-expense" ||
+      input.kind === "connection-response" ||
+      input.kind === "split-response" ||
+      input.kind === "split-cancelled" ||
+      input.kind === "p2p-response"
+    ) {
       const prefs = withDefaultPrefs((await adminDb().collection("users").doc(uid).get()).data()?.notificationPrefs);
       if (!prefs.shared) return result;
     }
