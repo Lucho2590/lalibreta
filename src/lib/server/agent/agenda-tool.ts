@@ -233,6 +233,21 @@ export const runAgendaTool = async (
     if ("error" in people) return people;
     const me = await loadMe(uid);
     if (!me.email) return { error: "El usuario no tiene email en su perfil: que la cargue desde la app" };
+    // El modelo a veces vuelve a llamar add_activity con lo mismo en otra vuelta:
+    // si ya hay una igual (mismo día, hora y título) no la duplicamos.
+    const sameDay = await listAgenda(uid, p.date, p.date);
+    const existing = sameDay.find(
+      (a) => a.ownerUid === uid && (a.time ?? null) === (p.time ?? null) && norm(a.title) === norm(p.title),
+    );
+    if (existing) {
+      return {
+        ok: true,
+        id: existing.id,
+        when: whenText(existing),
+        alreadyScheduled: true,
+        note: "Ya estaba agendada (no se duplicó). Si querés cambiarle algo usá update_activity.",
+      };
+    }
     const activity = await createActivityAdmin(
       me,
       {
