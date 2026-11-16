@@ -6,7 +6,7 @@ import { agendaReminders } from "./activities";
 import { loadAccounts, loadCategories, toServerAccount, type ServerAccountInfo } from "./queries-admin";
 import { getOrBuildCycle } from "./transactions-admin";
 import { dateFromYMD, todayYMD } from "./time";
-import { summarizeCardMonth, TAX_CATEGORY } from "@/lib/domain/card-summary";
+import { cardFloorMonth, summarizeCardMonth, TAX_CATEGORY } from "@/lib/domain/card-summary";
 import { withDefaultPrefs, type NotificationPrefs } from "@/lib/domain/notifications";
 import type { Currency, Installment, RecurringExpense } from "@/lib/domain/types";
 import { formatMoney } from "@/lib/format";
@@ -81,14 +81,16 @@ const cardDueReminders = async (
 ): Promise<number> => {
   const target = addDaysYMD(today, daysBefore);
   const month = target.slice(0, 7);
-  const snap = await adminDb().collection(`users/${uid}/installments`).where("paymentMonth", "==", month).get();
-  const installments = snap.docs.map((d) => ({ id: d.id, ...d.data() }) as unknown as Installment);
   const taxIds = new Set(
     (await loadCategories(uid)).filter((c) => TAX_CATEGORY.test(c.name)).map((c) => c.id),
   );
   let sent = 0;
   for (const card of cards) {
-    const s = summarizeCardMonth(installments, [card.id], month, taxIds);
+    // Todos los movimientos de la tarjeta: un pago adelantado (hecho el mes
+    // anterior) cuenta para este resumen y no hay que avisar.
+    const cardSnap = await adminDb().collection(`users/${uid}/installments`).where("accountId", "==", card.id).get();
+    const cardInstallments = cardSnap.docs.map((d) => ({ id: d.id, ...d.data() }) as unknown as Installment);
+    const s = summarizeCardMonth(cardInstallments, [card.id], month, taxIds, cardFloorMonth(card));
     if (!s.dueDate || ymdOf(s.dueDate) !== target) continue;
     if (s.pending.ARS < 0.01 && s.pending.USD < 0.01) continue;
     const amount = moneyText(s.pending);

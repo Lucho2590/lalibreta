@@ -9,6 +9,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useMonth } from "@/hooks/use-month";
 import {
   useAccounts,
+  useAllInstallments,
   useCategories,
   useInstallmentsForMonth,
   useSharedAsOwner,
@@ -16,12 +17,14 @@ import {
 import { useAuth } from "@/hooks/use-auth";
 import { TransactionList } from "@/components/transactions/transaction-list";
 import { ExchangeSummaryCard } from "@/components/transactions/exchange-summary-card";
+import { monthUsdConversion } from "@/lib/domain/exchanges";
+import { useUsdRate } from "@/hooks/use-usd-rate";
 import { useNewTransactionSheet } from "@/components/transactions/new-transaction-sheet";
 import { formatCurrency, formatDate, formatMoney, formatMonth } from "@/lib/format";
 import { isCardCredit, isRealIncome } from "@/lib/domain/types";
-import { TAX_CATEGORY, summarizeCardMonth } from "@/lib/domain/card-summary";
+import { TAX_CATEGORY, cardFloorMonth, summarizeCardMonth } from "@/lib/domain/card-summary";
 
-import { computeMonthlyBalance } from "@/lib/domain/balance";
+import { computeAccountFlow, computeMonthlyBalance, type AccountFlow } from "@/lib/domain/balance";
 import { buildSharedByTxId } from "@/lib/domain/shared-effective";
 
 export default function MovimientosPage() {
@@ -87,6 +90,33 @@ export default function MovimientosPage() {
 
   const balanceUSD = computeMonthlyBalance(statBase, monthKey, adj, "USD");
   const hasUSD = balanceUSD.income !== 0 || balanceUSD.expense !== 0;
+  // Balance "todo en pesos" (igual que el Inicio): quien cobra en dólares y los
+  // vende tiene ingresos en pesos = 0 y el balance solo-pesos da siempre negativo.
+  const usdRate = useUsdRate();
+  const conversion = useMemo(() => monthUsdConversion(installments, usdRate?.rate), [installments, usdRate]);
+  const consolidated = hasUSD && conversion ? balance.balance + balanceUSD.balance * conversion.rate : null;
+
+  // Mirando UNA cuenta (no tarjeta), las transferencias y cambios sí cuentan:
+  // lo que te pasaste desde otra cuenta entró a esta. En la vista general no,
+  // porque mover plata entre cuentas propias no es ganar ni gastar.
+  const flow = useMemo(() => {
+    if (!accountFilter || isCardView) return null;
+    const ids = new Set([accountFilter]);
+    return {
+      ARS: computeAccountFlow(installments, monthKey, ids, adj, "ARS"),
+      USD: computeAccountFlow(installments, monthKey, ids, adj, "USD"),
+    };
+  }, [accountFilter, isCardView, installments, monthKey, adj]);
+  const flowHasUSD = !!flow && (flow.USD.in !== 0 || flow.USD.out !== 0);
+  const transfersNote = (dir: "in" | "out") => {
+    if (!flow) return undefined;
+    const pick = (f: AccountFlow) => (dir === "in" ? f.transfersIn : f.transfersOut);
+    const parts = moneyText({ ARS: pick(flow.ARS), USD: pick(flow.USD) });
+    if (!parts) return undefined;
+    return dir === "in"
+      ? `incluye ${parts} que pasaste desde otras cuentas`
+      : `incluye ${parts} que pasaste a otras cuentas`;
+  };
 
   const accountName = filterAccount?.name;
   const taxCategoryIds = useMemo(
@@ -94,9 +124,15 @@ export default function MovimientosPage() {
     [categories],
   );
   // Mismo cálculo que el detalle de la tarjeta: Total a pagar = gastos − reintegros.
+  // Con todos los movimientos de la tarjeta, para repartir los pagos entre resúmenes
+  // (un pago adelantado en otro mes cuenta para el resumen que corresponde).
+  const { data: allInstallments } = useAllInstallments();
   const cardSum = useMemo(
-    () => (isCardView && accountFilter ? summarizeCardMonth(statBase, [accountFilter], monthKey, taxCategoryIds) : null),
-    [isCardView, accountFilter, statBase, monthKey, taxCategoryIds],
+    () =>
+      isCardView && accountFilter && filterAccount
+        ? summarizeCardMonth(allInstallments, [accountFilter], monthKey, taxCategoryIds, cardFloorMonth(filterAccount))
+        : null,
+    [isCardView, accountFilter, filterAccount, allInstallments, monthKey, taxCategoryIds],
   );
   const cardHasUSD = !!cardSum && (cardSum.expenses.USD !== 0 || cardSum.credits.USD !== 0);
   const moneyText = (m: { ARS: number; USD: number }) =>
@@ -165,6 +201,31 @@ export default function MovimientosPage() {
             icon={<Wallet className="size-4" />}
           />
         </div>
+      ) : flow ? (
+        <div className="grid gap-3 md:grid-cols-3">
+          <Stat
+            label="Entradas"
+            value={flow.ARS.in}
+            usd={flowHasUSD ? flow.USD.in : undefined}
+            tone="success"
+            note={transfersNote("in")}
+            icon={<ArrowUpRight className="size-4" />}
+          />
+          <Stat
+            label="Salidas"
+            value={flow.ARS.out}
+            usd={flowHasUSD ? flow.USD.out : undefined}
+            note={transfersNote("out")}
+            icon={<ArrowDownRight className="size-4" />}
+          />
+          <Stat
+            label="Neto del mes"
+            value={flow.ARS.net}
+            usd={flowHasUSD ? flow.USD.net : undefined}
+            tone={flow.ARS.net >= 0 && flow.USD.net >= 0 ? "success" : "destructive"}
+            icon={<Wallet className="size-4" />}
+          />
+        </div>
       ) : (
         <div className="grid gap-3 md:grid-cols-3">
           <Stat
@@ -180,13 +241,23 @@ export default function MovimientosPage() {
             usd={hasUSD ? balanceUSD.expense : undefined}
             icon={<ArrowDownRight className="size-4" />}
           />
-          <Stat
-            label="Balance"
-            value={balance.balance}
-            usd={hasUSD ? balanceUSD.balance : undefined}
-            tone={balance.balance >= 0 ? "success" : "destructive"}
-            icon={<Wallet className="size-4" />}
-          />
+          {consolidated != null && conversion ? (
+            <Stat
+              label="Balance"
+              value={consolidated}
+              tone={consolidated >= 0 ? "success" : "destructive"}
+              note={`Todo en pesos: ${formatMoney(balance.balance, "ARS")} ${balanceUSD.balance >= 0 ? "+" : "−"} ${formatMoney(Math.abs(balanceUSD.balance), "USD")}, con el dólar a ${formatMoney(conversion.rate, "ARS")} (${conversion.label}).`}
+              icon={<Wallet className="size-4" />}
+            />
+          ) : (
+            <Stat
+              label="Balance"
+              value={balance.balance}
+              usd={hasUSD ? balanceUSD.balance : undefined}
+              tone={balance.balance >= 0 ? "success" : "destructive"}
+              icon={<Wallet className="size-4" />}
+            />
+          )}
         </div>
       )}
 
@@ -236,6 +307,8 @@ export default function MovimientosPage() {
       ) : (
         <TransactionList
           items={filtered}
+          perspectiveAccountId={isCardView ? undefined : (accountFilter ?? undefined)}
+          groupCards={!isCardView}
           sharedByTxId={sharedByTxId}
           ownerUid={user?.uid}
         />

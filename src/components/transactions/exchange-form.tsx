@@ -22,7 +22,7 @@ import { computeAccountBalances } from "@/lib/domain/balances";
 import { exchangeDiffOf } from "@/lib/domain/exchanges";
 import type { Account, Currency } from "@/lib/domain/types";
 import { accountCurrencies } from "@/lib/domain/types";
-import { formatMoney, parseAmount } from "@/lib/format";
+import { formatAmountInput, formatMoney, parseAmount } from "@/lib/format";
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
 const numberText = (n: number) =>
@@ -244,6 +244,7 @@ export function ExchangeForm({ onSubmitted }: { onSubmitted?: () => void }) {
           className="h-12 text-lg"
           value={usdInput}
           onChange={(e) => setUsdInput(e.target.value)}
+          onBlur={(e) => setUsdInput(formatAmountInput(e.target.value))}
         />
       </div>
 
@@ -258,6 +259,7 @@ export function ExchangeForm({ onSubmitted }: { onSubmitted?: () => void }) {
             placeholder={usdRate ? numberText(usdRate.rate) : "Ej: 1.480"}
             value={rateInput}
             onChange={(e) => setRateInput(e.target.value)}
+            onBlur={(e) => setRateInput(formatAmountInput(e.target.value))}
           />
         </div>
         <div className="space-y-1">
@@ -273,6 +275,7 @@ export function ExchangeForm({ onSubmitted }: { onSubmitted?: () => void }) {
               setArsInput(e.target.value);
               setArsTouched(true);
             }}
+            onBlur={(e) => arsTouched && setArsInput(formatAmountInput(e.target.value))}
           />
         </div>
       </div>

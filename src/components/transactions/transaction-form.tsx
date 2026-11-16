@@ -4,7 +4,6 @@ import { useEffect, useMemo, useState } from "react";
 import { useForm, type Resolver } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { ArrowRight } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -21,12 +20,11 @@ import { useAccounts, useCategories } from "@/hooks/use-data";
 import { useAuth } from "@/hooks/use-auth";
 import { createTransactionWithInstallments } from "@/lib/domain/installments";
 import { computeFirstBillingMonth } from "@/lib/domain/cycles";
-import { formatMoney, formatMonth, parseAmount } from "@/lib/format";
+import { formatAmountInput, formatMonth, parseAmount } from "@/lib/format";
 import type { Currency, TransactionKind } from "@/lib/domain/types";
 import { accountCurrencies } from "@/lib/domain/types";
-import { updateAccount } from "@/lib/domain/accounts";
-import { useUsdRate } from "@/hooks/use-usd-rate";
 import { ExchangeForm } from "./exchange-form";
+import { TransferForm } from "./transfer-form";
 import { ShareSection, type ShareSplit } from "./share-section";
 import { buildParticipantsList, createSharedExpense } from "@/lib/domain/shared";
 import { upsertContact } from "@/lib/domain/contacts";
@@ -107,6 +105,8 @@ export function TransactionForm({
       </div>
       {mode === "exchange" ? (
         <ExchangeForm onSubmitted={onSubmitted} />
+      ) : mode === "transfer" ? (
+        <TransferForm onSubmitted={onSubmitted} />
       ) : (
         <MovementForm kind={mode} initial={initial} onSubmitted={onSubmitted} onSaved={onSaved} />
       )}
@@ -120,10 +120,10 @@ function MovementForm({
   onSubmitted,
   onSaved,
 }: {
-  kind: TransactionKind;
+  kind: "expense" | "income";
   initial?: TransactionFormInitial;
   onSubmitted?: () => void;
-  /** Se llama con el gasto/ingreso guardado (no con transferencias). */
+  /** Se llama con el gasto/ingreso guardado. */
   onSaved?: (info: SavedTransactionInfo) => void | Promise<void>;
 }) {
   const { user } = useAuth();
@@ -133,9 +133,6 @@ function MovementForm({
   const [shareEnabled, setShareEnabled] = useState(!!initial?.shareWith?.length);
   const [shareSplits, setShareSplits] = useState<ShareSplit[]>(initial?.shareWith ?? []);
   const [currency, setCurrency] = useState<Currency>(initial?.currency ?? "ARS");
-  const [toCurrency, setToCurrency] = useState<Currency>("ARS");
-  const [rateInput, setRateInput] = useState("");
-  const usdRate = useUsdRate();
 
   const today = useMemo(() => new Date().toISOString().slice(0, 10), []);
   const resolver = zodResolver(schema as never) as unknown as Resolver<FormValues>;
@@ -159,47 +156,19 @@ function MovementForm({
     form.setValue("kind", kind);
   }, [kind, form]);
   const accountId = form.watch("accountId");
-  const toAccountId = form.watch("toAccountId");
   const dateStr = form.watch("date");
   const installments = form.watch("installments");
   const cardClosed = form.watch("cardClosedAtPurchase");
 
   const account = accounts.find((a) => a.id === accountId);
-  const toAccount = accounts.find((a) => a.id === toAccountId);
   const isCredit = account?.type === "credit" && kind === "expense";
-  const isTransfer = kind === "transfer";
-  const isCardPayment = isTransfer && toAccount?.type === "credit";
 
   // Monedas posibles según la cuenta elegida (las tarjetas aceptan $ y US$).
   const fromCurrencies: Currency[] = account ? accountCurrencies(account) : ["ARS", "USD"];
-  const toCurrencies: Currency[] = toAccount ? accountCurrencies(toAccount) : ["ARS", "USD"];
   const effCurrency: Currency = fromCurrencies.includes(currency) ? currency : fromCurrencies[0];
-  // Transferencias: la misma moneda de un lado y del otro (los cambios van en
-  // la pestaña Cambio). Solo el pago de una tarjeta puede cancelar deuda en
-  // otra moneda (ej. pagar la parte en dólares con pesos).
-  const effToCurrency: Currency = isCardPayment
-    ? toCurrencies.includes(toCurrency)
-      ? toCurrency
-      : toCurrencies[0]
-    : effCurrency;
-  // Destino sin esa moneda (ej. pasar dólares a Mercado Pago, que solo tenía pesos):
-  // se le agrega al guardar. Las cobachas son de una sola moneda: ahí no.
-  const toMissingCurrency =
-    isTransfer && !!toAccount && !isCardPayment && !accountCurrencies(toAccount).includes(effCurrency);
-  const isExchange = isCardPayment && effToCurrency !== effCurrency;
-  const rate = parseAmount(rateInput) || usdRate?.rate || 0;
-  const amountValue = Number(form.watch("amount")) || 0;
-  const exchangedAmount =
-    isExchange && rate > 0
-      ? Math.round((effCurrency === "USD" ? amountValue * rate : amountValue / rate) * 100) / 100
-      : null;
 
   const selectableAccounts = accounts.filter((a) => a.active !== false);
-  // Destinos: las otras cuentas (para cambiar de moneda está la pestaña Cambio).
-  const transferTargets = selectableAccounts.filter((a) => a.id !== accountId);
-  const filteredCategories = categories.filter(
-    (c) => c.kind === (kind === "transfer" ? "expense" : kind),
-  );
+  const filteredCategories = categories.filter((c) => c.kind === kind);
 
   useEffect(() => {
     if (!isCredit) form.setValue("installments", 1);
@@ -225,180 +194,129 @@ function MovementForm({
     try {
       const purchaseDate = new Date(`${values.date}T12:00:00`);
 
-      if (values.kind === "transfer") {
-        if (!values.toAccountId) {
-          toast.error("Elegí la cuenta destino");
-          return;
-        }
-        if (values.toAccountId === values.accountId) {
-          toast.error("Elegí otra cuenta de destino");
-          return;
-        }
-        if (toMissingCurrency && toAccount) {
-          if (toAccount.type === "reserve") {
-            toast.error(`${toAccount.name} es una cobacha en ${effCurrency === "USD" ? "pesos" : "dólares"}`);
-            return;
-          }
-          await updateAccount(user.uid, toAccount.id, {
-            currencies: [...accountCurrencies(toAccount), effCurrency],
-          });
-        }
-        if (isExchange && !(rate > 0)) {
-          toast.error("Falta la cotización");
-          return;
-        }
-        const sourceAccount = accounts.find((a) => a.id === values.accountId);
-        if (!sourceAccount) {
-          toast.error("Cuenta origen no encontrada");
-          return;
-        }
-        await createTransactionWithInstallments(user.uid, sourceAccount, {
-          accountId: values.accountId,
-          toAccountId: values.toAccountId,
-          categoryId: "",
-          description: values.description ?? "",
-          totalAmount: values.amount,
-          purchaseDate,
-          kind: "transfer",
-          installments: 1,
-          cardClosedAtPurchase: false,
-          currency: effCurrency,
-          ...(isExchange && exchangedAmount != null
-            ? { toCurrency: effToCurrency, toAmount: exchangedAmount, rate }
-            : {}),
-          transferType:
-            toAccount?.type === "credit" ? "card-payment" : isExchange ? "exchange" : "transfer",
-        });
-        toast.success(
-          toAccount?.type === "credit"
-            ? "Pago de tarjeta registrado"
-            : "Transferencia registrada",
-        );
-      } else {
-        if (!account) {
-          toast.error("Elegí una cuenta");
-          return;
-        }
-        if (!values.categoryId) {
-          toast.error("Elegí una categoría");
-          return;
-        }
-        const txId = await createTransactionWithInstallments(user.uid, account, {
-          accountId: values.accountId,
-          categoryId: values.categoryId,
-          description: values.description ?? "",
-          totalAmount: values.amount,
-          purchaseDate,
-          kind: values.kind,
-          installments: values.installments,
-          cardClosedAtPurchase: values.cardClosedAtPurchase,
-          currency: effCurrency,
-        });
-        toast.success(values.kind === "income" ? "Ingreso guardado" : "Gasto guardado");
-        let sharedExpenseId: string | null = null;
+      if (!account) {
+        toast.error("Elegí una cuenta");
+        return;
+      }
+      if (!values.categoryId) {
+        toast.error("Elegí una categoría");
+        return;
+      }
+      const txId = await createTransactionWithInstallments(user.uid, account, {
+        accountId: values.accountId,
+        categoryId: values.categoryId,
+        description: values.description ?? "",
+        totalAmount: values.amount,
+        purchaseDate,
+        kind: values.kind,
+        installments: values.installments,
+        cardClosedAtPurchase: values.cardClosedAtPurchase,
+        currency: effCurrency,
+      });
+      toast.success(values.kind === "income" ? "Ingreso guardado" : "Gasto guardado");
+      let sharedExpenseId: string | null = null;
 
-        // Si activó "Compartirlo", crear el SharedExpense + invitar.
-        const sumOthers = shareSplits.reduce((s, x) => s + x.percentage, 0);
-        if (
-          shareEnabled &&
-          effCurrency === "ARS" &&
-          values.kind === "expense" &&
-          shareSplits.length > 0 &&
-          sumOthers > 0 &&
-          sumOthers <= 100
-        ) {
-          try {
-            const ownerPct = 100 - sumOthers;
-            const participants = buildParticipantsList({
-              owner: {
-                uid: user.uid,
-                email: user.email ?? "",
-                displayName: user.displayName ?? null,
-                percentage: ownerPct,
-              },
-              others: shareSplits.map((s) => ({
-                uid: s.uid,
-                email: s.email,
-                displayName: s.displayName,
-                percentage: s.percentage,
-              })),
-              totalAmount: values.amount,
-            });
-            const sharedId = await createSharedExpense({
-              ownerUid: user.uid,
-              ownerEmail: user.email ?? "",
-              ownerDisplayName: user.displayName ?? null,
-              description: values.description ?? "",
-              totalAmount: values.amount,
-              date: purchaseDate,
-              ownerTransactionId: txId,
-              participants,
-            });
-            sharedExpenseId = sharedId;
-            toast.success(
-              `Gasto compartido con ${shareSplits.length} ${
-                shareSplits.length === 1 ? "persona" : "personas"
-              }`,
-            );
-            // Guardar como contacto los splits que lo pidieron (best-effort).
-            const toSave = shareSplits.filter((s) => s.saveAsContact);
-            if (toSave.length > 0) {
-              Promise.allSettled(
-                toSave.map((s) =>
-                  upsertContact(user.uid, {
-                    email: s.email,
-                    displayName: s.displayName,
-                  }),
-                ),
-              ).catch((err) => console.warn("[upsertContact] error", err));
-            }
-            // Disparamos invitación por mail (best effort).
-            apiFetch("/api/shared/invite", {
-              method: "POST",
-              body: JSON.stringify({ sharedExpenseId: sharedId }),
-            })
-              .then(async (r) => {
-                const data = (await r.json()) as {
-                  sent?: Array<{ email: string; ok: boolean; error?: string; loggedOnly?: boolean }>;
-                  error?: string;
-                };
-                console.log("[shared invite] respuesta", data);
-                if (!r.ok) {
-                  toast.error(`Falló la invitación: ${data.error ?? r.status}`);
-                  return;
-                }
-                const sent = data.sent ?? [];
-                const ok = sent.filter((x) => x.ok).length;
-                const fail = sent.filter((x) => !x.ok);
-                if (fail.length > 0) {
-                  toast.error(
-                    `Mails: ${ok} ok, ${fail.length} con error. Detalle en consola.`,
-                  );
-                  for (const f of fail) {
-                    console.warn("[shared invite] fallo:", f.email, f.error);
-                  }
-                } else if (sent.some((x) => x.loggedOnly)) {
-                  toast.message(
-                    `Mails logueados a consola (${ok}). Para envío real, configurá Resend o EMAIL_DEV_LOG.`,
-                  );
-                } else if (ok > 0) {
-                  toast.success(`${ok} ${ok === 1 ? "invitación enviada" : "invitaciones enviadas"}`);
-                }
-              })
-              .catch((err) => {
-                console.warn("[shared invite] error", err);
-                toast.error("No se pudo enviar la invitación");
-              });
-          } catch (err) {
-            console.error(err);
-            toast.error("Gasto guardado pero falló crear el compartido");
-          }
-        }
+      // Si activó "Compartirlo", crear el SharedExpense + invitar.
+      const sumOthers = shareSplits.reduce((s, x) => s + x.percentage, 0);
+      if (
+        shareEnabled &&
+        effCurrency === "ARS" &&
+        values.kind === "expense" &&
+        shareSplits.length > 0 &&
+        sumOthers > 0 &&
+        sumOthers <= 100
+      ) {
         try {
-          await onSaved?.({ transactionId: txId, amount: values.amount, currency: effCurrency, sharedExpenseId });
+          const ownerPct = 100 - sumOthers;
+          const participants = buildParticipantsList({
+            owner: {
+              uid: user.uid,
+              email: user.email ?? "",
+              displayName: user.displayName ?? null,
+              percentage: ownerPct,
+            },
+            others: shareSplits.map((s) => ({
+              uid: s.uid,
+              email: s.email,
+              displayName: s.displayName,
+              percentage: s.percentage,
+            })),
+            totalAmount: values.amount,
+          });
+          const sharedId = await createSharedExpense({
+            ownerUid: user.uid,
+            ownerEmail: user.email ?? "",
+            ownerDisplayName: user.displayName ?? null,
+            description: values.description ?? "",
+            totalAmount: values.amount,
+            date: purchaseDate,
+            ownerTransactionId: txId,
+            participants,
+          });
+          sharedExpenseId = sharedId;
+          toast.success(
+            `Gasto compartido con ${shareSplits.length} ${
+              shareSplits.length === 1 ? "persona" : "personas"
+            }`,
+          );
+          // Guardar como contacto los splits que lo pidieron (best-effort).
+          const toSave = shareSplits.filter((s) => s.saveAsContact);
+          if (toSave.length > 0) {
+            Promise.allSettled(
+              toSave.map((s) =>
+                upsertContact(user.uid, {
+                  email: s.email,
+                  displayName: s.displayName,
+                }),
+              ),
+            ).catch((err) => console.warn("[upsertContact] error", err));
+          }
+          // Disparamos invitación por mail (best effort).
+          apiFetch("/api/shared/invite", {
+            method: "POST",
+            body: JSON.stringify({ sharedExpenseId: sharedId }),
+          })
+            .then(async (r) => {
+              const data = (await r.json()) as {
+                sent?: Array<{ email: string; ok: boolean; error?: string; loggedOnly?: boolean }>;
+                error?: string;
+              };
+              console.log("[shared invite] respuesta", data);
+              if (!r.ok) {
+                toast.error(`Falló la invitación: ${data.error ?? r.status}`);
+                return;
+              }
+              const sent = data.sent ?? [];
+              const ok = sent.filter((x) => x.ok).length;
+              const fail = sent.filter((x) => !x.ok);
+              if (fail.length > 0) {
+                toast.error(
+                  `Mails: ${ok} ok, ${fail.length} con error. Detalle en consola.`,
+                );
+                for (const f of fail) {
+                  console.warn("[shared invite] fallo:", f.email, f.error);
+                }
+              } else if (sent.some((x) => x.loggedOnly)) {
+                toast.message(
+                  `Mails logueados a consola (${ok}). Para envío real, configurá Resend o EMAIL_DEV_LOG.`,
+                );
+              } else if (ok > 0) {
+                toast.success(`${ok} ${ok === 1 ? "invitación enviada" : "invitaciones enviadas"}`);
+              }
+            })
+            .catch((err) => {
+              console.warn("[shared invite] error", err);
+              toast.error("No se pudo enviar la invitación");
+            });
         } catch (err) {
-          console.error("[TransactionForm] onSaved", err);
+          console.error(err);
+          toast.error("Gasto guardado pero falló crear el compartido");
         }
+      }
+      try {
+        await onSaved?.({ transactionId: txId, amount: values.amount, currency: effCurrency, sharedExpenseId });
+      } catch (err) {
+        console.error("[TransactionForm] onSaved", err);
       }
 
       form.reset({ ...form.getValues(), amount: 0, description: "" });
@@ -422,7 +340,13 @@ function MovementForm({
           autoComplete="off"
           placeholder="0"
           className="h-12 text-lg"
-          {...form.register("amount", { setValueAs: parseAmount })}
+          {...form.register("amount", {
+            setValueAs: parseAmount,
+            // Al salir del campo, el número prolijo: 74915.06 → 74.915,06.
+            onBlur: (e) => {
+              e.target.value = formatAmountInput(e.target.value);
+            },
+          })}
         />
         {form.formState.errors.amount && (
           <p className="text-xs text-destructive">{form.formState.errors.amount.message}</p>
@@ -432,169 +356,64 @@ function MovementForm({
         )}
       </div>
 
-      {isTransfer ? (
-        <div className="space-y-3 rounded-xl border bg-muted/30 p-3">
-          <div className="space-y-1">
-            <Label>De cuenta</Label>
-            <Select
-              value={accountId}
-              onValueChange={(v) =>
-                form.setValue("accountId", v ?? "", { shouldValidate: true })
-              }
-            >
-              <SelectTrigger className="h-12 w-full">
-                <SelectValue
-                  placeholder="Cuenta origen"
-                  items={selectableAccounts.map((a) => ({ value: a.id, label: a.name }))}
-                />
-              </SelectTrigger>
-              <SelectContent>
-                {selectableAccounts.map((acc) => (
-                  <SelectItem key={acc.id} value={acc.id}>
-                    {acc.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+      <div className="space-y-1">
+        <Label>Cuenta</Label>
+        <Select
+          value={accountId}
+          onValueChange={(v) =>
+            form.setValue("accountId", v ?? "", { shouldValidate: true })
+          }
+        >
+          <SelectTrigger className="h-12 w-full">
+            <SelectValue
+              placeholder="Elegí una cuenta"
+              items={selectableAccounts.map((a) => ({ value: a.id, label: a.name }))}
+            />
+          </SelectTrigger>
+          <SelectContent>
+            {selectableAccounts.map((acc) => (
+              <SelectItem key={acc.id} value={acc.id}>
+                {acc.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
 
-          <div className="flex justify-center">
-            <ArrowRight className="size-5 text-muted-foreground" />
-          </div>
-
-          <div className="space-y-1">
-            <Label>A cuenta</Label>
-            <Select
-              value={toAccountId}
-              onValueChange={(v) =>
-                form.setValue("toAccountId", v ?? "", { shouldValidate: true })
-              }
-            >
-              <SelectTrigger className="h-12 w-full">
-                <SelectValue
-                  placeholder="Cuenta destino"
-                  items={transferTargets.map((a) => ({
-                    value: a.id,
-                    label: a.name,
-                  }))}
-                />
-              </SelectTrigger>
-              <SelectContent>
-                {transferTargets.map((acc) => (
-                  <SelectItem key={acc.id} value={acc.id}>
-                    {acc.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            {isCardPayment && toCurrencies.length > 1 && (
-              <>
-                <p className="mt-1.5 text-xs text-muted-foreground">¿Qué parte de la tarjeta pagás?</p>
-                <CurrencyToggle value={effToCurrency} options={toCurrencies} onChange={setToCurrency} />
-              </>
-            )}
-            {toMissingCurrency && toAccount && (
-              <p className="mt-1.5 text-xs text-muted-foreground">
-                {toAccount.type === "reserve"
-                  ? `${toAccount.name} no maneja ${effCurrency === "USD" ? "dólares" : "pesos"}.`
-                  : `${toAccount.name} no tenía ${effCurrency === "USD" ? "dólares" : "pesos"}: se los agrego al guardar.`}
-              </p>
-            )}
-          </div>
-
-          {isExchange && (
-            <div className="space-y-2 rounded-lg bg-background p-3">
-              <div className="space-y-1">
-                <Label htmlFor="rate">Cotización ($ por US$)</Label>
-                <Input
-                  id="rate"
-                  inputMode="decimal"
-                  className="h-11"
-                  placeholder={usdRate ? String(usdRate.rate) : "Ej: 1480"}
-                  value={rateInput}
-                  onChange={(e) => setRateInput(e.target.value)}
-                />
-                {usdRate && !rateInput && (
-                  <p className="text-xs text-muted-foreground">
-                    Oficial BCRA del {usdRate.date.split("-").reverse().join("/")}. Si cambiaste a otro
-                    valor, escribilo.
-                  </p>
-                )}
-              </div>
-              {exchangedAmount != null && amountValue > 0 && (
-                <p className="text-sm">
-                  {formatMoney(amountValue, effCurrency)} →{" "}
-                  <span className="font-semibold">{formatMoney(exchangedAmount, effToCurrency)}</span>
-                </p>
-              )}
-            </div>
-          )}
-          {toAccount?.type === "credit" && (
-            <p className="text-xs text-muted-foreground">Se registra como pago de la tarjeta.</p>
-          )}
-        </div>
-      ) : (
-        <>
-          <div className="space-y-1">
-            <Label>Cuenta</Label>
-            <Select
-              value={accountId}
-              onValueChange={(v) =>
-                form.setValue("accountId", v ?? "", { shouldValidate: true })
-              }
-            >
-              <SelectTrigger className="h-12 w-full">
-                <SelectValue
-                  placeholder="Elegí una cuenta"
-                  items={selectableAccounts.map((a) => ({ value: a.id, label: a.name }))}
-                />
-              </SelectTrigger>
-              <SelectContent>
-                {selectableAccounts.map((acc) => (
-                  <SelectItem key={acc.id} value={acc.id}>
-                    {acc.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="space-y-1">
-            <Label>Categoría</Label>
-            {filteredCategories.length === 0 ? (
-              <a
-                href="/categorias"
-                className="block rounded-md border border-dashed p-3 text-center text-xs text-muted-foreground hover:bg-muted/40"
-              >
-                No tenés categorías de {kind === "income" ? "ingreso" : "gasto"}.
-                <br />
-                <span className="font-medium underline">Crear una</span>
-              </a>
-            ) : (
-              <Select
-                value={form.watch("categoryId")}
-                onValueChange={(v) =>
-                  form.setValue("categoryId", v ?? "", { shouldValidate: true })
-                }
-              >
-                <SelectTrigger className="h-12 w-full">
-                  <SelectValue
-                    placeholder="Elegí una categoría"
-                    items={filteredCategories.map((c) => ({ value: c.id, label: c.name }))}
-                  />
-                </SelectTrigger>
-                <SelectContent>
-                  {filteredCategories.map((cat) => (
-                    <SelectItem key={cat.id} value={cat.id}>
-                      {cat.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            )}
-          </div>
-        </>
-      )}
+      <div className="space-y-1">
+        <Label>Categoría</Label>
+        {filteredCategories.length === 0 ? (
+          <a
+            href="/categorias"
+            className="block rounded-md border border-dashed p-3 text-center text-xs text-muted-foreground hover:bg-muted/40"
+          >
+            No tenés categorías de {kind === "income" ? "ingreso" : "gasto"}.
+            <br />
+            <span className="font-medium underline">Crear una</span>
+          </a>
+        ) : (
+          <Select
+            value={form.watch("categoryId")}
+            onValueChange={(v) =>
+              form.setValue("categoryId", v ?? "", { shouldValidate: true })
+            }
+          >
+            <SelectTrigger className="h-12 w-full">
+              <SelectValue
+                placeholder="Elegí una categoría"
+                items={filteredCategories.map((c) => ({ value: c.id, label: c.name }))}
+              />
+            </SelectTrigger>
+            <SelectContent>
+              {filteredCategories.map((cat) => (
+                <SelectItem key={cat.id} value={cat.id}>
+                  {cat.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+      </div>
 
       <div className="space-y-1">
         <Label htmlFor="date">Fecha</Label>

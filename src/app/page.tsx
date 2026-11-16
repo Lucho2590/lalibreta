@@ -30,7 +30,8 @@ import { sortAccounts } from "@/lib/domain/accounts";
 import { accountCurrencies, paymentMonthOf } from "@/lib/domain/types";
 import { buildSharedByTxId } from "@/lib/domain/shared-effective";
 import { formatCurrency, formatMoney, formatMonth, formatShortDate } from "@/lib/format";
-import { summarizeCardMonth } from "@/lib/domain/card-summary";
+import { cardFloorMonth, summarizeCardMonth } from "@/lib/domain/card-summary";
+import { monthUsdConversion } from "@/lib/domain/exchanges";
 import { RecurringBanner } from "@/components/dashboard/recurring-banner";
 import { ExchangeSummaryCard } from "@/components/transactions/exchange-summary-card";
 import { ApprovalsBanner } from "@/components/dashboard/approvals-banner";
@@ -98,7 +99,15 @@ export default function Dashboard() {
     .sort((a, b) => b.total - a.total);
 
   const max = sortedCategories[0]?.total ?? 0;
-  const positive = balance.balance >= 0;
+
+  // Si hay dólares en el mes, el balance grande va todo en pesos: quien cobra en
+  // dólares y los vende tiene "ingresos en pesos = 0" y el balance solo-pesos
+  // siempre da negativo. Los dólares se pasan a la cotización a la que vendió
+  // este mes (promedio); si no vendió, a la que compró; si no, el oficial BCRA.
+  const conversion = useMemo(() => monthUsdConversion(installments, usdRate?.rate), [installments, usdRate]);
+  const consolidated = hasUSD && conversion ? balance.balance + balanceUSD.balance * conversion.rate : null;
+  const headline = consolidated ?? balance.balance;
+  const positive = headline >= 0;
 
   return (
     <div className="space-y-6">
@@ -125,13 +134,20 @@ export default function Dashboard() {
                 Balance del mes
               </div>
               <div className="mt-2 text-4xl font-bold tabular-nums md:text-5xl">
-                {formatCurrency(balance.balance)}
+                {formatCurrency(headline)}
               </div>
-              {hasUSD && (
-                <div className="mt-1 text-xl font-semibold tabular-nums opacity-95">
-                  {balanceUSD.balance >= 0 ? "+ " : ""}
-                  {formatMoney(balanceUSD.balance, "USD")}
+              {consolidated != null ? (
+                <div className="mt-1 text-sm tabular-nums opacity-90">
+                  {formatMoney(balance.balance, "ARS")} en pesos {balanceUSD.balance >= 0 ? "+" : "−"}{" "}
+                  {formatMoney(Math.abs(balanceUSD.balance), "USD")} en dólares
                 </div>
+              ) : (
+                hasUSD && (
+                  <div className="mt-1 text-xl font-semibold tabular-nums opacity-95">
+                    {balanceUSD.balance >= 0 ? "+ " : ""}
+                    {formatMoney(balanceUSD.balance, "USD")}
+                  </div>
+                )
               )}
               <div className="mt-5 grid grid-cols-2 gap-3">
                 <BalancePill
@@ -147,10 +163,11 @@ export default function Dashboard() {
                   extra={hasUSD ? formatMoney(balanceUSD.expense, "USD") : undefined}
                 />
               </div>
-              {hasUSD && usdRate && (
+              {consolidated != null && conversion && (
                 <div className="mt-3 text-xs opacity-80">
-                  Todo en pesos: {formatCurrency(balance.balance + balanceUSD.balance * usdRate.rate)} · dólar
-                  oficial BCRA {formatCurrency(usdRate.rate)}
+                  Todo en pesos, con el dólar a {formatCurrency(conversion.rate)} ({conversion.label}). Los
+                  cambios de moneda y los pagos de tarjeta no son ingresos ni gastos: los consumos de la
+                  tarjeta ya cuentan en el mes en que vence el resumen.
                 </div>
               )}
             </div>
@@ -187,7 +204,7 @@ export default function Dashboard() {
                 {sortAccounts(activeAccounts.filter((a) => a.type === "credit"))
                   .map((a) => {
                     // Lo que falta pagar del resumen que vence este mes.
-                    const s = summarizeCardMonth(allInstallments, [a.id], paymentMonthOf(new Date()));
+                    const s = summarizeCardMonth(allInstallments, [a.id], paymentMonthOf(new Date()), undefined, cardFloorMonth(a));
                     const owed = (["ARS", "USD"] as const).filter((c) => s.pending[c] > 0.009);
                     if (owed.length === 0) return null;
                     return (

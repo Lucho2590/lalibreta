@@ -61,7 +61,7 @@ import { computeAccountBalances, type AccountBalance } from "@/lib/domain/balanc
 import { accountCurrencies, paymentMonthOf, type AccountShare, type Currency, type Installment } from "@/lib/domain/types";
 import { db } from "@/lib/firebase/client";
 import { formatMoney, formatShortDate } from "@/lib/format";
-import { summarizeCardMonth } from "@/lib/domain/card-summary";
+import { cardFloorMonth, summarizeCardMonth } from "@/lib/domain/card-summary";
 import { AccountForm } from "@/components/accounts/account-form";
 import {
   SharedApprovals,
@@ -676,7 +676,7 @@ function BalanceAmounts({
 }) {
   if (account.type === "credit") {
     // Tarjeta: lo que falta pagar del resumen que vence este mes.
-    const s = summarizeCardMonth(installments, [account.id], paymentMonthOf(new Date()));
+    const s = summarizeCardMonth(installments, [account.id], paymentMonthOf(new Date()), undefined, cardFloorMonth(account));
     const owed = (["ARS", "USD"] as Currency[]).filter((c) => s.pending[c] > 0.009);
     if (owed.length === 0) return null;
     return (

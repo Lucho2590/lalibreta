@@ -1,8 +1,8 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
-import { ArrowLeftRight, Trash2, Users } from "lucide-react";
+import { ArrowLeftRight, ChevronDown, CreditCard, Trash2, Users } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -19,15 +19,36 @@ interface Props {
   items: Installment[];
   sharedByTxId?: Map<string, SharedExpense>;
   ownerUid?: string;
+  /**
+   * Lista de UNA cuenta: las transferencias se muestran como entrada (+) o
+   * salida (−) de esa cuenta en vez de neutras.
+   */
+  perspectiveAccountId?: string;
+  /** Agrupa los consumos de cada tarjeta en una fila desplegable (default: sí). */
+  groupCards?: boolean;
 }
 
-export function TransactionList({ items, sharedByTxId, ownerUid }: Props) {
+export function TransactionList({
+  items,
+  sharedByTxId,
+  ownerUid,
+  perspectiveAccountId,
+  groupCards = true,
+}: Props) {
   const { user } = useAuth();
   const { data: accounts } = useAccounts();
   const { data: categories } = useCategories();
 
   const accountMap = useMemo(() => new Map(accounts.map((a) => [a.id, a])), [accounts]);
   const categoryMap = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories]);
+  const [open, setOpen] = useState<Set<string>>(new Set());
+  const toggle = (id: string) =>
+    setOpen((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
 
   const remove = async (transactionId: string) => {
     if (!user) return;
@@ -71,160 +92,258 @@ export function TransactionList({ items, sharedByTxId, ownerUid }: Props) {
   const effectiveOwner = ownerUid ?? user?.uid ?? "";
   const shareIndex = sharedByTxId;
 
+  const renderRow = (it: Installment, nested = false) => {
+      const acc = accountMap.get(it.accountId);
+      const cat = categoryMap.get(it.categoryId);
+      const isTransfer = it.kind === "transfer";
+      const counterpart = isTransfer
+        ? accountMap.get(it.transferCounterpartId ?? "")
+        : null;
+      const cur = currencyOf(it);
+      const otherLeg = isTransfer
+        ? legsByTx.get(it.transactionId)?.find((l) => l.id !== it.id)
+        : undefined;
+      const isExchange = it.transferType === "exchange" || (otherLeg && currencyOf(otherLeg) !== cur);
+      const isCardPayment = it.transferType === "card-payment";
+      // Cotización del cambio (pesos por dólar), a partir de las dos patas.
+      const exchangeRate =
+        isExchange && otherLeg
+          ? (() => {
+              const usdLeg = cur === "USD" ? it : otherLeg;
+              const arsLeg = cur === "USD" ? otherLeg : it;
+              return usdLeg.amount > 0 ? arsLeg.amount / usdLeg.amount : null;
+            })()
+          : null;
+      const transferLabel = isCardPayment ? "Pago de tarjeta" : isExchange ? "Cambio" : "Transferencia";
+      // Mirando una cuenta: ¿esta pata entró o salió de ella? (un cambio dentro
+      // de la misma cuenta sigue mostrándose como "US$ → $").
+      const flowSign =
+        isTransfer &&
+        perspectiveAccountId &&
+        it.accountId === perspectiveAccountId &&
+        !(otherLeg && otherLeg.accountId === it.accountId)
+          ? it.transferRole === "destination"
+            ? "+"
+            : "−"
+          : null;
+      const [fromName, toName] =
+        it.transferRole === "destination"
+          ? [counterpart?.name, acc?.name]
+          : [acc?.name, counterpart?.name];
+
+      const shareInfo =
+        shareIndex && effectiveOwner && it.kind === "expense"
+          ? getEffectiveInstallmentInfo(it, shareIndex, effectiveOwner)
+          : null;
+      const isShared = shareInfo?.isShared ?? false;
+      const displayAmount = isShared ? shareInfo!.effectiveAmount : it.amount;
+      const showDiff =
+        isShared && shareInfo!.effectiveAmount !== shareInfo!.totalAmount;
+
+      return (
+        <Card key={it.id} className={`rounded-2xl transition hover:shadow-sm ${nested ? "bg-muted/20 shadow-none" : ""}`}>
+          <CardContent className="flex items-center gap-3 py-3.5">
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-muted text-foreground">
+              {isTransfer ? (
+                <ArrowLeftRight className="size-5" />
+              ) : (
+                <CategoryIcon name={cat?.icon} className="size-5" />
+              )}
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <span className="truncate text-sm font-semibold">
+                  {it.description ||
+                    (isTransfer
+                      ? transferLabel
+                      : cat?.name || "Movimiento")}
+                </span>
+                {isTransfer && (
+                  <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+                    {transferLabel}
+                  </span>
+                )}
+                {it.cardCredit && (
+                  <span
+                    className="rounded-full bg-success/10 px-2 py-0.5 text-[10px] font-medium text-success"
+                    title="Reintegro en la tarjeta: baja lo que tenés que pagar"
+                  >
+                    saldo a favor
+                  </span>
+                )}
+                {it.projected && (
+                  <span
+                    className="rounded-full border border-dashed border-muted-foreground/40 px-2 py-0.5 text-[10px] font-medium text-muted-foreground"
+                    title="Suscripción estimada: se reemplaza por el monto real al importar el resumen"
+                  >
+                    estimado
+                  </span>
+                )}
+                {it.createdByName && (
+                  <span className="rounded-full bg-brand/10 px-2 py-0.5 text-[10px] font-medium text-brand">
+                    {it.createdByName}
+                  </span>
+                )}
+                {!isTransfer && it.totalInstallments > 1 && (
+                  <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+                    {it.installmentNumber}/{it.totalInstallments}
+                  </span>
+                )}
+              </div>
+              <div className="text-xs text-muted-foreground">
+                {isTransfer
+                  ? `${fromName === toName ? (fromName ?? "—") : `${fromName ?? "—"} → ${toName ?? "—"}`}${!isCardPayment && exchangeRate ? ` · a ${formatMoney(Math.round(exchangeRate * 100) / 100, "ARS")}` : ""} · ${formatShortDate(it.billingDate.toDate())}`
+                  : `${cat?.name ?? "—"} · ${acc?.name ?? "—"} · ${formatShortDate(it.billingDate.toDate())}`}
+              </div>
+              {isShared && shareInfo?.shared && (
+                <Link
+                  href={`/compartidas/${shareInfo.shared.id}`}
+                  className="mt-1 inline-flex items-center gap-1 rounded-full bg-brand/10 px-2 py-0.5 text-[10px] font-medium text-brand hover:bg-brand/20"
+                >
+                  <Users className="size-3" />
+                  Compartido · total {formatMoney(shareInfo.totalAmount, cur)}
+                  {shareInfo.othersCount > 0 &&
+                    ` · ${shareInfo.acceptedCount}/${shareInfo.othersCount} aceptaron`}
+                </Link>
+              )}
+            </div>
+            <div className="flex flex-col items-end">
+              <div
+                className={`text-sm font-semibold tabular-nums ${
+                  it.kind === "income" || flowSign === "+"
+                    ? "text-success"
+                    : isTransfer && !flowSign
+                      ? "text-muted-foreground"
+                      : ""
+                }`}
+              >
+                {flowSign
+                  ? `${flowSign}${formatMoney(it.amount, cur)}`
+                  : isTransfer
+                  ? isExchange && otherLeg
+                    ? `${formatMoney(it.transferRole === "destination" ? otherLeg.amount : it.amount, it.transferRole === "destination" ? currencyOf(otherLeg) : cur)} → ${formatMoney(it.transferRole === "destination" ? it.amount : otherLeg.amount, it.transferRole === "destination" ? cur : currencyOf(otherLeg))}`
+                    : formatMoney(it.amount, cur)
+                  : it.kind === "income"
+                    ? `+${formatMoney(displayAmount, cur)}`
+                    : `-${formatMoney(displayAmount, cur)}`}
+              </div>
+              {isExchange && !!it.exchangeDiff && (
+                <div
+                  className={`text-[10px] font-medium tabular-nums ${it.exchangeDiff < 0 ? "text-destructive" : "text-success"}`}
+                  title={
+                    it.quotedRate
+                      ? `Diferencia contra la cotización pactada (${formatMoney(it.quotedRate, "ARS")}): redondeo o comisión`
+                      : "Diferencia por redondeo o comisión"
+                  }
+                >
+                  dif. {it.exchangeDiff > 0 ? "+" : "−"}
+                  {formatMoney(Math.abs(it.exchangeDiff), "ARS")}
+                </div>
+              )}
+              {showDiff && (
+                <div className="text-[10px] text-muted-foreground line-through tabular-nums">
+                  {formatMoney(shareInfo!.totalAmount, cur)}
+                </div>
+              )}
+            </div>
+            <Button
+              size="icon"
+              variant="ghost"
+              className="text-muted-foreground"
+              onClick={() => remove(it.transactionId)}
+              aria-label="Eliminar"
+            >
+              <Trash2 className="size-4" />
+            </Button>
+          </CardContent>
+        </Card>
+      );
+  };
+
+  // Consumos de tarjeta: una fila por tarjeta (el resumen del mes), desplegable.
+  type Entry =
+    | { type: "row"; it: Installment; at: number }
+    | { type: "card"; accountId: string; items: Installment[]; at: number };
+  const entries: Entry[] = [];
+  const cardGroups = new Map<string, Installment[]>();
+  for (const it of sorted) {
+    const acc = accountMap.get(it.accountId);
+    if (groupCards && acc?.type === "credit" && it.kind !== "transfer") {
+      cardGroups.set(it.accountId, [...(cardGroups.get(it.accountId) ?? []), it]);
+    } else {
+      entries.push({ type: "row", it, at: it.billingDate.toMillis() });
+    }
+  }
+  for (const [accountId, list] of cardGroups) {
+    // Una sola línea no se agrupa.
+    if (list.length === 1) entries.push({ type: "row", it: list[0], at: list[0].billingDate.toMillis() });
+    else entries.push({ type: "card", accountId, items: list, at: Math.max(...list.map((i) => i.billingDate.toMillis())) });
+  }
+  entries.sort((a, b) => b.at - a.at);
+
+  const groupTotal = (list: Installment[]) => {
+    const t: Record<"ARS" | "USD", number> = { ARS: 0, USD: 0 };
+    for (const i of list) {
+      const amount =
+        i.kind === "expense" && shareIndex && effectiveOwner
+          ? getEffectiveInstallmentInfo(i, shareIndex, effectiveOwner).effectiveAmount
+          : i.amount;
+      t[currencyOf(i)] += i.kind === "income" ? -amount : amount;
+    }
+    return t;
+  };
+
   return (
     <div className="space-y-2">
-      {sorted.map((it) => {
-        const acc = accountMap.get(it.accountId);
-        const cat = categoryMap.get(it.categoryId);
-        const isTransfer = it.kind === "transfer";
-        const counterpart = isTransfer
-          ? accountMap.get(it.transferCounterpartId ?? "")
-          : null;
-        const cur = currencyOf(it);
-        const otherLeg = isTransfer
-          ? legsByTx.get(it.transactionId)?.find((l) => l.id !== it.id)
-          : undefined;
-        const isExchange = it.transferType === "exchange" || (otherLeg && currencyOf(otherLeg) !== cur);
-        const isCardPayment = it.transferType === "card-payment";
-        // Cotización del cambio (pesos por dólar), a partir de las dos patas.
-        const exchangeRate =
-          isExchange && otherLeg
-            ? (() => {
-                const usdLeg = cur === "USD" ? it : otherLeg;
-                const arsLeg = cur === "USD" ? otherLeg : it;
-                return usdLeg.amount > 0 ? arsLeg.amount / usdLeg.amount : null;
-              })()
-            : null;
-        const transferLabel = isCardPayment ? "Pago de tarjeta" : isExchange ? "Cambio" : "Transferencia";
-        const [fromName, toName] =
-          it.transferRole === "destination"
-            ? [counterpart?.name, acc?.name]
-            : [acc?.name, counterpart?.name];
-
-        const shareInfo =
-          shareIndex && effectiveOwner && it.kind === "expense"
-            ? getEffectiveInstallmentInfo(it, shareIndex, effectiveOwner)
-            : null;
-        const isShared = shareInfo?.isShared ?? false;
-        const displayAmount = isShared ? shareInfo!.effectiveAmount : it.amount;
-        const showDiff =
-          isShared && shareInfo!.effectiveAmount !== shareInfo!.totalAmount;
-
+      {entries.map((e) => {
+        if (e.type === "row") return renderRow(e.it);
+        const acc = accountMap.get(e.accountId);
+        const total = groupTotal(e.items);
+        const isOpen = open.has(e.accountId);
+        const due = e.items[0].billingDate.toDate();
         return (
-          <Card key={it.id} className="rounded-2xl transition hover:shadow-sm">
-            <CardContent className="flex items-center gap-3 py-3.5">
-              <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-muted text-foreground">
-                {isTransfer ? (
-                  <ArrowLeftRight className="size-5" />
-                ) : (
-                  <CategoryIcon name={cat?.icon} className="size-5" />
-                )}
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
-                  <span className="truncate text-sm font-semibold">
-                    {it.description ||
-                      (isTransfer
-                        ? transferLabel
-                        : cat?.name || "Movimiento")}
-                  </span>
-                  {isTransfer && (
-                    <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
-                      {transferLabel}
-                    </span>
-                  )}
-                  {it.cardCredit && (
-                    <span
-                      className="rounded-full bg-success/10 px-2 py-0.5 text-[10px] font-medium text-success"
-                      title="Reintegro en la tarjeta: baja lo que tenés que pagar"
-                    >
-                      saldo a favor
-                    </span>
-                  )}
-                  {it.projected && (
-                    <span
-                      className="rounded-full border border-dashed border-muted-foreground/40 px-2 py-0.5 text-[10px] font-medium text-muted-foreground"
-                      title="Suscripción estimada: se reemplaza por el monto real al importar el resumen"
-                    >
-                      estimado
-                    </span>
-                  )}
-                  {it.createdByName && (
-                    <span className="rounded-full bg-brand/10 px-2 py-0.5 text-[10px] font-medium text-brand">
-                      {it.createdByName}
-                    </span>
-                  )}
-                  {!isTransfer && it.totalInstallments > 1 && (
-                    <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
-                      {it.installmentNumber}/{it.totalInstallments}
-                    </span>
-                  )}
-                </div>
-                <div className="text-xs text-muted-foreground">
-                  {isTransfer
-                    ? `${fromName === toName ? (fromName ?? "—") : `${fromName ?? "—"} → ${toName ?? "—"}`}${!isCardPayment && exchangeRate ? ` · a ${formatMoney(Math.round(exchangeRate * 100) / 100, "ARS")}` : ""} · ${formatShortDate(it.billingDate.toDate())}`
-                    : `${cat?.name ?? "—"} · ${acc?.name ?? "—"} · ${formatShortDate(it.billingDate.toDate())}`}
-                </div>
-                {isShared && shareInfo?.shared && (
-                  <Link
-                    href={`/compartidas/${shareInfo.shared.id}`}
-                    className="mt-1 inline-flex items-center gap-1 rounded-full bg-brand/10 px-2 py-0.5 text-[10px] font-medium text-brand hover:bg-brand/20"
-                  >
-                    <Users className="size-3" />
-                    Compartido · total {formatMoney(shareInfo.totalAmount, cur)}
-                    {shareInfo.othersCount > 0 &&
-                      ` · ${shareInfo.acceptedCount}/${shareInfo.othersCount} aceptaron`}
-                  </Link>
-                )}
-              </div>
-              <div className="flex flex-col items-end">
-                <div
-                  className={`text-sm font-semibold tabular-nums ${
-                    it.kind === "income"
-                      ? "text-success"
-                      : isTransfer
-                        ? "text-muted-foreground"
-                        : ""
-                  }`}
+          <div key={`card-${e.accountId}`} className="space-y-2">
+            <Card className="rounded-2xl transition hover:shadow-sm">
+              <CardContent className="py-0">
+                <button
+                  type="button"
+                  onClick={() => toggle(e.accountId)}
+                  className="flex w-full items-center gap-3 py-3.5 text-left"
+                  aria-expanded={isOpen}
                 >
-                  {isTransfer
-                    ? isExchange && otherLeg
-                      ? `${formatMoney(it.transferRole === "destination" ? otherLeg.amount : it.amount, it.transferRole === "destination" ? currencyOf(otherLeg) : cur)} → ${formatMoney(it.transferRole === "destination" ? it.amount : otherLeg.amount, it.transferRole === "destination" ? cur : currencyOf(otherLeg))}`
-                      : formatMoney(it.amount, cur)
-                    : it.kind === "income"
-                      ? `+${formatMoney(displayAmount, cur)}`
-                      : `-${formatMoney(displayAmount, cur)}`}
-                </div>
-                {isExchange && !!it.exchangeDiff && (
-                  <div
-                    className={`text-[10px] font-medium tabular-nums ${it.exchangeDiff < 0 ? "text-destructive" : "text-success"}`}
-                    title={
-                      it.quotedRate
-                        ? `Diferencia contra la cotización pactada (${formatMoney(it.quotedRate, "ARS")}): redondeo o comisión`
-                        : "Diferencia por redondeo o comisión"
-                    }
-                  >
-                    dif. {it.exchangeDiff > 0 ? "+" : "−"}
-                    {formatMoney(Math.abs(it.exchangeDiff), "ARS")}
+                  <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-muted text-foreground">
+                    <CreditCard className="size-5" />
                   </div>
-                )}
-                {showDiff && (
-                  <div className="text-[10px] text-muted-foreground line-through tabular-nums">
-                    {formatMoney(shareInfo!.totalAmount, cur)}
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="truncate text-sm font-semibold">{acc?.name ?? "Tarjeta"}</span>
+                      <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+                        {e.items.length} consumos
+                      </span>
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      Resumen · vence {formatShortDate(due)}
+                    </div>
                   </div>
-                )}
+                  <div className="text-right text-sm font-semibold tabular-nums">
+                    {(["ARS", "USD"] as const)
+                      .filter((c) => c === "ARS" || Math.abs(total[c]) > 0.009)
+                      .map((c) => (
+                        <div key={c}>-{formatMoney(Math.round(total[c] * 100) / 100, c)}</div>
+                      ))}
+                  </div>
+                  <ChevronDown
+                    className={`size-4 shrink-0 text-muted-foreground transition ${isOpen ? "rotate-180" : ""}`}
+                  />
+                </button>
+              </CardContent>
+            </Card>
+            {isOpen && (
+              <div className="ml-4 space-y-2 border-l-2 border-muted pl-3">
+                {e.items.map((it) => renderRow(it, true))}
               </div>
-              <Button
-                size="icon"
-                variant="ghost"
-                className="text-muted-foreground"
-                onClick={() => remove(it.transactionId)}
-                aria-label="Eliminar"
-              >
-                <Trash2 className="size-4" />
-              </Button>
-            </CardContent>
-          </Card>
+            )}
+          </div>
         );
       })}
     </div>

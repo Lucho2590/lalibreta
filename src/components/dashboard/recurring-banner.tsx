@@ -28,6 +28,8 @@ export function RecurringBanner() {
   const { monthKey, year, month } = useMonth();
   const [appliedIds, setAppliedIds] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
+  // Se incrementa al aplicar, para volver a leer qué fijos ya están en el mes.
+  const [refresh, setRefresh] = useState(0);
 
   useEffect(() => {
     if (!user) return;
@@ -49,7 +51,7 @@ export function RecurringBanner() {
     return () => {
       active = false;
     };
-  }, [user, monthKey, recurring]);
+  }, [user, monthKey, recurring, refresh]);
 
   const pending = recurring.filter(
     (r) => r.active && isInRange(r, year, month) && !appliedIds.has(r.id),
@@ -69,6 +71,7 @@ export function RecurringBanner() {
         month,
       );
       toast.success(`${applied} ${applied === 1 ? "fijo aplicado" : "fijos aplicados"}`);
+      setRefresh((n) => n + 1);
     } catch (err) {
       toast.error("Error al aplicar");
       console.error(err);
