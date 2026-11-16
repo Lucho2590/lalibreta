@@ -43,6 +43,7 @@ import {
 import { notify } from "../notifications";
 import { ensureOfflineContact, loadPeopleContext } from "../people";
 import { createSplit } from "../splits";
+import { applySplitRules } from "../split-rules";
 import { createPersonTransfer } from "../person-transfers";
 import { PeopleError } from "../connections";
 import { loadSession, saveSession, takeDraft } from "./sessions";
@@ -498,6 +499,11 @@ const confirmTransaction = async (waId: string, uid: string, draft: TransactionD
 
   // Dividirlo: los nuevos sin app se agregan como contactos; el server avisa a los que usan la app.
   let splitText = "";
+  if (!draft.split?.people.length && draft.kind === "expense") {
+    // Lo que se divide siempre (ej. el seguro con Orne) se divide solo.
+    const auto = await applySplitRules(uid, [txId]).catch(() => []);
+    if (auto.length) splitText = `\n👥 Lo dividí con ${auto[0].names.join(" y ")}, como siempre.`;
+  }
   if (draft.split?.people.length) {
     try {
       const participants = [];
@@ -564,6 +570,7 @@ const confirmBatch = async (waId: string, uid: string, draft: BatchDraft) => {
   ];
   if (r.failed.length > 0) lines.push(`No pude cargar: ${r.failed.join(", ")} (la cuenta o la categoría ya no existe).`);
   if (r.cardsPendingDates.length > 0) lines.push("", pendingDatesText(r.cardsPendingDates));
+  for (const a of r.splitApplied) lines.push(`👥 *${a.label}*: lo dividí con ${a.names.join(" y ")} (como siempre).`);
   await sendText(waId, lines.join("\n"));
 };
 

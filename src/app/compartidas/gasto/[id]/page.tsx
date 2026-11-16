@@ -14,7 +14,8 @@ import { Switch } from "@/components/ui/switch";
 import { CategorySelect } from "@/components/category-select";
 import { SplitSection, splitPayload, type SplitState } from "@/components/transactions/split-section";
 import { useAuth } from "@/hooks/use-auth";
-import { useCategories } from "@/hooks/use-data";
+import { useCategories, useSplitRules } from "@/hooks/use-data";
+import { normalizeMerchant } from "@/lib/domain/merchants";
 import { db } from "@/lib/firebase/client";
 import { apiPost, errorText } from "@/lib/api";
 import { participantSchedule, type Split, type SplitParticipant } from "@/lib/domain/people";
@@ -39,6 +40,7 @@ export default function SplitDetailPage({ params }: { params: Promise<{ id: stri
   const router = useRouter();
   const { user } = useAuth();
   const { data: categories } = useCategories();
+  const { data: rules } = useSplitRules();
   const [split, setSplit] = useState<Split | null>(null);
   const [missing, setMissing] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -146,6 +148,24 @@ export default function SplitDetailPage({ params }: { params: Promise<{ id: stri
   };
 
   const mySchedule = me ? participantSchedule(split, me.amount) : [];
+  const rule = isOwner ? rules.find((r) => r.key === normalizeMerchant(split.description)) : undefined;
+
+  const makeRule = () =>
+    run(
+      () =>
+        apiPost("/api/splits/rules", {
+          txId: split.ownerTxId,
+          mode: split.mode,
+          participants: split.participants.map((p) => ({
+            ref: p.ref,
+            shareType: p.shareType,
+            value: p.shareType === "percent" && p.percent != null ? p.percent : p.amount,
+          })),
+        }),
+      `Listo: los gastos de «${split.description}» se van a dividir siempre así`,
+    );
+  const removeRule = () =>
+    rule && run(() => apiPost("/api/splits/rules/delete", { id: rule.id }), "Ya no se divide solo (lo ya dividido queda)");
 
   return (
     <div className="space-y-6">
@@ -328,6 +348,15 @@ export default function SplitDetailPage({ params }: { params: Promise<{ id: stri
               </>
             ) : (
               <div className="flex flex-wrap gap-2">
+                {rule ? (
+                  <Button variant="ghost" disabled={busy} onClick={removeRule} title="Se divide solo cada vez que entra este gasto">
+                    ✓ Se divide siempre · quitar
+                  </Button>
+                ) : (
+                  <Button variant="outline" disabled={busy} onClick={makeRule} title="Los próximos (y los estimados) se dividen solos">
+                    Dividir siempre así
+                  </Button>
+                )}
                 <Button variant="outline" onClick={startEdit}>
                   Cambiar reparto
                 </Button>

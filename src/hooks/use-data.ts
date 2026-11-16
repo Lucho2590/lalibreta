@@ -147,6 +147,21 @@ export function useSplits() {
   return useCollection<Split>(q);
 }
 
+export interface SplitRuleDoc {
+  id: string;
+  key: string;
+  label: string;
+  participants: Array<{ ref: PersonRef; shareType: "percent" | "amount"; value: number; name: string }>;
+  mode: "installments" | "lump";
+}
+
+/** "Dividir siempre": comercios que se dividen solos. */
+export function useSplitRules() {
+  const { user } = useAuth();
+  const q = useMemo(() => (user ? query(collection(db, `users/${user.uid}/splitRules`)) : null), [user]);
+  return useCollection<SplitRuleDoc>(q);
+}
+
 /** Transferencias con personas donde participo. */
 export function usePersonTransfers() {
   const { user } = useAuth();

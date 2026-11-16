@@ -36,9 +36,11 @@ export interface SplitState {
   enabled: boolean;
   people: SplitPerson[];
   mode: SplitMode;
+  /** Dividir siempre así los gastos de ese comercio/servicio. */
+  always?: boolean;
 }
 
-export const emptySplit = (): SplitState => ({ enabled: false, people: [], mode: "installments" });
+export const emptySplit = (): SplitState => ({ enabled: false, people: [], mode: "installments", always: false });
 
 /** Partes listas para mandar al server (o el error para mostrar). */
 export const splitPayload = (total: number, s: SplitState) => {
@@ -61,6 +63,7 @@ export function SplitSection({
   value,
   onChange,
   alwaysOn = false,
+  alwaysLabel,
 }: {
   totalAmount: number;
   currency: Currency;
@@ -70,6 +73,8 @@ export function SplitSection({
   onChange: (s: SplitState) => void;
   /** Sin el interruptor (siempre prendido): para dividir un gasto ya cargado. */
   alwaysOn?: boolean;
+  /** Nombre del gasto: ofrece "dividir siempre así los gastos de …". */
+  alwaysLabel?: string;
 }) {
   const { user } = useAuth();
   const { data: people } = usePeople();
@@ -271,6 +276,21 @@ export function SplitSection({
                 ))}
               </div>
             </div>
+          )}
+
+          {value.people.length > 0 && alwaysLabel?.trim() && (
+            <label className="flex cursor-pointer items-start gap-2 rounded-lg bg-background p-2 text-xs">
+              <input
+                type="checkbox"
+                className="mt-0.5 size-4 accent-brand"
+                checked={!!value.always}
+                onChange={(e) => set({ always: e.target.checked })}
+              />
+              <span>
+                <span className="font-medium">Dividir siempre así</span> los gastos de «{alwaysLabel.trim()}»: los
+                próximos (y los estimados) se dividen solos.
+              </span>
+            </label>
           )}
 
           {value.people.length > 0 && totalAmount > 0 && (

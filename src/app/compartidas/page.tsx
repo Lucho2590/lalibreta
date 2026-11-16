@@ -8,7 +8,10 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { useAuth } from "@/hooks/use-auth";
-import { usePeopleLedger } from "@/hooks/use-data";
+import { usePeopleLedger, useSplitRules } from "@/hooks/use-data";
+import { apiPost, errorText } from "@/lib/api";
+import { toast } from "sonner";
+import { Repeat } from "lucide-react";
 import { PendingInbox } from "@/components/people/pending-inbox";
 import { PersonTransferForm } from "@/components/people/person-transfer-form";
 import { ledgerTotal, ledgerTotals } from "@/lib/domain/debts";
@@ -26,6 +29,16 @@ export default function CuentasConGentePage() {
   const { user } = useAuth();
   const { ledger, splits, loading } = usePeopleLedger();
   const [open, setOpen] = useState(false);
+  const { data: rules } = useSplitRules();
+  const removeRule = async (id: string, label: string) => {
+    if (!confirm(`¿Dejar de dividir siempre «${label}»? Lo que ya se dividió queda.`)) return;
+    try {
+      await apiPost("/api/splits/rules/delete", { id });
+      toast.success("Listo");
+    } catch (err) {
+      toast.error(errorText(err));
+    }
+  };
 
   const people = useMemo(
     () =>
@@ -166,6 +179,37 @@ export default function CuentasConGentePage() {
                 </Link>
               );
             })}
+          </CardContent>
+        </Card>
+      )}
+
+      {rules.length > 0 && (
+        <Card className="rounded-3xl">
+          <CardHeader className="pb-1">
+            <CardTitle className="flex items-center gap-1.5 text-sm font-semibold">
+              <Repeat className="size-4" /> Se dividen siempre
+            </CardTitle>
+            <p className="text-xs text-muted-foreground">
+              Cada vez que entra uno de estos gastos (cargado, por el bot, del resumen o estimado) se divide solo.
+            </p>
+          </CardHeader>
+          <CardContent className="divide-y">
+            {rules.map((r) => (
+              <div key={r.id} className="flex items-center gap-3 py-2.5">
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-sm font-medium">{r.label}</div>
+                  <div className="truncate text-xs text-muted-foreground">
+                    {r.participants
+                      .map((p) => `${p.name.split(" ")[0]} ${p.shareType === "percent" ? `${p.value}%` : `$${p.value}`}`)
+                      .join(" · ")}
+                    {r.mode === "lump" ? " · todo junto" : ""}
+                  </div>
+                </div>
+                <Button size="sm" variant="ghost" className="text-muted-foreground" onClick={() => removeRule(r.id, r.label)}>
+                  Quitar
+                </Button>
+              </div>
+            ))}
           </CardContent>
         </Card>
       )}

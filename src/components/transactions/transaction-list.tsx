@@ -315,7 +315,6 @@ export function TransactionList({
               it.kind === "expense" &&
               !splitInfo &&
               !it.splitId &&
-              !it.projected &&
               !isPersonAccountId(it.accountId) && (
                 <Button
                   size="icon"

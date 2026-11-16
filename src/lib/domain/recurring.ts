@@ -7,6 +7,7 @@ import {
 import { db } from "@/lib/firebase/client";
 import type { Account, RecurringExpense } from "./types";
 import { monthKey } from "./types";
+import { apiPost } from "@/lib/api";
 import {
   createTransactionWithInstallments,
   installmentsCollectionPath,
@@ -64,7 +65,7 @@ export const applyRecurringToMonth = async (
 
   const purchaseDate = buildBillingDate(year, month, recurring.dayOfMonth);
 
-  await createTransactionWithInstallments(uid, account, {
+  const txId = await createTransactionWithInstallments(uid, account, {
     accountId: recurring.accountId,
     categoryId: recurring.categoryId,
     description: recurring.name,
@@ -76,6 +77,10 @@ export const applyRecurringToMonth = async (
     recurringId: recurring.id,
     currency: recurring.currency ?? "ARS",
   });
+  // Si es algo que se divide siempre (ej. el alquiler con Orne), se divide solo.
+  if (recurring.kind === "expense") {
+    await apiPost("/api/splits/auto", { txIds: [txId] }).catch((err) => console.warn("[splits/auto]", err));
+  }
   return "created";
 };
 
