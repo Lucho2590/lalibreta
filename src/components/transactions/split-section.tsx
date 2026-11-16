@@ -60,6 +60,7 @@ export function SplitSection({
   installments,
   value,
   onChange,
+  alwaysOn = false,
 }: {
   totalAmount: number;
   currency: Currency;
@@ -67,6 +68,8 @@ export function SplitSection({
   installments: number;
   value: SplitState;
   onChange: (s: SplitState) => void;
+  /** Sin el interruptor (siempre prendido): para dividir un gasto ya cargado. */
+  alwaysOn?: boolean;
 }) {
   const { user } = useAuth();
   const { data: people } = usePeople();
@@ -119,17 +122,19 @@ export function SplitSection({
 
   return (
     <div className="space-y-3 rounded-xl border bg-muted/30 p-3">
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <Label htmlFor="split-on" className="flex items-center gap-1.5 text-sm">
-            <Users className="size-4" /> Dividirlo con otras personas
-          </Label>
-          <p className="text-xs text-muted-foreground">Le asignás una parte (% o monto) a cada uno.</p>
+      {!alwaysOn && (
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <Label htmlFor="split-on" className="flex items-center gap-1.5 text-sm">
+              <Users className="size-4" /> Dividirlo con otras personas
+            </Label>
+            <p className="text-xs text-muted-foreground">Le asignás una parte (% o monto) a cada uno.</p>
+          </div>
+          <Switch id="split-on" checked={value.enabled} onCheckedChange={(v) => set({ enabled: v })} />
         </div>
-        <Switch id="split-on" checked={value.enabled} onCheckedChange={(v) => set({ enabled: v })} />
-      </div>
+      )}
 
-      {value.enabled && (
+      {(alwaysOn || value.enabled) && (
         <>
           {value.people.map((p, i) => (
             <div key={p.ref} className="flex items-center gap-2 rounded-lg bg-background p-2">
