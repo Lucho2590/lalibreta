@@ -46,20 +46,43 @@ type FormValues = z.input<typeof schema>;
 
 const INSTALLMENT_OPTIONS = [1, 3, 6, 9, 12, 18, 24];
 
+/** Valores para abrir el formulario precargado (ej. el gasto de una actividad de la agenda). */
+export interface TransactionFormInitial {
+  description?: string;
+  /** "YYYY-MM-DD" */
+  date?: string;
+  amount?: number | null;
+  currency?: Currency | null;
+  /** Con quiénes dividirlo (arranca con "Compartirlo" prendido). */
+  shareWith?: ShareSplit[];
+}
+
+export interface SavedTransactionInfo {
+  transactionId: string;
+  amount: number;
+  currency: Currency;
+  sharedExpenseId: string | null;
+}
+
 export function TransactionForm({
   defaultKind = "expense",
+  initial,
   onSubmitted,
+  onSaved,
 }: {
   defaultKind?: TransactionKind;
+  initial?: TransactionFormInitial;
   onSubmitted?: () => void;
+  /** Se llama con el gasto/ingreso guardado (no con transferencias). */
+  onSaved?: (info: SavedTransactionInfo) => void | Promise<void>;
 }) {
   const { user } = useAuth();
   const { data: accounts } = useAccounts();
   const { data: categories } = useCategories();
   const [submitting, setSubmitting] = useState(false);
-  const [shareEnabled, setShareEnabled] = useState(false);
-  const [shareSplits, setShareSplits] = useState<ShareSplit[]>([]);
-  const [currency, setCurrency] = useState<Currency>("ARS");
+  const [shareEnabled, setShareEnabled] = useState(!!initial?.shareWith?.length);
+  const [shareSplits, setShareSplits] = useState<ShareSplit[]>(initial?.shareWith ?? []);
+  const [currency, setCurrency] = useState<Currency>(initial?.currency ?? "ARS");
   const [toCurrency, setToCurrency] = useState<Currency>("ARS");
   const [rateInput, setRateInput] = useState("");
   const usdRate = useUsdRate();
@@ -70,12 +93,12 @@ export function TransactionForm({
     resolver,
     defaultValues: {
       kind: defaultKind,
-      amount: 0,
+      amount: initial?.amount && initial.amount > 0 ? initial.amount : 0,
       accountId: "",
       toAccountId: "",
       categoryId: "",
-      date: today,
-      description: "",
+      date: initial?.date ?? today,
+      description: initial?.description ?? "",
       installments: 1,
       cardClosedAtPurchase: false,
     },
@@ -202,6 +225,7 @@ export function TransactionForm({
           currency: effCurrency,
         });
         toast.success(values.kind === "income" ? "Ingreso guardado" : "Gasto guardado");
+        let sharedExpenseId: string | null = null;
 
         // Si activó "Compartirlo", crear el SharedExpense + invitar.
         const sumOthers = shareSplits.reduce((s, x) => s + x.percentage, 0);
@@ -240,6 +264,7 @@ export function TransactionForm({
               ownerTransactionId: txId,
               participants,
             });
+            sharedExpenseId = sharedId;
             toast.success(
               `Gasto compartido con ${shareSplits.length} ${
                 shareSplits.length === 1 ? "persona" : "personas"
@@ -298,6 +323,11 @@ export function TransactionForm({
             console.error(err);
             toast.error("Gasto guardado pero falló crear el compartido");
           }
+        }
+        try {
+          await onSaved?.({ transactionId: txId, amount: values.amount, currency: effCurrency, sharedExpenseId });
+        } catch (err) {
+          console.error("[TransactionForm] onSaved", err);
         }
       }
 

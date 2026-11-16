@@ -31,6 +31,29 @@ service cloud.firestore {
         && resource.data.ownerUid == request.auth.uid;
     }
 
+    // Agenda. La ven el dueño y los participantes (por uid, o por email si
+    // la invitación llegó antes de que tuvieran cuenta). Desde el cliente
+    // solo se crea (el dueño) y cada uno vincula/desvincula SU gasto
+    // (expenses.{suUid}). Editar, cancelar y aceptar/rechazar pasan por
+    // /api/activities/* para avisarles a los invitados.
+    match /activities/{id} {
+      allow read: if request.auth != null && (
+        resource.data.ownerUid == request.auth.uid ||
+        request.auth.uid in resource.data.participantUids ||
+        (request.auth.token.email != null &&
+          request.auth.token.email.lower() in resource.data.participantEmails)
+      );
+      allow create: if request.auth != null
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.auth.uid in request.resource.data.participantUids;
+      allow update: if request.auth != null
+        && request.auth.uid in resource.data.participantUids
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['expenses', 'updatedAt'])
+        && request.resource.data.get('expenses', {}).diff(resource.data.get('expenses', {}))
+             .affectedKeys().hasOnly([request.auth.uid]);
+      allow delete: if false;
+    }
+
     // Compartir cuentas (extensión). Lectura para owner y grantee.
     // Toda mutación pasa por route handlers con Admin SDK.
     match /accountShares/{id} {

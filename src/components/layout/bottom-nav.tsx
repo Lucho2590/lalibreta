@@ -5,6 +5,7 @@ import { useState } from "react";
 import { usePathname } from "next/navigation";
 import {
   Bell,
+  CalendarDays,
   ClipboardCheck,
   CreditCard,
   FileText,
@@ -33,6 +34,7 @@ const items = [
 
 /** Todo lo que en la compu está en la barra lateral y no entra abajo. */
 const moreItems = [
+  { href: "/agenda", label: "Agenda", icon: CalendarDays },
   { href: "/ingresos", label: "Ingresos", icon: Wallet },
   { href: "/fijos", label: "Fijos", icon: Repeat },
   { href: "/compartidas", label: "Compartidas", icon: Handshake },

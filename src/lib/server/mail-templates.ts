@@ -219,3 +219,76 @@ export const renderShareResponseEmail = (p: ShareResponseEmailParams) => {
   const text = `${p.responderName} ${verb} el gasto compartido (${formatARS(p.totalAmount)}). Su parte: ${formatARS(p.responderAmount)}. Abrí: ${url}`;
   return { subject, html, text };
 };
+
+export interface ActivityInviteEmailParams {
+  ownerName: string;
+  ownerEmail: string;
+  title: string;
+  /** "Sábado 22 de noviembre a las 20:00" */
+  when: string;
+  location: string | null;
+  notes: string | null;
+  estimated: string | null;
+  appUrl: string;
+}
+
+const escapeHtml = (s: string) =>
+  s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+/** Invitación a una actividad de la agenda para alguien que todavía no tiene cuenta. */
+export const renderActivityInviteEmail = (p: ActivityInviteEmailParams) => {
+  const url = `${p.appUrl}/login?from=${encodeURIComponent("/agenda")}`;
+  const owner = escapeHtml(p.ownerName);
+  const title = escapeHtml(p.title);
+  const subject = `${p.ownerName} te invitó: ${p.title}`;
+  const html = card(`
+    <h2 style="margin: 0 0 12px; font-size: 20px;">Te invitaron a algo</h2>
+    <p style="margin: 0 0 16px; font-size: 14px; line-height: 1.5; color: #52525b;">
+      <strong>${owner}</strong> (${escapeHtml(p.ownerEmail)}) te sumó a una actividad de su agenda.
+    </p>
+    <div style="background: #f4f4f5; border-radius: 16px; padding: 16px; margin-bottom: 20px;">
+      <div style="font-size: 20px; font-weight: 700;">${title}</div>
+      <div style="font-size: 14px; color: #52525b; margin-top: 6px;">📅 ${escapeHtml(p.when)}</div>
+      ${p.location ? `<div style="font-size: 14px; color: #52525b; margin-top: 4px;">📍 ${escapeHtml(p.location)}</div>` : ""}
+      ${p.estimated ? `<div style="font-size: 14px; color: #52525b; margin-top: 4px;">💸 Gasto estimado: ${escapeHtml(p.estimated)}</div>` : ""}
+      ${p.notes ? `<div style="font-size: 13px; color: #71717a; margin-top: 10px;">${escapeHtml(p.notes)}</div>` : ""}
+    </div>
+    <p style="margin: 0 0 16px; font-size: 14px; color: #52525b;">
+      Creá tu cuenta en La Libreta con este mail para verla en tu agenda, decir si vas y cargar lo que gastes.
+    </p>
+    ${button(url, "Ver la invitación")}
+  `);
+  const text = [
+    `${p.ownerName} (${p.ownerEmail}) te sumó a una actividad de su agenda.`,
+    ``,
+    `${p.title} — ${p.when}`,
+    ...(p.location ? [`Lugar: ${p.location}`] : []),
+    ...(p.estimated ? [`Gasto estimado: ${p.estimated}`] : []),
+    ...(p.notes ? [``, p.notes] : []),
+    ``,
+    `Abrí: ${url}`,
+  ].join("\n");
+  return { subject, html, text };
+};
+
+export interface ActivityNoticeEmailParams {
+  subject: string;
+  heading: string;
+  /** Renglones de texto plano (se escapan). */
+  lines: string[];
+  appUrl: string;
+}
+
+/** Aviso a un invitado sin cuenta: se canceló o cambió una actividad. */
+export const renderActivityNoticeEmail = (p: ActivityNoticeEmailParams) => {
+  const url = `${p.appUrl}/login?from=${encodeURIComponent("/agenda")}`;
+  const html = card(`
+    <h2 style="margin: 0 0 12px; font-size: 20px;">${escapeHtml(p.heading)}</h2>
+    ${p.lines
+      .map((l) => `<p style="margin: 0 0 10px; font-size: 14px; line-height: 1.5; color: #52525b;">${escapeHtml(l)}</p>`)
+      .join("")}
+    <div style="margin-top: 16px;">${button(url, "Ver la agenda")}</div>
+  `);
+  const text = [p.heading, "", ...p.lines, "", `Abrí: ${url}`].join("\n");
+  return { subject: p.subject, html, text };
+};

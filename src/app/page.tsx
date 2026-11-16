@@ -33,6 +33,7 @@ import { formatCurrency, formatMoney, formatMonth, formatShortDate } from "@/lib
 import { summarizeCardMonth } from "@/lib/domain/card-summary";
 import { RecurringBanner } from "@/components/dashboard/recurring-banner";
 import { ApprovalsBanner } from "@/components/dashboard/approvals-banner";
+import { TodayAgenda } from "@/components/dashboard/today-agenda";
 import { Onboarding } from "@/components/dashboard/onboarding";
 import { CategoryIcon } from "@/components/category-icon";
 import { AccountIcon, defaultIconForType } from "@/components/account-icon";
@@ -114,6 +115,7 @@ export default function Dashboard() {
         <>
           <ApprovalsBanner />
           <RecurringBanner />
+          <TodayAgenda />
 
           <section className="grid gap-4 md:grid-cols-3">
             <div className="md:col-span-2 overflow-hidden rounded-3xl bg-brand-grad p-6 text-white shadow-lg">

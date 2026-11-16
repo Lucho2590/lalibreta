@@ -7,6 +7,11 @@ export type NotificationKind =
   | "card-due"
   | "card-close"
   | "recurring-due"
+  | "agenda-today"
+  | "agenda-invite"
+  | "agenda-response"
+  | "agenda-changed"
+  | "agenda-cancelled"
   | "test";
 
 export interface AppNotification {
@@ -31,6 +36,8 @@ export interface NotificationPrefs {
   recurring: boolean;
   /** Avisar movimientos en cuentas compartidas. */
   shared: boolean;
+  /** A la mañana, lo que hay en la agenda del día. */
+  agenda: boolean;
 }
 
 export const DEFAULT_NOTIFICATION_PREFS: NotificationPrefs = {
@@ -39,6 +46,7 @@ export const DEFAULT_NOTIFICATION_PREFS: NotificationPrefs = {
   cardClose: false,
   recurring: true,
   shared: true,
+  agenda: true,
 };
 
 export const withDefaultPrefs = (p: Partial<NotificationPrefs> | null | undefined): NotificationPrefs => ({

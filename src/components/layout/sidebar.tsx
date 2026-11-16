@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   Bell,
+  CalendarDays,
   ClipboardCheck,
   CreditCard,
   FileText,
@@ -30,6 +31,7 @@ const navItems = [
   { href: "/", label: "Inicio", icon: Home },
   { href: "/movimientos", label: "Movimientos", icon: List },
   { href: "/cuentas", label: "Cuentas", icon: CreditCard },
+  { href: "/agenda", label: "Agenda", icon: CalendarDays },
   { href: "/resumenes", label: "Importar resumen", icon: FileText },
   { href: "/fijos", label: "Fijos", icon: Repeat },
   { href: "/ingresos", label: "Ingresos", icon: Wallet },

@@ -7,6 +7,8 @@ import {
   BellOff,
   BellRing,
   CalendarClock,
+  CalendarDays,
+  CalendarX,
   CheckCheck,
   CreditCard,
   Download,
@@ -401,6 +403,13 @@ function PrefsCard() {
           onChange={(v) => save({ recurring: v })}
         />
         <PrefRow
+          icon={CalendarDays}
+          title="Agenda del día"
+          detail="A la mañana, las actividades que tenés para hoy."
+          checked={prefs.agenda}
+          onChange={(v) => save({ agenda: v })}
+        />
+        <PrefRow
           icon={Handshake}
           title="Cuentas compartidas"
           detail="Cuando alguien carga algo en una cuenta tuya."
@@ -455,6 +464,11 @@ const KIND_ICON: Record<NotificationKind, React.ComponentType<{ className?: stri
   "card-due": CalendarClock,
   "card-close": CreditCard,
   "recurring-due": Repeat,
+  "agenda-today": CalendarDays,
+  "agenda-invite": CalendarDays,
+  "agenda-response": CalendarDays,
+  "agenda-changed": CalendarDays,
+  "agenda-cancelled": CalendarX,
   test: Sparkles,
 };
 
