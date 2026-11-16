@@ -270,6 +270,12 @@ function MovementForm({
             participants: payload.participants,
           });
           splitId = r.id;
+          // "Dividir siempre así": regla para los próximos de ese comercio.
+          if (split.always) {
+            await apiPost("/api/splits/rules", { txId, mode: split.mode, participants: payload.participants }).catch((err) =>
+              toast.error(`No se pudo guardar "dividir siempre": ${errorText(err)}`),
+            );
+          }
           const apps = split.people.filter((p) => p.isApp).length;
           toast.success(
             apps > 0
@@ -280,6 +286,13 @@ function MovementForm({
         } catch (err) {
           toast.error(`El gasto se guardó, pero no se pudo dividir: ${errorText(err)}`);
         }
+      } else if (values.kind === "expense") {
+        // Si es de algo que se divide siempre (ej. el seguro con Orne), se divide solo.
+        apiPost<{ applied: Array<{ label: string; names: string[] }> }>("/api/splits/auto", { txIds: [txId] })
+          .then((r) => {
+            if (r.applied[0]) toast.success(`Dividido con ${r.applied[0].names.join(" y ")}, como siempre`);
+          })
+          .catch((err) => console.warn("[splits/auto]", err));
       }
       try {
         await onSaved?.({ transactionId: txId, amount: values.amount, currency: effCurrency, splitId });
@@ -463,6 +476,7 @@ function MovementForm({
           installments={isCredit ? installments : 1}
           value={split}
           onChange={setSplit}
+          alwaysLabel={form.watch("description")}
         />
       )}
 

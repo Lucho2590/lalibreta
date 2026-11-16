@@ -12,6 +12,8 @@ import { saveStatementAdmin } from "./statements-admin";
 import { loadAccounts, loadCategories, toServerAccount } from "./queries-admin";
 import { dateFromYMD, isYMD } from "./time";
 import { normalizeMerchant } from "@/lib/domain/merchants";
+import { activeSplitIdsForTx } from "./splits";
+import { applySplitRules, relinkProjectedSplits, type RemovedProjected } from "./split-rules";
 import {
   isCreditLine,
   isPaymentLine,
@@ -414,7 +416,7 @@ export const importStatement = async (uid: string, payload: ImportPayload): Prom
   // 3. Los estimados de este resumen se reemplazan por lo real (y los del
   //    siguiente se vuelven a proyectar desde este).
   const nextPeriod = addMonthsKey(period, 1);
-  await deleteProjected(uid, accountId, [period, nextPeriod]);
+  const removedProjected = await deleteProjected(uid, accountId, [period, nextPeriod]);
 
   // 4. Consumos elegidos (con la tarjeta ya actualizada).
   accounts = await loadAccounts(uid);
@@ -439,7 +441,8 @@ export const importStatement = async (uid: string, payload: ImportPayload): Prom
       learned.set(line.merchantKey, { categoryId: line.categoryId, sample: line.description });
     }
   }
-  const created = await loadStatementLines(uid, account, period, payload.closingDate, toLoad, categories);
+  const loaded = await loadStatementLines(uid, account, period, payload.closingDate, toLoad, categories);
+  const created = loaded.created;
 
   // 5. Suscripciones: se estiman en el resumen siguiente. Van las que se
   //    cargaron y las que ya estaban cargadas (no las que se desmarcaron).
@@ -457,7 +460,14 @@ export const importStatement = async (uid: string, payload: ImportPayload): Prom
       date: line.date ?? payload.closingDate,
     });
   }
-  const projected = await projectSubscriptions(uid, account, accountId, nextPeriod, subscriptions);
+  const projectedIds = await projectSubscriptions(uid, account, accountId, nextPeriod, subscriptions);
+  const projected = projectedIds.length;
+
+  // Gastos divididos: los repartos de los estimados pasan al gasto real (o al
+  // estimado nuevo), y lo que se divide siempre se divide solo.
+  const newIds = [...loaded.ids, ...projectedIds];
+  const relinked = await relinkProjectedSplits(uid, removedProjected, newIds);
+  await applySplitRules(uid, newIds.filter((id) => !relinked.has(id)));
 
   // 6. Aprender: comercio → categoría.
   const rulesCol = db.collection(`users/${uid}/categoryRules`);
@@ -507,7 +517,7 @@ export const loadStatementLines = async (
   closingDate: string,
   lines: LoadableLine[],
   categories: Array<{ id: string; name: string; kind: string }>,
-): Promise<number> => {
+): Promise<{ created: number; ids: string[] }> => {
   const catKind = new Map(categories.map((c) => [c.id, c.kind]));
   const fallback =
     categories.find((c) => c.kind === "expense" && /^otro/i.test(c.name))?.id ??
@@ -515,6 +525,7 @@ export const loadStatementLines = async (
   const taxCat = categories.find((c) => c.kind === "expense" && /impuest|comisi/i.test(c.name))?.id;
 
   let created = 0;
+  const ids: string[] = [];
   for (const line of lines) {
     if (isPaymentLine(line) || line.amount === 0) continue;
     const kind = isCreditLine(line) ? "income" : "expense";
@@ -544,20 +555,24 @@ export const loadStatementLines = async (
 
     if (kind === "expense" && k && n && n > 1) {
       // Compra completa en N cuotas: la cuota k cae en este resumen.
-      await createTransactionAdmin({
-        ...base,
-        totalAmount: round2(amount * n),
-        kind: "expense",
-        installments: n,
-        forceFirstBillingMonth: addMonthsKey(period, -(k - 1)),
-      });
+      ids.push(
+        await createTransactionAdmin({
+          ...base,
+          totalAmount: round2(amount * n),
+          kind: "expense",
+          installments: n,
+          forceFirstBillingMonth: addMonthsKey(period, -(k - 1)),
+        }),
+      );
     } else {
       // Gastos y reintegros quedan en el resumen que se está importando.
-      await createTransactionAdmin({ ...base, totalAmount: amount, kind, installments: 1, forceFirstBillingMonth: period });
+      ids.push(
+        await createTransactionAdmin({ ...base, totalAmount: amount, kind, installments: 1, forceFirstBillingMonth: period }),
+      );
     }
     created += 1;
   }
-  return created;
+  return { created, ids };
 };
 
 // === Suscripciones estimadas ===
@@ -571,9 +586,13 @@ export interface ProjectedSubscription {
   date: string;
 }
 
-/** Borra los gastos estimados de una tarjeta en esos resúmenes (por mes de cierre). */
-export const deleteProjected = async (uid: string, accountId: string, periods: string[]) => {
+/**
+ * Borra los gastos estimados de una tarjeta en esos resúmenes (por mes de
+ * cierre). Devuelve los borrados con sus repartos (para pasarlos al gasto real).
+ */
+export const deleteProjected = async (uid: string, accountId: string, periods: string[]): Promise<RemovedProjected[]> => {
   const db = adminDb();
+  const removed: RemovedProjected[] = [];
   const txs = await db
     .collection(`users/${uid}/transactions`)
     .where("accountId", "==", accountId)
@@ -581,23 +600,33 @@ export const deleteProjected = async (uid: string, accountId: string, periods: s
     .get();
   for (const tx of txs.docs) {
     if (!periods.includes(String(tx.data().firstBillingMonth))) continue;
+    const t = tx.data();
+    removed.push({
+      txId: tx.id,
+      description: String(t.description ?? ""),
+      currency: String(t.currency ?? "ARS"),
+      firstBillingMonth: String(t.firstBillingMonth ?? ""),
+      amount: Number(t.totalAmount ?? 0),
+      splitIds: await activeSplitIdsForTx(uid, tx.id),
+    });
     const ins = await db.collection(`users/${uid}/installments`).where("transactionId", "==", tx.id).get();
     const batch = db.batch();
     ins.docs.forEach((d) => batch.delete(d.ref));
     batch.delete(tx.ref);
     await batch.commit();
   }
+  return removed;
 };
 
-/** Crea las suscripciones como gastos estimados en el resumen `period`. */
+/** Crea las suscripciones como gastos estimados en el resumen `period`. Devuelve los ids. */
 export const projectSubscriptions = async (
   uid: string,
   account: ReturnType<typeof toServerAccount>,
   accountId: string,
   period: string,
   subs: ProjectedSubscription[],
-): Promise<number> => {
-  let n = 0;
+): Promise<string[]> => {
+  const ids: string[] = [];
   for (const sub of subs) {
     // Mismo día, un mes después (si el mes es más corto, el último día).
     const [y, m, d] = sub.date.split("-").map(Number);
@@ -605,23 +634,24 @@ export const projectSubscriptions = async (
     const nm = m === 12 ? 1 : m + 1;
     const lastDay = new Date(Date.UTC(ny, nm, 0)).getUTCDate();
     const next = `${ny}-${String(nm).padStart(2, "0")}-${String(Math.min(d, lastDay)).padStart(2, "0")}`;
-    await createTransactionAdmin({
-      ownerUid: uid,
-      account,
-      accountId,
-      categoryId: sub.categoryId,
-      description: sub.description,
-      totalAmount: sub.amount,
-      purchaseDate: dateFromYMD(next),
-      kind: "expense",
-      installments: 1,
-      currency: sub.currency,
-      forceFirstBillingMonth: period,
-      projected: true,
-    });
-    n += 1;
+    ids.push(
+      await createTransactionAdmin({
+        ownerUid: uid,
+        account,
+        accountId,
+        categoryId: sub.categoryId,
+        description: sub.description,
+        totalAmount: sub.amount,
+        purchaseDate: dateFromYMD(next),
+        kind: "expense",
+        installments: 1,
+        currency: sub.currency,
+        forceFirstBillingMonth: period,
+        projected: true,
+      }),
+    );
   }
-  return n;
+  return ids;
 };
 
 // === Resumen leído por WhatsApp: carga del detalle ===
@@ -683,7 +713,7 @@ export const loadStatementDraftLines = async (
 
   // Si un resumen anterior se importó desde la web, las suscripciones de este
   // quedaron estimadas: se reemplazan por lo real.
-  await deleteProjected(uid, accountId, [period]);
+  const removedProjected = await deleteProjected(uid, accountId, [period]);
   await markDuplicates(uid, accountId, period, analyzed);
 
   const catKind = new Map(categories.map((c) => [c.id, c.kind]));
@@ -712,6 +742,8 @@ export const loadStatementDraftLines = async (
     });
   }
 
-  const created = await loadStatementLines(uid, toServerAccount(card), period, draft.closingDate, toLoad, categories);
-  return { created, duplicates: analyzed.filter((l) => l.duplicateOf).length };
+  const loaded = await loadStatementLines(uid, toServerAccount(card), period, draft.closingDate, toLoad, categories);
+  const relinked = await relinkProjectedSplits(uid, removedProjected, loaded.ids);
+  await applySplitRules(uid, loaded.ids.filter((id) => !relinked.has(id)));
+  return { created: loaded.created, duplicates: analyzed.filter((l) => l.duplicateOf).length };
 };

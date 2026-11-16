@@ -471,3 +471,77 @@ export const loadSplitsFor = async (uid: string): Promise<Split[]> =>
   (await col().where("uids", "array-contains", uid).get()).docs.map(toSplit);
 
 export const splitShareText = shareText;
+
+/**
+ * El gasto de un reparto se reemplazó por otro (un estimado por el real del
+ * resumen, o el estimado del mes siguiente): el reparto pasa al gasto nuevo.
+ * Las partes en % se recalculan con el monto nuevo; las de monto fijo quedan
+ * (si no entran, se achican en proporción). Lo aceptado sigue aceptado y a
+ * los que les cambió la parte se les avisa.
+ */
+export const relinkSplit = async (ownerUid: string, splitId: string, newTxId: string): Promise<void> => {
+  const ref = col().doc(splitId);
+  const snap = await ref.get();
+  if (!snap.exists) return;
+  const split = toSplit(snap);
+  if (split.ownerUid !== ownerUid || split.status !== "active") return;
+  const tx = await loadOwnerExpense(ownerUid, newTxId);
+  const pct = split.participants.map((p) => (p.shareType === "percent" ? (p.percent ?? 0) : null));
+  const fixed = split.participants.reduce((s, p) => s + (p.shareType === "amount" ? p.amount : 0), 0);
+  const scale = fixed > tx.totalAmount && fixed > 0 ? tx.totalAmount / fixed : 1;
+  const participants = split.participants.map((p, i) => ({
+    ...p,
+    amount:
+      pct[i] != null
+        ? Math.round(((tx.totalAmount * pct[i]!) / 100) * 100) / 100
+        : Math.round(p.amount * scale * 100) / 100,
+  }));
+  const updated: Split = {
+    ...split,
+    ownerTxId: newTxId,
+    totalAmount: tx.totalAmount,
+    schedule: tx.schedule,
+    installments: tx.installments,
+    participants,
+  };
+  await ref.update({
+    ownerTxId: newTxId,
+    totalAmount: tx.totalAmount,
+    schedule: tx.schedule,
+    installments: tx.installments,
+    participants,
+    updatedAt: FieldValue.serverTimestamp(),
+  });
+  for (const [i, p] of participants.entries()) {
+    if (!p.uid) continue;
+    const prev = split.participants[i];
+    if (p.participantTxId && p.categoryId) {
+      await removeParticipantBooks(p.uid, split.id);
+      const batch = adminDb().batch();
+      await writeParticipantBooks(batch, p.uid, updated, p, p.categoryId);
+      await batch.commit();
+    }
+    if (Math.abs(prev.amount - p.amount) >= 0.01 && (p.status === "pending" || p.status === "accepted")) {
+      await notify(p.uid, {
+        kind: "split-request",
+        title: `Cambió el monto de ${split.description}`,
+        body: `Llegó el monto real: ahora te toca ${shareText(updated, p.amount)} (antes ${formatMoney(prev.amount, split.currency)}).`,
+        url: `/compartidas/gasto/${split.id}`,
+        dedupeKey: `split-relink-${split.id}-${p.uid}-${newTxId}`,
+      });
+    }
+  }
+};
+
+/** Repartos activos de unos gastos del dueño (por id de gasto). */
+export const activeSplitIdsForTx = async (ownerUid: string, txId: string): Promise<string[]> =>
+  (await col().where("ownerTxId", "==", txId).get()).docs
+    .filter((d) => d.data().ownerUid === ownerUid && d.data().status === "active")
+    .map((d) => d.id);
+
+/** Valida las personas de una regla "dividir siempre" contra un gasto de ejemplo. */
+export const checkSplitParticipants = async (ownerUid: string, txId: string, inputs: ParticipantInput[]) => {
+  const tx = await loadOwnerExpense(ownerUid, txId);
+  const participants = await buildParticipants(ownerUid, tx.totalAmount, inputs);
+  return { tx, participants };
+};

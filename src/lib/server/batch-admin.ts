@@ -3,6 +3,7 @@ import "server-only";
 import type { Timestamp } from "firebase-admin/firestore";
 import { adminDb } from "./firebase-admin";
 import { createTransactionAdmin } from "./transactions-admin";
+import { applySplitRules } from "./split-rules";
 import { loadAccounts, loadCategories, toServerAccount } from "./queries-admin";
 import { dateFromYMD } from "./time";
 import type { BatchDraft, BatchDraftLine } from "./whatsapp/types";
@@ -88,6 +89,8 @@ export interface BatchSaveResult {
   totals: { ARS: number; USD: number };
   /** Tarjetas usadas que todavía no tienen días de cierre/vencimiento. */
   cardsPendingDates: string[];
+  /** Gastos que se dividieron solos ("dividir siempre"). */
+  splitApplied: Array<{ label: string; names: string[] }>;
 }
 
 export const saveBatchAdmin = async (uid: string, draft: BatchDraft): Promise<BatchSaveResult> => {
@@ -96,7 +99,8 @@ export const saveBatchAdmin = async (uid: string, draft: BatchDraft): Promise<Ba
   const accById = new Map(accounts.filter((a) => a.active).map((a) => [a.id, a]));
   const catById = new Map(categories.map((c) => [c.id, c]));
 
-  const result: BatchSaveResult = { created: 0, failed: [], totals: { ARS: 0, USD: 0 }, cardsPendingDates: [] };
+  const result: BatchSaveResult = { created: 0, failed: [], totals: { ARS: 0, USD: 0 }, cardsPendingDates: [], splitApplied: [] };
+  const ids: string[] = [];
   const pending = new Set<string>();
   for (const line of draft.lines) {
     const account = accById.get(line.accountId);
@@ -109,7 +113,7 @@ export const saveBatchAdmin = async (uid: string, draft: BatchDraft): Promise<Ba
     }
     const isCreditExpense = account.type === "credit" && line.kind === "expense";
     const n = isCreditExpense && line.installmentsTotal && line.installmentsTotal > 1 ? line.installmentsTotal : 1;
-    await createTransactionAdmin({
+    const txId = await createTransactionAdmin({
       ownerUid: uid,
       account: toServerAccount(account),
       accountId: account.id,
@@ -122,9 +126,11 @@ export const saveBatchAdmin = async (uid: string, draft: BatchDraft): Promise<Ba
       currency: line.currency,
     });
     result.created += 1;
+    ids.push(txId);
     result.totals[line.currency] = round2(result.totals[line.currency] + (line.kind === "expense" ? line.amount : -line.amount));
     if (account.type === "credit" && (!account.defaultClosingDay || !account.defaultDueDay)) pending.add(account.name);
   }
   result.cardsPendingDates = [...pending];
+  result.splitApplied = (await applySplitRules(uid, ids)).map(({ label, names }) => ({ label, names }));
   return result;
 };

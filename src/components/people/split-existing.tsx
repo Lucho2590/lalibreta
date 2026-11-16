@@ -25,6 +25,14 @@ export function SplitExistingSheet({ item, onClose }: { item: Installment | null
     setBusy(true);
     try {
       await apiPost("/api/splits", { txId: item.transactionId, mode: split.mode, participants: payload.participants });
+      if (split.always) {
+        const r = await apiPost<{ applied: number }>("/api/splits/rules", {
+          txId: item.transactionId,
+          mode: split.mode,
+          participants: payload.participants,
+        });
+        if (r.applied > 0) toast.success(`También se dividieron ${r.applied} ${r.applied === 1 ? "gasto" : "gastos"} más de «${item.description}»`);
+      }
       const apps = split.people.filter((p) => p.isApp).length;
       toast.success(apps > 0 ? "Dividido: les llegó para aceptar" : "Dividido: queda anotado lo que te deben");
       onClose();
@@ -53,6 +61,7 @@ export function SplitExistingSheet({ item, onClose }: { item: Installment | null
             value={split}
             onChange={setSplit}
             alwaysOn
+            alwaysLabel={item.description}
           />
           <Button className="h-12 w-full bg-brand-grad text-white hover:opacity-95" disabled={busy} onClick={save}>
             {busy ? "Guardando…" : "Dividir"}
