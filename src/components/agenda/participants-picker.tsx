@@ -32,7 +32,9 @@ export function ParticipantsPicker({
   /** El propio usuario: no se puede invitar a sí mismo. */
   excludeEmail?: string | null;
 }) {
-  const { data: contacts } = useContacts();
+  const { data: allContacts } = useContacts();
+  // La agenda invita por email: solo los contactos que tienen email.
+  const contacts = allContacts.filter((c): c is typeof c & { email: string } => !!c.email);
   const [email, setEmail] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
@@ -120,7 +122,7 @@ export function ParticipantsPicker({
           <SelectTrigger className="h-10 w-full">
             <SelectValue
               placeholder="Sumar de mis contactos"
-              items={available.map((c) => ({ value: c.id, label: c.displayName || c.email }))}
+              items={available.map((c) => ({ value: c.id, label: c.displayName || c.email || "Contacto" }))}
             />
           </SelectTrigger>
           <SelectContent>

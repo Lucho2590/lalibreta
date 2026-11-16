@@ -35,7 +35,7 @@ const navItems = [
   { href: "/resumenes", label: "Importar resumen", icon: FileText },
   { href: "/fijos", label: "Fijos", icon: Repeat },
   { href: "/ingresos", label: "Ingresos", icon: Wallet },
-  { href: "/compartidas", label: "Compartidas", icon: Handshake },
+  { href: "/compartidas", label: "Cuentas con gente", icon: Handshake },
   { href: "/aprobaciones", label: "Aprobaciones", icon: ClipboardCheck },
   { href: "/contactos", label: "Contactos", icon: Users },
   { href: "/categorias", label: "Categorías", icon: Tag },

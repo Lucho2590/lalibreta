@@ -13,11 +13,16 @@ import {
   CreditCard,
   Download,
   Handshake,
+  HandCoins,
+  Inbox,
   Loader2,
   Repeat,
   Share,
   SquarePlus,
   Sparkles,
+  UserPlus,
+  Users,
+  ArrowLeftRight,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -411,15 +416,53 @@ function PrefsCard() {
         />
         <PrefRow
           icon={Handshake}
-          title="Cuentas compartidas"
-          detail="Cuando alguien carga algo en una cuenta tuya."
+          title="Cuentas compartidas y gente"
+          detail="Cuando alguien carga algo en una cuenta tuya, o responde un gasto o una transferencia que le mandaste."
           checked={prefs.shared}
           onChange={(v) => save({ shared: v })}
+        />
+        <PrefRow
+          icon={HandCoins}
+          title="Cobrarle a la gente sin la app"
+          detail="Te recuerda quién te debe plata (gastos que le pagaste o préstamos)."
+          checked={prefs.debts}
+          onChange={(v) => save({ debts: v })}
+        >
+          {prefs.debts && (
+            <Select
+              value={String(prefs.debtsEveryDays)}
+              onValueChange={(v) => save({ debtsEveryDays: Number(v ?? 7) })}
+            >
+              <SelectTrigger className="h-8 w-[150px] rounded-lg text-xs">
+                <SelectValue items={DEBT_DAYS_OPTIONS} />
+              </SelectTrigger>
+              <SelectContent alignItemWithTrigger={false}>
+                {DEBT_DAYS_OPTIONS.map((o) => (
+                  <SelectItem key={o.value} value={o.value}>
+                    {o.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+        </PrefRow>
+        <PrefRow
+          icon={Inbox}
+          title="Cosas para responder"
+          detail="Si alguien te mandó un gasto, una transferencia o una solicitud y no respondiste en 2 días."
+          checked={prefs.pendingReminders}
+          onChange={(v) => save({ pendingReminders: v })}
         />
       </CardContent>
     </Card>
   );
 }
+
+const DEBT_DAYS_OPTIONS = [
+  { value: "7", label: "Cada semana" },
+  { value: "14", label: "Cada 2 semanas" },
+  { value: "30", label: "Cada mes" },
+];
 
 const DAYS_OPTIONS = [
   { value: "0", label: "El mismo día" },
@@ -469,6 +512,15 @@ const KIND_ICON: Record<NotificationKind, React.ComponentType<{ className?: stri
   "agenda-response": CalendarDays,
   "agenda-changed": CalendarDays,
   "agenda-cancelled": CalendarX,
+  "connection-request": UserPlus,
+  "connection-response": Users,
+  "split-request": HandCoins,
+  "split-response": HandCoins,
+  "split-cancelled": HandCoins,
+  "p2p-request": ArrowLeftRight,
+  "p2p-response": ArrowLeftRight,
+  "debt-reminder": HandCoins,
+  "pending-reminder": Inbox,
   test: Sparkles,
 };
 

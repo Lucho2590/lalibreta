@@ -12,6 +12,16 @@ export type NotificationKind =
   | "agenda-response"
   | "agenda-changed"
   | "agenda-cancelled"
+  // Cuentas con gente
+  | "connection-request"
+  | "connection-response"
+  | "split-request"
+  | "split-response"
+  | "split-cancelled"
+  | "p2p-request"
+  | "p2p-response"
+  | "debt-reminder"
+  | "pending-reminder"
   | "test";
 
 export interface AppNotification {
@@ -38,6 +48,12 @@ export interface NotificationPrefs {
   shared: boolean;
   /** A la mañana, lo que hay en la agenda del día. */
   agenda: boolean;
+  /** Recordar cobrarle a la gente sin la app que me debe plata. */
+  debts: boolean;
+  /** Cada cuántos días recordarlo. */
+  debtsEveryDays: number;
+  /** Recordar lo que me mandaron para aceptar (gastos, transferencias, conexiones). */
+  pendingReminders: boolean;
 }
 
 export const DEFAULT_NOTIFICATION_PREFS: NotificationPrefs = {
@@ -47,6 +63,9 @@ export const DEFAULT_NOTIFICATION_PREFS: NotificationPrefs = {
   recurring: true,
   shared: true,
   agenda: true,
+  debts: true,
+  debtsEveryDays: 7,
+  pendingReminders: true,
 };
 
 export const withDefaultPrefs = (p: Partial<NotificationPrefs> | null | undefined): NotificationPrefs => ({

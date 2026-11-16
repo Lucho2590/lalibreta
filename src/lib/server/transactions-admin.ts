@@ -2,6 +2,7 @@ import "server-only";
 
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { adminDb } from "./firebase-admin";
+import { resyncSplitsForTx } from "./splits";
 import type { AccountType, Currency, TransferType } from "@/lib/domain/types";
 import { paymentMonthOf } from "@/lib/domain/types";
 
@@ -271,6 +272,7 @@ export const rebuildCardInstallmentsAdmin = async (
     .where("accountId", "==", account.id)
     .get();
   let rebuilt = 0;
+  const touched: string[] = [];
   for (const txDoc of txs.docs) {
     const tx = txDoc.data();
     // Gastos y reintegros siguen el ciclo de la tarjeta (las transferencias no).
@@ -308,7 +310,10 @@ export const rebuildCardInstallmentsAdmin = async (
     });
     await batch.commit();
     rebuilt += 1;
+    touched.push(txDoc.id);
   }
+  // Los gastos repartidos con otras personas siguen los meses nuevos.
+  if (touched.length) await resyncSplitsForTx(uid, touched);
   return rebuilt;
 };
 

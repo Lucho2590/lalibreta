@@ -19,9 +19,21 @@ import type {
   Installment,
   PendingApproval,
   RecurringExpense,
-  SharedExpense,
   Transaction,
 } from "@/lib/domain/types";
+import {
+  contactRef,
+  otherUid,
+  profileName,
+  userRef,
+  type Connection,
+  type PersonRef,
+  type PersonTransfer,
+  type Split,
+} from "@/lib/domain/people";
+import { buildSplitAdjustment, computePeopleLedger } from "@/lib/domain/debts";
+import type { SharedAdjustment } from "@/lib/domain/balance";
+import { paymentMonthOf } from "@/lib/domain/types";
 import type { AppNotification } from "@/lib/domain/notifications";
 import {
   categoriesCollectionPath,
@@ -32,7 +44,6 @@ import {
 } from "@/lib/domain/installments";
 import { recurringCollectionPath } from "@/lib/domain/recurring";
 import { contactsCollectionPath } from "@/lib/domain/contacts";
-import { sharedExpensesCollectionPath } from "@/lib/domain/shared";
 import {
   activitiesCollectionPath,
   compareActivities,
@@ -114,35 +125,97 @@ export function useContacts() {
   return useCollection<Contact>(q);
 }
 
-export function useSharedAsOwner() {
+// === Cuentas con gente ===
+
+/** Conexiones donde estoy (pendientes, aceptadas, rechazadas…). */
+export function useConnections() {
   const { user } = useAuth();
   const q = useMemo(
-    () =>
-      user
-        ? query(
-            collection(db, sharedExpensesCollectionPath()),
-            where("ownerUid", "==", user.uid),
-          )
-        : null,
+    () => (user ? query(collection(db, "connections"), where("uids", "array-contains", user.uid)) : null),
     [user],
   );
-  return useCollection<SharedExpense>(q);
+  return useCollection<Connection>(q);
 }
 
-export function useSharedAsParticipant() {
+/** Gastos repartidos donde participo (como dueño o como participante). */
+export function useSplits() {
   const { user } = useAuth();
-  const email = user?.email?.toLowerCase() ?? null;
   const q = useMemo(
-    () =>
-      email
-        ? query(
-            collection(db, sharedExpensesCollectionPath()),
-            where("participantEmails", "array-contains", email),
-          )
-        : null,
-    [email],
+    () => (user ? query(collection(db, "splits"), where("uids", "array-contains", user.uid)) : null),
+    [user],
   );
-  return useCollection<SharedExpense>(q);
+  return useCollection<Split>(q);
+}
+
+/** Transferencias con personas donde participo. */
+export function usePersonTransfers() {
+  const { user } = useAuth();
+  const q = useMemo(
+    () => (user ? query(collection(db, "p2pTransfers"), where("uids", "array-contains", user.uid)) : null),
+    [user],
+  );
+  return useCollection<PersonTransfer>(q);
+}
+
+export interface PersonOption {
+  ref: PersonRef;
+  name: string;
+  /** Usa la app (conexión aceptada) o es un contacto sin app. */
+  isApp: boolean;
+  email: string | null;
+}
+
+/** Con quién puedo repartir / transferir: conexiones aceptadas + contactos sin app. */
+export function usePeople() {
+  const { user } = useAuth();
+  const { data: connections, loading: l1 } = useConnections();
+  const { data: contacts, loading: l2 } = useContacts();
+  const people = useMemo<PersonOption[]>(() => {
+    if (!user) return [];
+    const out: PersonOption[] = [];
+    for (const c of connections) {
+      if (c.status !== "accepted") continue;
+      const uid = otherUid(c, user.uid);
+      const p = c.profiles?.[uid];
+      out.push({ ref: userRef(uid), name: profileName(p), isApp: true, email: p?.email ?? null });
+    }
+    for (const c of contacts) {
+      if (c.linkedUid || c.kind === "app") continue;
+      out.push({ ref: contactRef(c.id), name: c.displayName || c.email || "Contacto", isApp: false, email: c.email ?? null });
+    }
+    return out.sort((a, b) => a.name.localeCompare(b.name, "es"));
+  }, [user, connections, contacts]);
+  return { data: people, loading: l1 || l2 };
+}
+
+/**
+ * Qué parte de cada gasto mío repartido es mía. `projected`: como si la gente
+ * sin la app ya me hubiera pagado ("si te pagan lo que te deben").
+ */
+export function useSplitAdjustment(opts: { projected?: boolean } = {}): SharedAdjustment | undefined {
+  const { user } = useAuth();
+  const { data: splits } = useSplits();
+  const { data: transfers } = usePersonTransfers();
+  const projected = !!opts.projected;
+  return useMemo(
+    () => (user ? { byTxId: buildSplitAdjustment(user.uid, splits, transfers, { projected }) } : undefined),
+    [user, splits, transfers, projected],
+  );
+}
+
+/** Cuánto me debe (o le debo a) cada persona. */
+export function usePeopleLedger() {
+  const { user } = useAuth();
+  const { data: splits, loading: l1 } = useSplits();
+  const { data: transfers, loading: l2 } = usePersonTransfers();
+  const ledger = useMemo(
+    () =>
+      user
+        ? computePeopleLedger({ me: user.uid, splits, transfers, nowMonth: paymentMonthOf(new Date()) })
+        : new Map(),
+    [user, splits, transfers],
+  );
+  return { ledger, splits, transfers, loading: l1 || l2 };
 }
 
 export function useAccountSharesAsOwner() {

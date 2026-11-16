@@ -25,10 +25,10 @@ import type { Currency, TransactionKind } from "@/lib/domain/types";
 import { accountCurrencies } from "@/lib/domain/types";
 import { ExchangeForm } from "./exchange-form";
 import { TransferForm } from "./transfer-form";
-import { ShareSection, type ShareSplit } from "./share-section";
-import { buildParticipantsList, createSharedExpense } from "@/lib/domain/shared";
-import { upsertContact } from "@/lib/domain/contacts";
-import { apiFetch } from "@/lib/api";
+import { PersonTransferForm } from "@/components/people/person-transfer-form";
+import { SplitSection, emptySplit, splitPayload, type SplitState } from "./split-section";
+import { userRef } from "@/lib/domain/people";
+import { apiPost, errorText } from "@/lib/api";
 
 const schema = z.object({
   kind: z.enum(["expense", "income", "transfer"]),
@@ -53,15 +53,16 @@ export interface TransactionFormInitial {
   date?: string;
   amount?: number | null;
   currency?: Currency | null;
-  /** Con quiénes dividirlo (arranca con "Compartirlo" prendido). */
-  shareWith?: ShareSplit[];
+  /** Con quiénes dividirlo (arranca con "Dividirlo" prendido, en partes iguales). */
+  splitWith?: Array<{ uid: string; name: string }>;
 }
 
 export interface SavedTransactionInfo {
   transactionId: string;
   amount: number;
   currency: Currency;
-  sharedExpenseId: string | null;
+  /** Si se dividió con otras personas: splits/{id}. */
+  splitId: string | null;
 }
 
 /** Pestañas del formulario: los tipos de movimiento + cambio de dólares. */
@@ -106,10 +107,35 @@ export function TransactionForm({
       {mode === "exchange" ? (
         <ExchangeForm onSubmitted={onSubmitted} />
       ) : mode === "transfer" ? (
-        <TransferForm onSubmitted={onSubmitted} />
+        <TransferTabs onSubmitted={onSubmitted} />
       ) : (
         <MovementForm kind={mode} initial={initial} onSubmitted={onSubmitted} onSaved={onSaved} />
       )}
+    </div>
+  );
+}
+
+/** Transferir: entre mis cuentas o con una persona (le pasé / me pasó / le presté). */
+function TransferTabs({ onSubmitted }: { onSubmitted?: () => void }) {
+  const [withPerson, setWithPerson] = useState(false);
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-1 rounded-xl bg-muted/60 p-1">
+        {[
+          { v: false, label: "Entre mis cuentas" },
+          { v: true, label: "Con una persona" },
+        ].map((o) => (
+          <button
+            key={o.label}
+            type="button"
+            onClick={() => setWithPerson(o.v)}
+            className={`h-9 rounded-lg text-sm font-medium transition ${withPerson === o.v ? "bg-background shadow-sm" : "text-muted-foreground"}`}
+          >
+            {o.label}
+          </button>
+        ))}
+      </div>
+      {withPerson ? <PersonTransferForm onSubmitted={onSubmitted} /> : <TransferForm onSubmitted={onSubmitted} />}
     </div>
   );
 }
@@ -130,8 +156,22 @@ function MovementForm({
   const { data: accounts } = useAccounts();
   const { data: categories } = useCategories();
   const [submitting, setSubmitting] = useState(false);
-  const [shareEnabled, setShareEnabled] = useState(!!initial?.shareWith?.length);
-  const [shareSplits, setShareSplits] = useState<ShareSplit[]>(initial?.shareWith ?? []);
+  const [split, setSplit] = useState<SplitState>(() => {
+    const people = initial?.splitWith ?? [];
+    if (people.length === 0) return emptySplit();
+    const each = Math.round((100 / (people.length + 1)) * 100) / 100;
+    return {
+      enabled: true,
+      mode: "installments",
+      people: people.map((p) => ({
+        ref: userRef(p.uid),
+        name: p.name,
+        isApp: true,
+        shareType: "percent" as const,
+        input: new Intl.NumberFormat("es-AR", { maximumFractionDigits: 2 }).format(each),
+      })),
+    };
+  });
   const [currency, setCurrency] = useState<Currency>(initial?.currency ?? "ARS");
 
   const today = useMemo(() => new Date().toISOString().slice(0, 10), []);
@@ -202,6 +242,12 @@ function MovementForm({
         toast.error("Elegí una categoría");
         return;
       }
+      const splitting = values.kind === "expense" && split.enabled && split.people.length > 0;
+      const payload = splitting ? splitPayload(values.amount, split) : null;
+      if (payload?.error) {
+        toast.error(payload.error);
+        return;
+      }
       const txId = await createTransactionWithInstallments(user.uid, account, {
         accountId: values.accountId,
         categoryId: values.categoryId,
@@ -214,107 +260,29 @@ function MovementForm({
         currency: effCurrency,
       });
       toast.success(values.kind === "income" ? "Ingreso guardado" : "Gasto guardado");
-      let sharedExpenseId: string | null = null;
-
-      // Si activó "Compartirlo", crear el SharedExpense + invitar.
-      const sumOthers = shareSplits.reduce((s, x) => s + x.percentage, 0);
-      if (
-        shareEnabled &&
-        effCurrency === "ARS" &&
-        values.kind === "expense" &&
-        shareSplits.length > 0 &&
-        sumOthers > 0 &&
-        sumOthers <= 100
-      ) {
+      let splitId: string | null = null;
+      // Dividirlo: el server valida conexiones y avisa a cada uno.
+      if (payload) {
         try {
-          const ownerPct = 100 - sumOthers;
-          const participants = buildParticipantsList({
-            owner: {
-              uid: user.uid,
-              email: user.email ?? "",
-              displayName: user.displayName ?? null,
-              percentage: ownerPct,
-            },
-            others: shareSplits.map((s) => ({
-              uid: s.uid,
-              email: s.email,
-              displayName: s.displayName,
-              percentage: s.percentage,
-            })),
-            totalAmount: values.amount,
+          const r = await apiPost<{ id: string }>("/api/splits", {
+            txId,
+            mode: split.mode,
+            participants: payload.participants,
           });
-          const sharedId = await createSharedExpense({
-            ownerUid: user.uid,
-            ownerEmail: user.email ?? "",
-            ownerDisplayName: user.displayName ?? null,
-            description: values.description ?? "",
-            totalAmount: values.amount,
-            date: purchaseDate,
-            ownerTransactionId: txId,
-            participants,
-          });
-          sharedExpenseId = sharedId;
+          splitId = r.id;
+          const apps = split.people.filter((p) => p.isApp).length;
           toast.success(
-            `Gasto compartido con ${shareSplits.length} ${
-              shareSplits.length === 1 ? "persona" : "personas"
-            }`,
+            apps > 0
+              ? `Dividido: ${apps === 1 ? "le llegó para aceptar" : `les llegó a ${apps} personas para aceptar`}`
+              : "Dividido: queda anotado lo que te deben",
           );
-          // Guardar como contacto los splits que lo pidieron (best-effort).
-          const toSave = shareSplits.filter((s) => s.saveAsContact);
-          if (toSave.length > 0) {
-            Promise.allSettled(
-              toSave.map((s) =>
-                upsertContact(user.uid, {
-                  email: s.email,
-                  displayName: s.displayName,
-                }),
-              ),
-            ).catch((err) => console.warn("[upsertContact] error", err));
-          }
-          // Disparamos invitación por mail (best effort).
-          apiFetch("/api/shared/invite", {
-            method: "POST",
-            body: JSON.stringify({ sharedExpenseId: sharedId }),
-          })
-            .then(async (r) => {
-              const data = (await r.json()) as {
-                sent?: Array<{ email: string; ok: boolean; error?: string; loggedOnly?: boolean }>;
-                error?: string;
-              };
-              console.log("[shared invite] respuesta", data);
-              if (!r.ok) {
-                toast.error(`Falló la invitación: ${data.error ?? r.status}`);
-                return;
-              }
-              const sent = data.sent ?? [];
-              const ok = sent.filter((x) => x.ok).length;
-              const fail = sent.filter((x) => !x.ok);
-              if (fail.length > 0) {
-                toast.error(
-                  `Mails: ${ok} ok, ${fail.length} con error. Detalle en consola.`,
-                );
-                for (const f of fail) {
-                  console.warn("[shared invite] fallo:", f.email, f.error);
-                }
-              } else if (sent.some((x) => x.loggedOnly)) {
-                toast.message(
-                  `Mails logueados a consola (${ok}). Para envío real, configurá Resend o EMAIL_DEV_LOG.`,
-                );
-              } else if (ok > 0) {
-                toast.success(`${ok} ${ok === 1 ? "invitación enviada" : "invitaciones enviadas"}`);
-              }
-            })
-            .catch((err) => {
-              console.warn("[shared invite] error", err);
-              toast.error("No se pudo enviar la invitación");
-            });
+          setSplit(emptySplit());
         } catch (err) {
-          console.error(err);
-          toast.error("Gasto guardado pero falló crear el compartido");
+          toast.error(`El gasto se guardó, pero no se pudo dividir: ${errorText(err)}`);
         }
       }
       try {
-        await onSaved?.({ transactionId: txId, amount: values.amount, currency: effCurrency, sharedExpenseId });
+        await onSaved?.({ transactionId: txId, amount: values.amount, currency: effCurrency, splitId });
       } catch (err) {
         console.error("[TransactionForm] onSaved", err);
       }
@@ -488,13 +456,13 @@ function MovementForm({
         </div>
       )}
 
-      {kind === "expense" && effCurrency === "ARS" && (
-        <ShareSection
-          totalAmount={form.watch("amount") || 0}
-          enabled={shareEnabled}
-          onEnabledChange={setShareEnabled}
-          splits={shareSplits}
-          onSplitsChange={setShareSplits}
+      {kind === "expense" && (
+        <SplitSection
+          totalAmount={Number(form.watch("amount")) || 0}
+          currency={effCurrency}
+          installments={isCredit ? installments : 1}
+          value={split}
+          onChange={setSplit}
         />
       )}
 

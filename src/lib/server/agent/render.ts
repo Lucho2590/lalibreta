@@ -12,6 +12,7 @@ import {
   type ExchangeDraft,
   type RecurringDraft,
   type TransferDraft,
+  type PersonTransferDraft,
   type StatementDraft,
   type TransactionDraft,
 } from "../whatsapp/types";
@@ -50,9 +51,38 @@ const renderTransaction = (d: TransactionDraft) => {
   if (d.cardDatesPending) {
     lines.push("", `📅 La ${d.accountName} todavía no tiene fechas de cierre: cuando me las pases (o el resumen), acomodo este gasto en el resumen que corresponde.`);
   }
+  if (d.split?.people.length) {
+    const cur = d.currency ?? "ARS";
+    const others = d.split.people.reduce((s, p) => s + p.amount, 0);
+    const inCuotas = d.installments > 1 ? (d.split.mode === "lump" ? " (todo junto)" : " (en cuotas)") : "";
+    lines.push("", "👥 *Dividido*");
+    for (const p of d.split.people) {
+      lines.push(
+        `• ${p.name}: ${formatMoney(p.amount, cur)}${inCuotas} — ${p.isApp ? "le llega para aceptar" : p.newName ? "sin app (lo agrego), te lo debe" : "sin app, te lo debe"}`,
+      );
+    }
+    lines.push(`• Vos: ${formatMoney(Math.round((d.amount - others) * 100) / 100, cur)}`);
+  }
   lines.push("", "¿Lo guardo?");
   return lines.join("\n");
 };
+
+const renderPersonTransfer = (d: PersonTransferDraft) =>
+  [
+    d.direction === "in" ? "💸 *Te pasaron plata*" : d.kind === "loan" ? "💸 *Préstamo*" : "💸 *Le pasaste plata*",
+    "",
+    d.direction === "in"
+      ? `*${d.personName}* te pasó *${formatMoney(d.amount, d.currency)}*`
+      : `${d.kind === "loan" ? "Le prestás" : "Le pasás"} a *${d.personName}* *${formatMoney(d.amount, d.currency)}*`,
+    `${d.direction === "in" ? "Entró en" : "Sale de"}: ${d.accountName}`,
+    `Fecha: ${fecha(d.date)}`,
+    "",
+    d.isApp
+      ? `_No es ingreso ni gasto: salda lo que se deben. ${d.personName.split(" ")[0]} lo tiene que confirmar._`
+      : `_No es ingreso ni gasto: salda lo que se deben.${d.newName ? ` Agrego a ${d.personName} como contacto sin app.` : ""}_`,
+    "",
+    "¿Lo registro?",
+  ].join("\n");
 
 const accountLine = (a: AccountDraft["accounts"][number]) => {
   let line = `• *${a.name}* — ${ACCOUNT_TYPE_LABEL[a.accountType]}`;
@@ -283,6 +313,8 @@ export const renderDraft = (d: Draft): string => {
       return renderRecurring(d as RecurringDraft);
     case "transfer":
       return renderTransfer(d as TransferDraft);
+    case "person-transfer":
+      return renderPersonTransfer(d as PersonTransferDraft);
     default:
       return renderTransaction(d as TransactionDraft);
   }

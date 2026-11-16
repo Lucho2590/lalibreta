@@ -1,6 +1,6 @@
-import type { Currency, Installment, SharedExpense } from "./types";
+import type { Currency, Installment } from "./types";
 import { currencyOf, monthOf } from "./types";
-import { getEffectiveInstallmentInfo } from "./shared-effective";
+import type { SplitTxInfo } from "./debts";
 
 export interface MonthlyBalance {
   income: number;
@@ -8,9 +8,12 @@ export interface MonthlyBalance {
   balance: number;
 }
 
+/**
+ * Gastos repartidos con otras personas: por id de transacción, qué parte del
+ * gasto es mía (ver buildSplitAdjustment en debts.ts). Sin ajuste, todo es mío.
+ */
 export interface SharedAdjustment {
-  sharedByTxId: Map<string, SharedExpense>;
-  ownerUid: string;
+  byTxId: Map<string, SplitTxInfo>;
 }
 
 /**
@@ -27,9 +30,8 @@ const expenseAmount = (
   ins: Installment,
   adj: SharedAdjustment | undefined,
 ): number => {
-  if (!adj) return ins.amount;
-  return getEffectiveInstallmentInfo(ins, adj.sharedByTxId, adj.ownerUid)
-    .effectiveAmount;
+  const info = adj?.byTxId.get(ins.transactionId);
+  return info ? Math.round(ins.amount * info.factor * 100) / 100 : ins.amount;
 };
 
 /** Ingresos y gastos del mes en UNA moneda (las transferencias no cuentan). */
@@ -95,11 +97,11 @@ export const sumByAccount = (
 export interface AccountFlow {
   /** Ingresos de verdad (sueldo, cobros…). */
   income: number;
-  /** Gastos (descontando la parte de otros en los compartidos). */
+  /** Gastos: lo que salió de verdad (un gasto repartido sale entero de la cuenta). */
   expense: number;
-  /** Plata que entró desde otra cuenta propia (transferencias y cambios). */
+  /** Plata que entró desde otra cuenta (propia o de una persona). */
   transfersIn: number;
-  /** Plata que salió a otra cuenta propia (transferencias, cambios, pagos de tarjeta). */
+  /** Plata que salió a otra cuenta (propia o de una persona, pagos de tarjeta). */
   transfersOut: number;
   /** Todo lo que entró / salió y la diferencia. */
   in: number;
@@ -118,7 +120,6 @@ export const computeAccountFlow = (
   installments: Installment[],
   monthKey: string,
   accountIds: ReadonlySet<string>,
-  adj?: SharedAdjustment,
   currency: Currency = "ARS",
 ): AccountFlow => {
   const legsByTx = new Map<string, Installment[]>();
@@ -138,7 +139,7 @@ export const computeAccountFlow = (
       if (ins.cardCredit) expense -= ins.amount;
       else income += ins.amount;
     } else if (ins.kind === "expense") {
-      expense += expenseAmount(ins, adj);
+      expense += ins.amount;
     } else if (ins.kind === "transfer") {
       const other = legsByTx.get(ins.transactionId)?.find((l) => l.id !== ins.id);
       const counterpartId = other?.accountId ?? ins.transferCounterpartId;

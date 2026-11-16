@@ -14,14 +14,14 @@ import {
   totalAvailable,
   type Money,
 } from "@/lib/domain/balances";
-import { buildSharedByTxId } from "@/lib/domain/shared-effective";
+import { buildSplitAdjustment } from "@/lib/domain/debts";
+import { isPersonAccountId, type PersonTransfer, type Split } from "@/lib/domain/people";
 import { summarizeExchanges } from "@/lib/domain/exchanges";
 import type {
   AccountType,
   CategoryKind,
   Currency,
   Installment,
-  SharedExpense,
 } from "@/lib/domain/types";
 import { CURRENCIES, accountCurrencies, currencyOf } from "@/lib/domain/types";
 import { getOrBuildCycle, type ServerAccount } from "./transactions-admin";
@@ -138,15 +138,19 @@ const loadInstallmentsForMonth = async (
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }) as unknown as Installment);
 };
 
+/** Gastos repartidos: qué parte de cada gasto mío es realmente mía. */
 const loadSharedAdjustment = async (uid: string): Promise<SharedAdjustment> => {
-  const snap = await adminDb()
-    .collection("sharedExpenses")
-    .where("ownerUid", "==", uid)
-    .get();
-  const shared = snap.docs.map(
-    (d) => ({ id: d.id, ...d.data() }) as unknown as SharedExpense,
-  );
-  return { sharedByTxId: buildSharedByTxId(shared), ownerUid: uid };
+  const [splits, transfers] = await Promise.all([
+    adminDb().collection("splits").where("uids", "array-contains", uid).get(),
+    adminDb().collection("p2pTransfers").where("uids", "array-contains", uid).get(),
+  ]);
+  return {
+    byTxId: buildSplitAdjustment(
+      uid,
+      splits.docs.map((d) => ({ id: d.id, ...d.data() }) as Split),
+      transfers.docs.map((d) => ({ id: d.id, ...d.data() }) as PersonTransfer),
+    ),
+  };
 };
 
 export interface NamedTotal {
@@ -213,7 +217,10 @@ export const getMonthSummary = async (
   const catName = new Map(categories.map((c) => [c.id, c.name]));
   const toNamed = (m: Map<string, number>, names: Map<string, string>) =>
     [...m.entries()]
-      .map(([id, total]) => ({ name: names.get(id) ?? "Sin nombre", total: r2(total) }))
+      .map(([id, total]) => ({
+        name: names.get(id) ?? (isPersonAccountId(id) ? "Tu parte de gastos que pagó otra persona" : "Sin nombre"),
+        total: r2(total),
+      }))
       .sort((a, b) => b.total - a.total);
 
   // Cambios: las dos patas de cada uno (con filtro de cuenta, si alguna es de esa cuenta).
@@ -398,7 +405,9 @@ export const listRecentTransactions = async (
       amount: Number(t.totalAmount ?? 0),
       currency: currencyOf(t as { currency?: Currency }),
       installments: Number(t.installments ?? 1),
-      accountName: accName.get(t.accountId as string) ?? "—",
+      accountName:
+        accName.get(t.accountId as string) ??
+        (isPersonAccountId(t.accountId as string) ? "(pagó otra persona)" : "—"),
       categoryName: catName.get(t.categoryId as string) ?? "—",
       ...(t.kind === "transfer"
         ? {

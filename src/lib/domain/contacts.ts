@@ -1,5 +1,7 @@
 import {
   Timestamp,
+  addDoc,
+  collection,
   deleteDoc,
   doc,
   setDoc,
@@ -63,4 +65,32 @@ export const deleteContact = async (
   contactId: string,
 ): Promise<void> => {
   await deleteDoc(doc(db, `${contactsCollectionPath(uid)}/${contactId}`));
+};
+
+/**
+ * Contacto de alguien que no usa la app (para repartirle gastos o anotar
+ * préstamos y que la app me recuerde cobrarle). El nombre es obligatorio.
+ */
+export const addOfflineContact = async (
+  uid: string,
+  input: { name: string; email?: string | null; phone?: string | null },
+): Promise<string> => {
+  const email = input.email?.trim().toLowerCase() || null;
+  const data = {
+    displayName: input.name.trim(),
+    email,
+    phone: input.phone?.trim() || null,
+    linkedUid: null,
+    kind: "offline" as const,
+    photoURL: null,
+    createdAt: Timestamp.now(),
+    updatedAt: Timestamp.now(),
+  };
+  if (email) {
+    const id = contactIdFromEmail(email);
+    await setDoc(doc(db, `${contactsCollectionPath(uid)}/${id}`), data, { merge: true });
+    return id;
+  }
+  const ref = await addDoc(collection(db, contactsCollectionPath(uid)), data);
+  return ref.id;
 };

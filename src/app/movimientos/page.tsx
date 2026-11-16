@@ -12,9 +12,8 @@ import {
   useAllInstallments,
   useCategories,
   useInstallmentsForMonth,
-  useSharedAsOwner,
+  useSplitAdjustment,
 } from "@/hooks/use-data";
-import { useAuth } from "@/hooks/use-auth";
 import { TransactionList } from "@/components/transactions/transaction-list";
 import { ExchangeSummaryCard } from "@/components/transactions/exchange-summary-card";
 import { monthUsdConversion } from "@/lib/domain/exchanges";
@@ -25,25 +24,18 @@ import { isCardCredit, isRealIncome } from "@/lib/domain/types";
 import { TAX_CATEGORY, cardFloorMonth, summarizeCardMonth } from "@/lib/domain/card-summary";
 
 import { computeAccountFlow, computeMonthlyBalance, type AccountFlow } from "@/lib/domain/balance";
-import { buildSharedByTxId } from "@/lib/domain/shared-effective";
 
 export default function MovimientosPage() {
   const params = useSearchParams();
   const accountFilter = params.get("account");
   const kindFilter = params.get("kind");
   const { monthKey, year, month } = useMonth();
-  const { user } = useAuth();
   const { data: installments, loading } = useInstallmentsForMonth(monthKey);
   const { data: accounts } = useAccounts();
   const { data: categories } = useCategories();
-  const { data: shared } = useSharedAsOwner();
   const { open } = useNewTransactionSheet();
-
-  const sharedByTxId = useMemo(() => buildSharedByTxId(shared), [shared]);
-  const adj = useMemo(
-    () => (user ? { sharedByTxId, ownerUid: user.uid } : undefined),
-    [sharedByTxId, user],
-  );
+  // Gastos repartidos: cuenta solo mi parte.
+  const adj = useSplitAdjustment();
 
   const filterAccount = accounts.find((a) => a.id === accountFilter);
   // Vista de tarjeta de crédito: gastos (con impuestos), reintegros y total a pagar.
@@ -103,10 +95,10 @@ export default function MovimientosPage() {
     if (!accountFilter || isCardView) return null;
     const ids = new Set([accountFilter]);
     return {
-      ARS: computeAccountFlow(installments, monthKey, ids, adj, "ARS"),
-      USD: computeAccountFlow(installments, monthKey, ids, adj, "USD"),
+      ARS: computeAccountFlow(installments, monthKey, ids, "ARS"),
+      USD: computeAccountFlow(installments, monthKey, ids, "USD"),
     };
-  }, [accountFilter, isCardView, installments, monthKey, adj]);
+  }, [accountFilter, isCardView, installments, monthKey]);
   const flowHasUSD = !!flow && (flow.USD.in !== 0 || flow.USD.out !== 0);
   const transfersNote = (dir: "in" | "out") => {
     if (!flow) return undefined;
@@ -309,8 +301,7 @@ export default function MovimientosPage() {
           items={filtered}
           perspectiveAccountId={isCardView ? undefined : (accountFilter ?? undefined)}
           groupCards={!isCardView}
-          sharedByTxId={sharedByTxId}
-          ownerUid={user?.uid}
+          adjustment={adj}
         />
       )}
     </div>

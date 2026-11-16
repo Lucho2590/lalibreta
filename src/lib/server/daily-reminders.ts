@@ -10,13 +10,18 @@ import { cardFloorMonth, summarizeCardMonth, TAX_CATEGORY } from "@/lib/domain/c
 import { withDefaultPrefs, type NotificationPrefs } from "@/lib/domain/notifications";
 import type { Currency, Installment, RecurringExpense } from "@/lib/domain/types";
 import { formatMoney } from "@/lib/format";
+import { computePeopleLedger } from "@/lib/domain/debts";
+import { loadSplitsFor } from "./splits";
+import { loadTransfersFor } from "./person-transfers";
 
 /**
  * Avisos del día (los corre el cron de Vercel una vez por día, a la mañana):
  * - vencimiento de tarjetas (N días antes, según las preferencias),
  * - cierre de tarjetas (opcional),
  * - fijos que tocan hoy y todavía no se cargaron,
- * - lo que hay en la agenda del día.
+ * - lo que hay en la agenda del día,
+ * - cobrarle a la gente sin la app que te debe plata (cada N días),
+ * - lo que te mandaron para responder y quedó colgado (gastos, transferencias, conexiones).
  * Cada aviso tiene una clave fija, así que correrlo dos veces no repite nada.
  */
 
@@ -62,10 +67,12 @@ export const runDailyReminders = async (now = new Date()): Promise<DailyRunResul
 };
 
 export const remindUser = async (uid: string, prefs: NotificationPrefs, today: string): Promise<number> => {
-  if (!prefs.cardDue && !prefs.cardClose && !prefs.recurring) return 0;
+  if (!prefs.cardDue && !prefs.cardClose && !prefs.recurring && !prefs.debts && !prefs.pendingReminders) return 0;
+  let sent = 0;
+  if (prefs.debts || prefs.pendingReminders) sent += await peopleReminders(uid, prefs, today);
+  if (!prefs.cardDue && !prefs.cardClose && !prefs.recurring) return sent;
   const accounts = (await loadAccounts(uid)).filter((a) => a.active);
   const cards = accounts.filter((a) => a.type === "credit");
-  let sent = 0;
 
   if (prefs.cardDue && cards.length > 0) sent += await cardDueReminders(uid, cards, prefs.cardDueDaysBefore, today);
   if (prefs.cardClose && cards.length > 0) sent += await cardCloseReminders(uid, cards, today);
@@ -156,6 +163,90 @@ const recurringReminders = async (uid: string, accounts: ServerAccountInfo[], to
       dedupeKey: `recurring-${rec.id}-${month}`,
     });
     if (r.stored) sent += 1;
+  }
+  return sent;
+};
+
+// === Cuentas con gente ===
+
+const DAY_MS = 86_400_000;
+const daysBetween = (a: string, b: string) => Math.round((dateFromYMD(b).getTime() - dateFromYMD(a).getTime()) / DAY_MS);
+const ymdOfTs = (ts: unknown) => {
+  const d = (ts as { toDate?: () => Date } | null)?.toDate?.();
+  return d ? todayYMD(d) : null;
+};
+
+/**
+ * - Gente sin la app que me debe (vencido, hace 3+ días): un aviso agrupado
+ *   cada `debtsEveryDays` días.
+ * - Cosas que me mandaron y no respondí en 2+ días: un aviso por semana.
+ */
+const peopleReminders = async (uid: string, prefs: NotificationPrefs, today: string): Promise<number> => {
+  const [splits, transfers] = await Promise.all([loadSplitsFor(uid), loadTransfersFor(uid)]);
+  let sent = 0;
+  const dayIndex = Math.floor(dateFromYMD(today).getTime() / DAY_MS);
+
+  if (prefs.debts) {
+    const ledger = computePeopleLedger({ me: uid, splits, transfers, nowMonth: today.slice(0, 7) });
+    const owing = [...ledger.values()].filter(
+      (l) =>
+        !l.isApp &&
+        (["ARS", "USD"] as const).some((c) => l.due[c] >= 0.01) &&
+        // Lo más viejo que debe tiene al menos 3 días.
+        l.entries.some((e) => e.amount > 0 && !e.future && daysBetween(e.date, today) >= 3),
+    );
+    if (owing.length > 0) {
+      const every = Math.max(1, prefs.debtsEveryDays || 7);
+      const list = owing.map((l) => `${l.name} te debe ${moneyText(l.due)}`);
+      const first = owing[0];
+      const r = await notify(uid, {
+        kind: "debt-reminder",
+        title: owing.length === 1 ? `Acordate de cobrarle a ${first.name}` : "Gente que te debe plata",
+        body: `${list.join(" · ")}.`,
+        url: "/compartidas",
+        whatsappText: `💸 Para cobrar: ${list.join(" · ")}. ¿Ya te pagó? Decime, por ejemplo, "${first.name.split(" ")[0]} me pagó ${formatMoney(first.due.ARS >= 0.01 ? first.due.ARS : first.due.USD, first.due.ARS >= 0.01 ? "ARS" : "USD")} a MP".`,
+        dedupeKey: `debts-${Math.floor(dayIndex / every)}`,
+      });
+      if (r.stored) sent += 1;
+    }
+  }
+
+  if (prefs.pendingReminders) {
+    const week = Math.floor(dayIndex / 7);
+    const old = (ts: unknown) => {
+      const d = ymdOfTs(ts);
+      return !!d && daysBetween(d, today) >= 2;
+    };
+    const items: Array<{ id: string; text: string }> = [];
+    for (const s of splits) {
+      const me = s.participants.find((p) => p.uid === uid);
+      if (s.status === "active" && s.ownerUid !== uid && me?.status === "pending" && old(s.updatedAt ?? s.createdAt)) {
+        items.push({ id: `split-${s.id}`, text: `${s.ownerName}: ${s.description} (${formatMoney(me.amount, s.currency)})` });
+      }
+    }
+    for (const t of transfers) {
+      if (t.status === "pending" && t.createdByUid !== uid && old(t.createdAt)) {
+        items.push({ id: `p2p-${t.id}`, text: `${t.description} (${formatMoney(t.amount, t.currency)})` });
+      }
+    }
+    const conns = await adminDb().collection("connections").where("uids", "array-contains", uid).get();
+    for (const c of conns.docs) {
+      const d = c.data();
+      if (d.status === "pending" && d.addresseeUid === uid && old(d.createdAt)) {
+        const p = d.profiles?.[d.requesterUid];
+        items.push({ id: `conn-${c.id}`, text: `${p?.displayName || p?.email || "Alguien"} quiere conectarse` });
+      }
+    }
+    if (items.length > 0) {
+      const r = await notify(uid, {
+        kind: "pending-reminder",
+        title: items.length === 1 ? "Tenés algo para responder" : `Tenés ${items.length} cosas para responder`,
+        body: items.map((i) => i.text).join(" · "),
+        url: "/compartidas",
+        dedupeKey: `pending-${week}-${items.map((i) => i.id).sort().join("_").slice(0, 300)}`,
+      });
+      if (r.stored) sent += 1;
+    }
   }
   return sent;
 };

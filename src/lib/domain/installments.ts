@@ -41,6 +41,11 @@ export interface CreateTransactionInput {
   /** Cambios: cotización pactada y diferencia en pesos (redondeo/comisión). */
   quotedRate?: number;
   exchangeDiff?: number;
+  /**
+   * Rehacer las cuotas de un gasto que ya existe, manteniendo su id (los
+   * gastos repartidos apuntan a él). Solo gastos/ingresos.
+   */
+  transactionId?: string;
 }
 
 export const createTransactionWithInstallments = async (
@@ -140,7 +145,9 @@ export const createTransactionWithInstallments = async (
   const amountPerInstallment =
     Math.round((input.totalAmount / installmentsCount) * 100) / 100;
 
-  const txRef = doc(collection(db, transactionsCollectionPath(uid)));
+  const txRef = input.transactionId
+    ? doc(db, transactionsCollectionPath(uid), input.transactionId)
+    : doc(collection(db, transactionsCollectionPath(uid)));
   const installmentRefs = Array.from({ length: installmentsCount }, () =>
     doc(collection(db, installmentsCollectionPath(uid))),
   );
@@ -176,7 +183,14 @@ export const createTransactionWithInstallments = async (
     ...(input.recurringId ? { recurringId: input.recurringId } : {}),
     createdAt: Timestamp.now(),
   };
-  batch.set(txRef, transaction);
+  if (input.transactionId) {
+    // Ya existía: se actualizan los datos calculados y se conserva el resto (createdAt, etc.).
+    const { createdAt: _keep, ...rest } = transaction;
+    void _keep;
+    batch.set(txRef, rest, { merge: true });
+  } else {
+    batch.set(txRef, transaction);
+  }
 
   for (let i = 0; i < installmentsCount; i += 1) {
     const { year, month } = addMonths(firstYear, firstMonth, i);
@@ -226,11 +240,17 @@ export const deleteTransactionAndInstallments = async (
   await batch.commit();
 };
 
+/**
+ * Recalcula las cuotas de una tarjeta desde un mes (cambiaron sus días de
+ * cierre/vencimiento). Conserva el id de cada gasto y devuelve los ids
+ * tocados (para rehacer los gastos repartidos).
+ */
 export const regenerateFutureInstallmentsForAccount = async (
   uid: string,
   account: Account,
   fromMonthKey: string,
-): Promise<void> => {
+): Promise<string[]> => {
+  const touched: string[] = [];
   const txSnap = await getDocs(
     query(
       collection(db, transactionsCollectionPath(uid)),
@@ -241,6 +261,30 @@ export const regenerateFutureInstallmentsForAccount = async (
     const tx = { id: txDoc.id, ...(txDoc.data() as Omit<Transaction, "id">) };
     if (!tx.firstBillingMonth) continue;
     if (tx.firstBillingMonth >= fromMonthKey) {
+      touched.push(tx.id);
+      if (tx.kind !== "transfer") {
+        // Mismo id: se borran solo las cuotas y se rehacen.
+        const old = await getDocs(
+          query(collection(db, installmentsCollectionPath(uid)), where("transactionId", "==", tx.id)),
+        );
+        const del = writeBatch(db);
+        old.forEach((d) => del.delete(d.ref));
+        await del.commit();
+        await createTransactionWithInstallments(uid, account, {
+          transactionId: tx.id,
+          accountId: tx.accountId,
+          categoryId: tx.categoryId,
+          description: tx.description,
+          totalAmount: tx.totalAmount,
+          purchaseDate: tx.purchaseDate.toDate(),
+          kind: tx.kind,
+          installments: tx.installments,
+          cardClosedAtPurchase: tx.cardClosedAtPurchase ?? false,
+          currency: tx.currency,
+          ...(tx.recurringId ? { recurringId: tx.recurringId } : {}),
+        });
+        continue;
+      }
       await deleteTransactionAndInstallments(uid, tx.id);
       await createTransactionWithInstallments(uid, account, {
         accountId: tx.accountId,
@@ -274,6 +318,7 @@ export const regenerateFutureInstallmentsForAccount = async (
       ),
     );
     if (installmentsSnap.empty) continue;
+    touched.push(tx.id);
     const batch = writeBatch(db);
     for (const insDoc of installmentsSnap.docs) {
       const ins = insDoc.data() as Omit<Installment, "id">;
@@ -287,4 +332,5 @@ export const regenerateFutureInstallmentsForAccount = async (
     await batch.commit();
   }
   void deleteDoc;
+  return touched;
 };

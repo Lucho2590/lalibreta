@@ -15,10 +15,9 @@ import {
   useAllInstallments,
   useCategories,
   useInstallmentsForMonth,
-  useSharedAsOwner,
+  useSplitAdjustment,
 } from "@/hooks/use-data";
 import { useUsdRate } from "@/hooks/use-usd-rate";
-import { useAuth } from "@/hooks/use-auth";
 import {
   computeMonthlyBalance,
   makeToARS,
@@ -28,13 +27,14 @@ import {
 import { computeAccountBalances, totalAvailable } from "@/lib/domain/balances";
 import { sortAccounts } from "@/lib/domain/accounts";
 import { accountCurrencies, paymentMonthOf } from "@/lib/domain/types";
-import { buildSharedByTxId } from "@/lib/domain/shared-effective";
 import { formatCurrency, formatMoney, formatMonth, formatShortDate } from "@/lib/format";
 import { cardFloorMonth, summarizeCardMonth } from "@/lib/domain/card-summary";
 import { monthUsdConversion } from "@/lib/domain/exchanges";
 import { RecurringBanner } from "@/components/dashboard/recurring-banner";
 import { ExchangeSummaryCard } from "@/components/transactions/exchange-summary-card";
 import { ApprovalsBanner } from "@/components/dashboard/approvals-banner";
+import { PendingInbox } from "@/components/people/pending-inbox";
+import { isPersonAccountId } from "@/lib/domain/people";
 import { TodayAgenda } from "@/components/dashboard/today-agenda";
 import { Onboarding } from "@/components/dashboard/onboarding";
 import { CategoryIcon } from "@/components/category-icon";
@@ -42,19 +42,12 @@ import { AccountIcon, defaultIconForType } from "@/components/account-icon";
 
 export default function Dashboard() {
   const { monthKey, year, month } = useMonth();
-  const { user } = useAuth();
   const { data: installments, loading } = useInstallmentsForMonth(monthKey);
   const { data: categories } = useCategories();
   const { data: accounts, loading: accountsLoading } = useAccounts();
-  const { data: shared } = useSharedAsOwner();
-
-  const adj = useMemo(
-    () =>
-      user
-        ? { sharedByTxId: buildSharedByTxId(shared), ownerUid: user.uid }
-        : undefined,
-    [shared, user],
-  );
+  // Gastos repartidos: cuenta solo mi parte (y "si te pagan" lo que me deben los sin app).
+  const adj = useSplitAdjustment();
+  const adjProjected = useSplitAdjustment({ projected: true });
 
   const usdRate = useUsdRate();
   const { data: allInstallments } = useAllInstallments();
@@ -95,7 +88,7 @@ export default function Dashboard() {
     .sort((a, b) => b.total - a.total);
 
   const sortedAccounts = [...byAccount.entries()]
-    .map(([id, total]) => ({ acc: accounts.find((a) => a.id === id), total }))
+    .map(([id, total]) => ({ id, acc: accounts.find((a) => a.id === id), total }))
     .sort((a, b) => b.total - a.total);
 
   const max = sortedCategories[0]?.total ?? 0;
@@ -107,6 +100,12 @@ export default function Dashboard() {
   const conversion = useMemo(() => monthUsdConversion(installments, usdRate?.rate), [installments, usdRate]);
   const consolidated = hasUSD && conversion ? balance.balance + balanceUSD.balance * conversion.rate : null;
   const headline = consolidated ?? balance.balance;
+  // "Si te pagan": como si la gente sin la app ya te hubiera devuelto su parte.
+  const projBalance = useMemo(() => computeMonthlyBalance(installments, monthKey, adjProjected, "ARS"), [installments, monthKey, adjProjected]);
+  const projBalanceUSD = useMemo(() => computeMonthlyBalance(installments, monthKey, adjProjected, "USD"), [installments, monthKey, adjProjected]);
+  const projectedHeadline =
+    hasUSD && conversion ? projBalance.balance + projBalanceUSD.balance * conversion.rate : projBalance.balance;
+  const showProjected = Math.abs(projectedHeadline - headline) >= 1;
   const positive = headline >= 0;
 
   return (
@@ -124,6 +123,7 @@ export default function Dashboard() {
       {(accountsLoading || accounts.length > 0) && (
         <>
           <ApprovalsBanner />
+          <PendingInbox compact />
           <RecurringBanner />
           <TodayAgenda />
 
@@ -136,6 +136,11 @@ export default function Dashboard() {
               <div className="mt-2 text-4xl font-bold tabular-nums md:text-5xl">
                 {formatCurrency(headline)}
               </div>
+              {showProjected && (
+                <Link href="/compartidas" className="mt-1 inline-block rounded-full bg-white/15 px-3 py-1 text-xs font-medium hover:bg-white/25">
+                  Si te pagan lo que te deben: <span className="tabular-nums">{formatCurrency(projectedHeadline)}</span>
+                </Link>
+              )}
               {consolidated != null ? (
                 <div className="mt-1 text-sm tabular-nums opacity-90">
                   {formatMoney(balance.balance, "ARS")} en pesos {balanceUSD.balance >= 0 ? "+" : "−"}{" "}
@@ -294,10 +299,10 @@ export default function Dashboard() {
               </CardHeader>
               <CardContent className="space-y-1">
                 {sortedAccounts.length === 0 && <EmptyHint>Sin movimientos.</EmptyHint>}
-                {sortedAccounts.map(({ acc, total }) => (
+                {sortedAccounts.map(({ id, acc, total }) => (
                   <Link
-                    key={acc?.id ?? "x"}
-                    href={acc ? `/cuentas/${acc.id}` : "#"}
+                    key={id}
+                    href={acc ? `/cuentas/${acc.id}` : isPersonAccountId(id) ? "/compartidas" : "#"}
                     className="flex items-center justify-between rounded-xl px-2 py-2.5 text-sm transition hover:bg-muted/60"
                   >
                     <div className="flex items-center gap-2.5">
@@ -307,7 +312,9 @@ export default function Dashboard() {
                           className="size-3.5"
                         />
                       </span>
-                      <span className="font-medium">{acc?.name ?? "—"}</span>
+                      <span className="font-medium">
+                        {acc?.name ?? (isPersonAccountId(id) ? "Tu parte de gastos de otros" : "—")}
+                      </span>
                     </div>
                     <span className="tabular-nums">{formatCurrency(total)}</span>
                   </Link>

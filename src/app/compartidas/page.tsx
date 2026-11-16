@@ -1,67 +1,63 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo } from "react";
-import {
-  ArrowDownLeft,
-  ArrowUpRight,
-  ChevronRight,
-  Users,
-} from "lucide-react";
+import { useMemo, useState } from "react";
+import { ArrowDownLeft, ArrowUpRight, ChevronRight, HandCoins, Plus, Users } from "lucide-react";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { useAuth } from "@/hooks/use-auth";
-import {
-  useSharedAsOwner,
-  useSharedAsParticipant,
-} from "@/hooks/use-data";
-import { formatCurrency, formatDate } from "@/lib/format";
-import type { SharedExpense } from "@/lib/domain/types";
+import { usePeopleLedger } from "@/hooks/use-data";
+import { PendingInbox } from "@/components/people/pending-inbox";
+import { PersonTransferForm } from "@/components/people/person-transfer-form";
+import { ledgerTotal, ledgerTotals } from "@/lib/domain/debts";
+import { personBalanceText } from "@/components/people/balance-text";
+import type { Currency } from "@/lib/domain/types";
+import { formatMoney } from "@/lib/format";
 
-export default function CompartidasPage() {
+const CURS: Currency[] = ["ARS", "USD"];
+const moneyLine = (m: Record<Currency, number>) =>
+  CURS.filter((c) => Math.abs(m[c]) > 0.009)
+    .map((c) => formatMoney(Math.abs(m[c]), c))
+    .join(" + ") || formatMoney(0, "ARS");
+
+export default function CuentasConGentePage() {
   const { user } = useAuth();
-  const { data: ownerSide, loading: l1 } = useSharedAsOwner();
-  const { data: participantSide, loading: l2 } = useSharedAsParticipant();
+  const { ledger, splits, loading } = usePeopleLedger();
+  const [open, setOpen] = useState(false);
 
-  // Eliminar duplicados (al ser owner también aparece como participant si
-  // está incluido en participantEmails).
-  const participantOnly = useMemo(
-    () => participantSide.filter((s) => s.ownerUid !== user?.uid),
-    [participantSide, user?.uid],
-  );
-
-  const sortByCreatedDesc = (list: SharedExpense[]) =>
-    [...list].sort(
-      (a, b) => b.createdAt.toMillis() - a.createdAt.toMillis(),
-    );
-  const ownerSorted = useMemo(() => sortByCreatedDesc(ownerSide), [ownerSide]);
-  const participantSorted = useMemo(
-    () => sortByCreatedDesc(participantOnly),
-    [participantOnly],
-  );
-
-  const balances = useMemo(
+  const people = useMemo(
     () =>
-      computeBalances(
-        user?.uid ?? "",
-        user?.email?.toLowerCase() ?? "",
-        ownerSide,
-        participantOnly,
+      [...ledger.values()].sort(
+        (a, b) => Math.abs(ledgerTotal(b, "ARS")) - Math.abs(ledgerTotal(a, "ARS")) || a.name.localeCompare(b.name, "es"),
       ),
-    [ownerSide, participantOnly, user?.uid, user?.email],
+    [ledger],
   );
-
-  const loading = l1 || l2;
+  const totals = useMemo(() => ledgerTotals(ledger.values()), [ledger]);
+  const myRecent = useMemo(
+    () =>
+      splits
+        .filter((s) => s.ownerUid === user?.uid && s.status === "active")
+        .sort((a, b) => b.date.localeCompare(a.date))
+        .slice(0, 8),
+    [splits, user],
+  );
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight">Compartidas</h1>
-        <p className="text-sm text-muted-foreground">
-          Gastos divididos con otra gente
-        </p>
+      <div className="flex items-end justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">Cuentas con gente</h1>
+          <p className="text-sm text-muted-foreground">Gastos divididos, préstamos y lo que se deben</p>
+        </div>
+        <Button className="bg-brand-grad text-white hover:opacity-95" onClick={() => setOpen(true)}>
+          <Plus className="mr-1 size-4" /> Registrar pago
+        </Button>
       </div>
 
-      {/* Balance summary */}
+      <PendingInbox />
+
       <div className="grid gap-3 md:grid-cols-2">
         <Card className="rounded-2xl">
           <CardContent className="flex items-center gap-3 py-4">
@@ -69,12 +65,8 @@ export default function CompartidasPage() {
               <ArrowDownLeft className="size-5" />
             </div>
             <div>
-              <div className="text-[11px] uppercase tracking-wider text-muted-foreground">
-                Te deben
-              </div>
-              <div className="text-xl font-semibold tabular-nums text-success">
-                {formatCurrency(balances.totalOwedToYou)}
-              </div>
+              <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Te deben</div>
+              <div className="text-xl font-semibold tabular-nums text-success">{moneyLine(totals.owedToMe)}</div>
             </div>
           </CardContent>
         </Card>
@@ -84,270 +76,110 @@ export default function CompartidasPage() {
               <ArrowUpRight className="size-5" />
             </div>
             <div>
-              <div className="text-[11px] uppercase tracking-wider text-muted-foreground">
-                Le debés
-              </div>
-              <div className="text-xl font-semibold tabular-nums text-destructive">
-                {formatCurrency(balances.totalYouOwe)}
-              </div>
+              <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Le debés</div>
+              <div className="text-xl font-semibold tabular-nums text-destructive">{moneyLine(totals.iOwe)}</div>
             </div>
           </CardContent>
         </Card>
       </div>
 
-      {/* Por persona */}
-      {balances.perPerson.length > 0 && (
-        <Card className="rounded-3xl">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-semibold">Por persona</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-1.5">
-            {balances.perPerson.map((p) => (
-              <div
-                key={p.email}
-                className="flex items-center justify-between rounded-xl px-2 py-2 text-sm"
+      <Card className="rounded-3xl">
+        <CardHeader className="pb-1">
+          <CardTitle className="flex items-center gap-1.5 text-sm font-semibold">
+            <Users className="size-4" /> Por persona
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="divide-y">
+          {loading && <p className="py-2 text-xs text-muted-foreground">Cargando…</p>}
+          {!loading && people.length === 0 && (
+            <div className="py-6 text-center text-sm text-muted-foreground">
+              Todavía no hay nada con nadie. Dividí un gasto al cargarlo, o registrá un pago o un préstamo.
+              <div className="mt-2">
+                <Link href="/contactos" className="font-medium text-brand underline">
+                  Conectate o agregá gente en Contactos
+                </Link>
+              </div>
+            </div>
+          )}
+          {people.map((l) => {
+            const b = personBalanceText(l);
+            const future = CURS.filter((c) => l.upcoming[c] > 0.009);
+            return (
+              <Link
+                key={l.ref}
+                href={`/compartidas/persona/${encodeURIComponent(l.ref)}`}
+                className="flex items-center gap-3 py-3 hover:opacity-80"
               >
-                <div className="min-w-0">
-                  <div className="truncate font-medium">
-                    {p.displayName || p.email}
+                <Avatar className="size-10">
+                  <AvatarFallback>{l.name[0]?.toUpperCase() ?? "?"}</AvatarFallback>
+                </Avatar>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="truncate text-sm font-semibold">{l.name}</span>
+                    {!l.isApp && (
+                      <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">sin app</span>
+                    )}
                   </div>
-                  {p.displayName && (
-                    <div className="truncate text-[11px] text-muted-foreground">
-                      {p.email}
+                  {future.length > 0 && (
+                    <div className="text-xs text-muted-foreground">
+                      incluye {future.map((c) => formatMoney(l.upcoming[c], c)).join(" + ")} de cuotas que vienen
                     </div>
                   )}
                 </div>
-                <div
-                  className={`text-sm font-semibold tabular-nums ${
-                    p.net > 0
-                      ? "text-success"
-                      : p.net < 0
-                        ? "text-destructive"
-                        : ""
+                <span
+                  className={`text-right text-sm font-semibold tabular-nums ${
+                    b.tone === "success" ? "text-success" : b.tone === "destructive" ? "text-destructive" : "text-muted-foreground"
                   }`}
                 >
-                  {p.net > 0
-                    ? `+${formatCurrency(p.net)}`
-                    : p.net < 0
-                      ? `-${formatCurrency(Math.abs(p.net))}`
-                      : formatCurrency(0)}
-                </div>
-              </div>
-            ))}
+                  {b.text}
+                </span>
+                <ChevronRight className="size-4 text-muted-foreground" />
+              </Link>
+            );
+          })}
+        </CardContent>
+      </Card>
+
+      {myRecent.length > 0 && (
+        <Card className="rounded-3xl">
+          <CardHeader className="pb-1">
+            <CardTitle className="flex items-center gap-1.5 text-sm font-semibold">
+              <HandCoins className="size-4" /> Gastos que dividiste
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="divide-y">
+            {myRecent.map((s) => {
+              const pending = s.participants.filter((p) => p.status === "pending").length;
+              const rejected = s.participants.filter((p) => p.status === "rejected").length;
+              return (
+                <Link key={s.id} href={`/compartidas/gasto/${s.id}`} className="flex items-center gap-3 py-3 hover:opacity-80">
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-medium">{s.description}</div>
+                    <div className="truncate text-xs text-muted-foreground">
+                      con {s.participants.map((p) => p.name.split(" ")[0]).join(", ")} · {s.date.split("-").reverse().join("/")}
+                      {pending > 0 && ` · ${pending} sin responder`}
+                      {rejected > 0 && ` · ${rejected} no aceptó`}
+                    </div>
+                  </div>
+                  <span className="text-sm font-semibold tabular-nums">{formatMoney(s.totalAmount, s.currency)}</span>
+                  <ChevronRight className="size-4 text-muted-foreground" />
+                </Link>
+              );
+            })}
           </CardContent>
         </Card>
       )}
 
-      {loading && <p className="text-sm text-muted-foreground">Cargando…</p>}
-
-      {/* Compartidos por mí */}
-      <Section
-        title="Compartidos por vos"
-        items={ownerSorted}
-        currentUid={user?.uid ?? ""}
-        currentEmail={user?.email?.toLowerCase() ?? ""}
-        viewerIsOwner
-      />
-
-      {/* Compartidos conmigo */}
-      <Section
-        title="Te compartieron"
-        items={participantSorted}
-        currentUid={user?.uid ?? ""}
-        currentEmail={user?.email?.toLowerCase() ?? ""}
-        viewerIsOwner={false}
-      />
-
-      {!loading &&
-        ownerSide.length === 0 &&
-        participantOnly.length === 0 && (
-          <Card className="rounded-3xl">
-            <CardContent className="py-16 text-center">
-              <div className="mx-auto mb-3 flex size-12 items-center justify-center rounded-2xl bg-muted">
-                <Users className="size-5 text-muted-foreground" />
-              </div>
-              <p className="text-sm font-medium">Sin gastos compartidos todavía</p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                Al cargar un gasto, activá &quot;Compartirlo con alguien&quot; y elegí los contactos.
-              </p>
-            </CardContent>
-          </Card>
-        )}
+      <Sheet open={open} onOpenChange={setOpen}>
+        <SheetContent side="bottom" className="sheet-md-modal max-h-[92vh] overflow-y-auto p-0">
+          <SheetHeader className="px-5 pt-5">
+            <SheetTitle>Registrar pago o préstamo</SheetTitle>
+          </SheetHeader>
+          <div className="px-5 pb-6 pt-2">
+            {open && <PersonTransferForm onSubmitted={() => setOpen(false)} />}
+          </div>
+        </SheetContent>
+      </Sheet>
     </div>
   );
-}
-
-function Section({
-  title,
-  items,
-  currentUid,
-  currentEmail,
-  viewerIsOwner,
-}: {
-  title: string;
-  items: SharedExpense[];
-  currentUid: string;
-  currentEmail: string;
-  viewerIsOwner: boolean;
-}) {
-  if (items.length === 0) return null;
-  return (
-    <section className="space-y-2">
-      <h2 className="text-sm font-semibold text-muted-foreground">{title}</h2>
-      <div className="space-y-2">
-        {items.map((s) => (
-          <Link key={s.id} href={`/compartidas/${s.id}`}>
-            <Card className="rounded-2xl transition hover:shadow-sm active:scale-[0.99]">
-              <CardContent className="flex items-center gap-3 py-3.5">
-                <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-muted text-foreground">
-                  <Users className="size-5" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="truncate text-sm font-semibold">
-                      {s.description || "Gasto compartido"}
-                    </span>
-                    <StatusChip
-                      sharedExpense={s}
-                      currentUid={currentUid}
-                      currentEmail={currentEmail}
-                      viewerIsOwner={viewerIsOwner}
-                    />
-                  </div>
-                  <div className="text-xs text-muted-foreground">
-                    {formatDate(s.date.toDate())} ·{" "}
-                    {viewerIsOwner
-                      ? `${s.participants.length} ${s.participants.length === 1 ? "participante" : "participantes"}`
-                      : `de ${s.ownerDisplayName || s.ownerEmail}`}
-                  </div>
-                </div>
-                <div className="text-sm font-semibold tabular-nums">
-                  {formatCurrency(s.totalAmount)}
-                </div>
-                <ChevronRight className="size-4 text-muted-foreground" />
-              </CardContent>
-            </Card>
-          </Link>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function StatusChip({
-  sharedExpense,
-  currentUid,
-  currentEmail,
-  viewerIsOwner,
-}: {
-  sharedExpense: SharedExpense;
-  currentUid: string;
-  currentEmail: string;
-  viewerIsOwner: boolean;
-}) {
-  if (sharedExpense.status === "cancelled") {
-    return (
-      <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
-        Cancelado
-      </span>
-    );
-  }
-  if (viewerIsOwner) {
-    const others = sharedExpense.participants.filter((p) => p.status !== "owner");
-    const allAccepted = others.every((p) => p.status === "accepted");
-    const anyRejected = others.some((p) => p.status === "rejected");
-    if (anyRejected) {
-      return (
-        <span className="rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] font-medium text-destructive">
-          Con rechazos
-        </span>
-      );
-    }
-    if (allAccepted) {
-      return (
-        <span className="rounded-full bg-success/10 px-2 py-0.5 text-[10px] font-medium text-success">
-          Aceptado
-        </span>
-      );
-    }
-    return (
-      <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
-        Pendiente
-      </span>
-    );
-  }
-  const me =
-    sharedExpense.participants.find((p) => p.uid === currentUid) ??
-    sharedExpense.participants.find(
-      (p) => !p.uid && p.email.toLowerCase() === currentEmail,
-    );
-  if (!me) return null;
-  if (me.status === "accepted") {
-    return (
-      <span className="rounded-full bg-success/10 px-2 py-0.5 text-[10px] font-medium text-success">
-        Aceptado
-      </span>
-    );
-  }
-  if (me.status === "rejected") {
-    return (
-      <span className="rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] font-medium text-destructive">
-        Rechazado
-      </span>
-    );
-  }
-  return (
-    <span className="rounded-full bg-brand/15 px-2 py-0.5 text-[10px] font-medium text-brand">
-      Te toca responder
-    </span>
-  );
-}
-
-interface PerPersonBalance {
-  email: string;
-  displayName: string | null;
-  net: number; // > 0 te deben, < 0 le debés
-}
-
-function computeBalances(
-  currentUid: string,
-  currentEmail: string,
-  asOwner: SharedExpense[],
-  asParticipant: SharedExpense[],
-) {
-  const map = new Map<string, PerPersonBalance>();
-
-  // Cuando soy owner: cada participante aceptado me debe su monto.
-  for (const s of asOwner) {
-    if (s.status === "cancelled") continue;
-    for (const p of s.participants) {
-      if (p.status !== "accepted") continue;
-      const key = p.email;
-      const cur = map.get(key) ?? { email: p.email, displayName: p.displayName ?? null, net: 0 };
-      cur.net += p.amount;
-      map.set(key, cur);
-    }
-  }
-  // Cuando soy participant: si acepté, le debo mi monto al owner.
-  for (const s of asParticipant) {
-    if (s.status === "cancelled") continue;
-    const me =
-      s.participants.find((p) => p.uid === currentUid) ??
-      s.participants.find(
-        (p) => !p.uid && p.email.toLowerCase() === currentEmail,
-      );
-    if (!me || me.status !== "accepted") continue;
-    const key = s.ownerEmail;
-    const cur = map.get(key) ?? { email: s.ownerEmail, displayName: s.ownerDisplayName ?? null, net: 0 };
-    cur.net -= me.amount;
-    map.set(key, cur);
-  }
-
-  const perPerson = [...map.values()].filter((p) => p.net !== 0);
-  perPerson.sort((a, b) => Math.abs(b.net) - Math.abs(a.net));
-
-  const totalOwedToYou = perPerson.reduce((s, p) => s + Math.max(0, p.net), 0);
-  const totalYouOwe = perPerson.reduce((s, p) => s + Math.max(0, -p.net), 0);
-
-  return { perPerson, totalOwedToYou, totalYouOwe };
 }

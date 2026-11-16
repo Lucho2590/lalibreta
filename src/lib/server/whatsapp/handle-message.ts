@@ -41,6 +41,10 @@ import {
   shareCodeExists,
 } from "../sharing";
 import { notify } from "../notifications";
+import { ensureOfflineContact, loadPeopleContext } from "../people";
+import { createSplit } from "../splits";
+import { createPersonTransfer } from "../person-transfers";
+import { PeopleError } from "../connections";
 import { loadSession, saveSession, takeDraft } from "./sessions";
 import {
   draftType,
@@ -51,6 +55,7 @@ import {
   type ExchangeDraft,
   type RecurringDraft,
   type TransferDraft,
+  type PersonTransferDraft,
   type StatementDraft,
   type TransactionDraft,
   type WaIncomingMessage,
@@ -327,11 +332,12 @@ const routeMessage = async (
     (userSnap.data()?.displayName as string | undefined) ?? profileName ?? null;
   const agentName =
     (userSnap.data()?.agentName as string | undefined) ?? (await ensureAgentName(uid));
-  const [balances, sharedWithMe, myShares, rules] = await Promise.all([
+  const [balances, sharedWithMe, myShares, rules, peopleCtx] = await Promise.all([
     getBalances(uid, accounts),
     loadSharedAccounts(uid),
     loadMyShares(uid),
     loadCategoryRules(uid),
+    loadPeopleContext(uid),
   ]);
   const catName = new Map(categories.map((c) => [c.id, c.name]));
   const categoryRules = rules
@@ -353,6 +359,8 @@ const routeMessage = async (
       myShares,
       categoryRules,
       pendingDraft: session.pendingDraft,
+      people: peopleCtx.people,
+      pending: peopleCtx.pending,
     },
     session.history,
     input,
@@ -438,6 +446,9 @@ const decideDraft = async (
     case "transfer":
       await confirmTransfer(waId, uid, draft as TransferDraft);
       return;
+    case "person-transfer":
+      await confirmPersonTransfer(waId, uid, draft as PersonTransferDraft);
+      return;
     default:
       await confirmTransaction(waId, uid, draft as TransactionDraft);
   }
@@ -471,7 +482,7 @@ const confirmTransaction = async (waId: string, uid: string, draft: TransactionD
     return;
   }
 
-  await createTransactionAdmin({
+  const txId = await createTransactionAdmin({
     ownerUid: uid,
     account: toServerAccount(account),
     accountId: account.id,
@@ -485,11 +496,57 @@ const confirmTransaction = async (waId: string, uid: string, draft: TransactionD
     currency: draft.currency ?? "ARS",
   });
 
+  // Dividirlo: los nuevos sin app se agregan como contactos; el server avisa a los que usan la app.
+  let splitText = "";
+  if (draft.split?.people.length) {
+    try {
+      const participants = [];
+      for (const p of draft.split.people) {
+        const ref = p.ref ?? (await ensureOfflineContact(uid, p.newName ?? p.name));
+        participants.push({ ref, shareType: p.shareType, value: p.value });
+      }
+      await createSplit({ uid }, { txId, mode: draft.split.mode, participants });
+      const apps = draft.split.people.filter((p) => p.isApp).map((p) => p.name.split(" ")[0]);
+      const offline = draft.split.people.filter((p) => !p.isApp).map((p) => p.name.split(" ")[0]);
+      splitText = [
+        apps.length ? `\n👥 A ${apps.join(" y ")} le${apps.length > 1 ? "s" : ""} llegó para aceptar su parte.` : "",
+        offline.length ? `\n📝 Anoté que ${offline.join(" y ")} te debe${offline.length > 1 ? "n" : ""} su parte; te voy a recordar cobrar.` : "",
+      ].join("");
+    } catch (err) {
+      splitText = `\n⚠️ No pude dividirlo: ${err instanceof PeopleError ? err.message : "error"}. Podés hacerlo desde la app.`;
+    }
+  }
+
   const cuotas = draft.installments > 1 ? ` en ${draft.installments} cuotas` : "";
   await sendText(
     waId,
-    `✅ Guardado: *${draft.description}* por *${formatMoney(draft.amount, draft.currency ?? "ARS")}*${cuotas} (${account.name}).${createdCategory ? `\n🏷️ Creé la categoría *${category.name}*.` : ""}`,
+    `✅ Guardado: *${draft.description}* por *${formatMoney(draft.amount, draft.currency ?? "ARS")}*${cuotas} (${account.name}).${createdCategory ? `\n🏷️ Creé la categoría *${category.name}*.` : ""}${splitText}`,
   );
+};
+
+const confirmPersonTransfer = async (waId: string, uid: string, d: PersonTransferDraft) => {
+  try {
+    const person = d.ref ?? (await ensureOfflineContact(uid, d.newName ?? d.personName));
+    const r = await createPersonTransfer({ uid }, {
+      person,
+      direction: d.direction,
+      kind: d.kind,
+      accountId: d.accountId,
+      amount: d.amount,
+      currency: d.currency,
+      date: d.date,
+    });
+    const what =
+      d.direction === "in"
+        ? `${d.personName} te pasó *${formatMoney(d.amount, d.currency)}* (entró en ${d.accountName})`
+        : `${d.kind === "loan" ? "Le prestaste" : "Le pasaste"} a ${d.personName} *${formatMoney(d.amount, d.currency)}* (salió de ${d.accountName})`;
+    await sendText(
+      waId,
+      `✅ Anotado: ${what}.${r.status === "pending" ? `\n⏳ ${d.personName.split(" ")[0]} lo tiene que confirmar en la app.` : ""}`,
+    );
+  } catch (err) {
+    await sendText(waId, `No pude registrarlo: ${err instanceof PeopleError ? err.message : "error"}.`);
+  }
 };
 
 const confirmBatch = async (waId: string, uid: string, draft: BatchDraft) => {

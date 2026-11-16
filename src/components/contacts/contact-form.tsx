@@ -1,92 +1,40 @@
 "use client";
 
 import { useState } from "react";
-import { Search } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useAuth } from "@/hooks/use-auth";
-import { apiFetch } from "@/lib/api";
-import { upsertContact } from "@/lib/domain/contacts";
+import { addOfflineContact } from "@/lib/domain/contacts";
 
-interface LookupResult {
-  uid: string;
-  email: string;
-  displayName: string | null;
-  photoURL: string | null;
-}
-
-export function ContactForm({ onCreated }: { onCreated?: () => void }) {
+/**
+ * Persona que NO usa la app (un amigo, un familiar): solo el nombre es
+ * obligatorio. Sirve para repartirle gastos o anotar préstamos y que la app
+ * te recuerde cobrarle.
+ */
+export function ContactForm({ onCreated }: { onCreated?: (contactId: string, name: string) => void }) {
   const { user } = useAuth();
-  const [email, setEmail] = useState("");
   const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
   const [busy, setBusy] = useState(false);
-  const [lookup, setLookup] = useState<LookupResult | null>(null);
-  const [lookupChecked, setLookupChecked] = useState(false);
-
-  const checkRegistered = async () => {
-    if (!user) return;
-    const e = email.trim().toLowerCase();
-    if (!e) return;
-    setLookupChecked(false);
-    try {
-      const r = await apiFetch(`/api/users/lookup?email=${encodeURIComponent(e)}`);
-      if (r.ok) {
-        const data = (await r.json()) as LookupResult;
-        setLookup(data);
-        if (!name && data.displayName) setName(data.displayName);
-      } else {
-        setLookup(null);
-      }
-      setLookupChecked(true);
-    } catch (err) {
-      console.error(err);
-      setLookup(null);
-      setLookupChecked(true);
-    }
-  };
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const cleanEmail = email.trim().toLowerCase();
-    if (!user || !cleanEmail) return;
-    if (cleanEmail === user.email?.toLowerCase()) {
-      toast.error("No te podés agregar a vos mismo");
-      return;
-    }
+    e.stopPropagation();
+    if (!user || !name.trim()) return;
     setBusy(true);
     try {
-      // Si no chequeó manualmente, hacemos el lookup en el submit.
-      let resolvedLookup = lookup;
-      if (!lookupChecked) {
-        try {
-          const r = await apiFetch(
-            `/api/users/lookup?email=${encodeURIComponent(cleanEmail)}`,
-          );
-          if (r.ok) resolvedLookup = (await r.json()) as LookupResult;
-        } catch (err) {
-          console.warn("[contact] lookup falló", err);
-        }
-      }
-
-      await upsertContact(user.uid, {
-        email: cleanEmail,
-        displayName: name.trim() || resolvedLookup?.displayName || null,
-        linkedUid: resolvedLookup?.uid ?? null,
-        photoURL: resolvedLookup?.photoURL ?? null,
-      });
-      toast.success(
-        resolvedLookup ? `Contacto agregado · ${resolvedLookup.email} está en la app` : "Contacto agregado",
-      );
-      setEmail("");
+      const id = await addOfflineContact(user.uid, { name, email, phone });
+      toast.success(`${name.trim()} agregado`);
+      onCreated?.(id, name.trim());
       setName("");
-      setLookup(null);
-      setLookupChecked(false);
-      onCreated?.();
+      setEmail("");
+      setPhone("");
     } catch (err) {
-      toast.error("No se pudo guardar el contacto");
       console.error(err);
+      toast.error("No se pudo guardar");
     } finally {
       setBusy(false);
     }
@@ -94,60 +42,25 @@ export function ContactForm({ onCreated }: { onCreated?: () => void }) {
 
   return (
     <form onSubmit={submit} className="space-y-4">
-      <div className="space-y-1.5">
-        <Label htmlFor="contact-email">Email</Label>
-        <div className="flex gap-2">
-          <Input
-            id="contact-email"
-            type="email"
-            inputMode="email"
-            autoComplete="off"
-            className="h-12 flex-1"
-            placeholder="alguien@mail.com"
-            value={email}
-            onChange={(e) => {
-              setEmail(e.target.value);
-              setLookupChecked(false);
-              setLookup(null);
-            }}
-          />
-          <Button
-            type="button"
-            variant="outline"
-            className="h-12"
-            onClick={checkRegistered}
-            disabled={!email.trim()}
-            aria-label="Buscar en la app"
-          >
-            <Search className="size-4" />
-          </Button>
+      <div className="space-y-1">
+        <Label htmlFor="c-name">Nombre</Label>
+        <Input id="c-name" className="h-12" placeholder="Ej: Juan" value={name} onChange={(e) => setName(e.target.value)} autoFocus />
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <div className="space-y-1">
+          <Label htmlFor="c-phone">Teléfono (opcional)</Label>
+          <Input id="c-phone" className="h-11" inputMode="tel" value={phone} onChange={(e) => setPhone(e.target.value)} />
         </div>
-        {lookupChecked && (
-          <p className="text-xs text-muted-foreground">
-            {lookup
-              ? `Encontramos a ${lookup.displayName ?? lookup.email} en la app.`
-              : "No está registrado todavía. Lo agregás igual y cuando se sume vinculamos."}
-          </p>
-        )}
+        <div className="space-y-1">
+          <Label htmlFor="c-email">Email (opcional)</Label>
+          <Input id="c-email" className="h-11" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+        </div>
       </div>
-
-      <div className="space-y-1.5">
-        <Label htmlFor="contact-name">Nombre (opcional)</Label>
-        <Input
-          id="contact-name"
-          className="h-12"
-          placeholder="Ej: Pepito"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-        />
-      </div>
-
-      <Button
-        type="submit"
-        className="w-full h-12 bg-brand-grad text-white hover:opacity-95"
-        disabled={busy || !email.trim()}
-      >
-        {busy ? "Guardando…" : "Agregar contacto"}
+      <p className="text-xs text-muted-foreground">
+        Si la persona usa La Libreta, mejor conectate con ella: así puede aceptar los gastos que le asignás.
+      </p>
+      <Button type="submit" className="h-12 w-full bg-brand-grad text-white hover:opacity-95" disabled={busy || !name.trim()}>
+        {busy ? "Guardando…" : "Agregar"}
       </Button>
     </form>
   );

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Timestamp } from "firebase/firestore";
 import { toast } from "sonner";
+import { apiPost } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -93,7 +94,13 @@ export function CardCycleEditor({ account }: { account: Account }) {
     if (!user) return;
     setRecalcBusy(true);
     try {
-      await regenerateFutureInstallmentsForAccount(user.uid, account, key);
+      const touched = await regenerateFutureInstallmentsForAccount(user.uid, account, key);
+      // Los gastos repartidos con otras personas siguen los meses nuevos.
+      if (touched.length) {
+        await apiPost("/api/splits/resync", { txIds: touched }).catch((err) =>
+          console.warn("[resync splits]", err),
+        );
+      }
       toast.success("Cuotas futuras recalculadas");
     } catch (err) {
       toast.error("Error al recalcular");

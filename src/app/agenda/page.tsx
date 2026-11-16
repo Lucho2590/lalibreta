@@ -22,7 +22,6 @@ import {
 import { ActivityCard, type ActivityCardActions } from "@/components/agenda/activity-card";
 import { ActivityForm } from "@/components/agenda/activity-form";
 import { TransactionForm } from "@/components/transactions/transaction-form";
-import type { ShareSplit } from "@/components/transactions/share-section";
 
 type Mine = { activity: Activity; me: ActivityParticipant };
 
@@ -95,16 +94,11 @@ export default function AgendaPage() {
     const others = a.participants.filter(
       (p) => p.uid !== user.uid && (p.status === "owner" || p.status === "accepted"),
     );
-    const each = Math.floor(100 / (others.length + 1));
-    const shareWith: ShareSplit[] = expenseFor.split
-      ? others.map((p) => ({
-          contactId: `email:${p.email}`,
-          email: p.email,
-          displayName: p.displayName ?? participantName(p),
-          uid: p.uid,
-          photoURL: p.photoURL ?? null,
-          percentage: each,
-        }))
+    // Dividir con los que van y usan la app (si no están conectados, el formulario lo avisa).
+    const splitWith = expenseFor.split
+      ? others
+          .filter((p): p is typeof p & { uid: string } => !!p.uid)
+          .map((p) => ({ uid: p.uid, name: p.displayName ?? participantName(p) }))
       : [];
     return {
       description: a.title,
@@ -112,7 +106,7 @@ export default function AgendaPage() {
       date: a.date < today ? a.date : today,
       amount: a.estimatedAmount ?? null,
       currency: a.currency ?? "ARS",
-      shareWith,
+      splitWith,
     };
   }, [expenseFor, user, today]);
 
@@ -251,7 +245,7 @@ export default function AgendaPage() {
                     amount: info.amount,
                     currency: info.currency,
                     byName: user.displayName ?? null,
-                    sharedExpenseId: info.sharedExpenseId,
+                    sharedExpenseId: info.splitId,
                   });
                 }}
                 onSubmitted={() => setExpenseFor(null)}
