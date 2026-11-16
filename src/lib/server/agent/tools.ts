@@ -19,6 +19,7 @@ import type { BalancesSnapshot } from "../queries-admin";
 import type { Currency } from "@/lib/domain/types";
 import { setAccountBalanceAdmin, setAccountParentAdmin, setCardDatesAdmin } from "../accounts-admin";
 import { PROPOSE_BATCH_TOOL, proposeBatch } from "./batch-tool";
+import { AGENDA_TOOLS, AGENDA_TOOL_NAMES, runAgendaTool } from "./agenda-tool";
 import { CATEGORY_ICON_IDS, createCategoryAdmin } from "../categories-admin";
 import {
   REDEEM_ERRORS,
@@ -644,7 +645,7 @@ export const TOOL_DEFINITIONS: ChatCompletionFunctionTool[] = [
         additionalProperties: false,
       },
     },
-  },
+  },  ...AGENDA_TOOLS,
 ];
 
 // ---------- Schemas ----------
@@ -1618,6 +1619,8 @@ export const executeTool = async (
   } catch {
     return { error: "Argumentos JSON inválidos" };
   }
+
+  if (AGENDA_TOOL_NAMES.has(name)) return runAgendaTool(ctx.uid, name, args);
 
   switch (name) {
     case "propose_transaction":

@@ -2,6 +2,7 @@ import "server-only";
 
 import { adminDb } from "./firebase-admin";
 import { notify } from "./notifications";
+import { agendaReminders } from "./activities";
 import { loadAccounts, loadCategories, toServerAccount, type ServerAccountInfo } from "./queries-admin";
 import { getOrBuildCycle } from "./transactions-admin";
 import { dateFromYMD, todayYMD } from "./time";
@@ -14,7 +15,8 @@ import { formatMoney } from "@/lib/format";
  * Avisos del día (los corre el cron de Vercel una vez por día, a la mañana):
  * - vencimiento de tarjetas (N días antes, según las preferencias),
  * - cierre de tarjetas (opcional),
- * - fijos que tocan hoy y todavía no se cargaron.
+ * - fijos que tocan hoy y todavía no se cargaron,
+ * - lo que hay en la agenda del día.
  * Cada aviso tiene una clave fija, así que correrlo dos veces no repite nada.
  */
 
@@ -41,13 +43,20 @@ export const runDailyReminders = async (now = new Date()): Promise<DailyRunResul
   const today = todayYMD(now);
   const users = await adminDb().collection("users").get();
   let sent = 0;
+  const prefsByUid = new Map<string, NotificationPrefs>();
   for (const user of users.docs) {
     const prefs = withDefaultPrefs(user.data().notificationPrefs);
+    prefsByUid.set(user.id, prefs);
     try {
       sent += await remindUser(user.id, prefs, today);
     } catch (err) {
       console.error("[cron] avisos de", user.id, err);
     }
+  }
+  try {
+    sent += await agendaReminders(today, (uid) => prefsByUid.get(uid) ?? null);
+  } catch (err) {
+    console.error("[cron] agenda del día", err);
   }
   return { users: users.size, sent };
 };

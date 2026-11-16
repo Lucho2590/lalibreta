@@ -10,6 +10,7 @@ import {
   Tag,
   Users,
   Wallet,
+  CalendarDays,
 } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -69,6 +70,9 @@ export function Header({ variant = "mobile" }: { variant?: "mobile" | "desktop" 
             {user?.email}
           </DropdownMenuLabel>
           <DropdownMenuSeparator />
+          <DropdownMenuItem render={<Link href="/agenda" />}>
+            <CalendarDays className="mr-2 size-4" /> Agenda
+          </DropdownMenuItem>
           <DropdownMenuItem render={<Link href="/fijos" />}>
             <Repeat className="mr-2 size-4" /> Fijos
           </DropdownMenuItem>

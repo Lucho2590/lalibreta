@@ -33,6 +33,11 @@ import {
 import { recurringCollectionPath } from "@/lib/domain/recurring";
 import { contactsCollectionPath } from "@/lib/domain/contacts";
 import { sharedExpensesCollectionPath } from "@/lib/domain/shared";
+import {
+  activitiesCollectionPath,
+  compareActivities,
+  type Activity,
+} from "@/lib/domain/activities";
 
 const accountsCollectionPath = (uid: string) => `users/${uid}/accounts`;
 
@@ -229,4 +234,36 @@ export function useNotifications(max = 60) {
     [user, max],
   );
   return useCollection<AppNotification>(q);
+}
+
+/**
+ * Agenda: las actividades donde participo (mías o a las que me invitaron).
+ * Dos consultas: por uid, y por email para las invitaciones que llegaron
+ * antes de que el invitado tuviera cuenta.
+ */
+export function useActivities() {
+  const { user } = useAuth();
+  const email = user?.email?.toLowerCase() ?? null;
+  const byUid = useMemo(
+    () =>
+      user
+        ? query(collection(db, activitiesCollectionPath()), where("participantUids", "array-contains", user.uid))
+        : null,
+    [user],
+  );
+  const byEmail = useMemo(
+    () =>
+      email
+        ? query(collection(db, activitiesCollectionPath()), where("participantEmails", "array-contains", email))
+        : null,
+    [email],
+  );
+  const a = useCollection<Activity>(byUid);
+  const b = useCollection<Activity>(byEmail);
+  const data = useMemo(() => {
+    const map = new Map<string, Activity>();
+    for (const x of [...a.data, ...b.data]) map.set(x.id, x);
+    return [...map.values()].sort(compareActivities);
+  }, [a.data, b.data]);
+  return { data, loading: a.loading || b.loading, error: a.error ?? b.error };
 }
