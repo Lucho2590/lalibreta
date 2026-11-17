@@ -80,6 +80,23 @@ export default function CuentasConGentePage() {
         .sort((a, b) => b.others - a.others),
     [splits, user, monthKey],
   );
+  // Lo que me toca pagar a mí este mes de gastos de otros (la cuota del mes).
+  const iPayThisMonth = useMemo(
+    () =>
+      splits
+        .filter((s) => s.ownerUid !== user?.uid && s.status === "active")
+        .map((s) => {
+          const me = s.participants.find((p) => p.uid === user?.uid);
+          if (!me || (me.status !== "accepted" && me.status !== "pending")) return null;
+          const sched = participantSchedule(s, me.amount);
+          const idx = sched.findIndex((c) => c.paymentMonth === monthKey);
+          if (idx < 0) return null;
+          return { s, amount: sched[idx].amount, cuota: sched.length > 1 ? idx + 1 : 0, cuotas: sched.length, total: me.amount, pending: me.status === "pending" };
+        })
+        .filter((x): x is NonNullable<typeof x> => !!x)
+        .sort((a, b) => b.amount - a.amount),
+    [splits, user, monthKey],
+  );
 
   return (
     <div className="space-y-6">
@@ -178,6 +195,45 @@ export default function CuentasConGentePage() {
         </CardContent>
       </Card>
 
+      {iPayThisMonth.length > 0 && (
+        <Card className="rounded-3xl">
+          <CardHeader className="pb-1">
+            <CardTitle className="flex items-center gap-1.5 text-sm font-semibold">
+              <HandCoins className="size-4" /> Te toca pagar en {monthName}
+            </CardTitle>
+            <p className="text-xs text-muted-foreground">Tu parte de gastos que pagó otra persona (en cuotas, la cuota del mes).</p>
+          </CardHeader>
+          <CardContent className="divide-y">
+            {iPayThisMonth.map(({ s, amount, cuota, cuotas, total, pending }) => (
+              <Link key={s.id} href={`/compartidas/gasto/${s.id}`} className="flex items-center gap-3 py-3 hover:opacity-80">
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-sm font-medium">{s.description}</div>
+                  <div className="truncate text-xs text-muted-foreground">
+                    pagó {s.ownerName.split(" ")[0]}
+                    {cuota > 0 ? ` · cuota ${cuota}/${cuotas} · total ${formatMoney(total, s.currency)}` : ` · ${s.date.split("-").reverse().join("/")}`}
+                    {pending && " · sin responder"}
+                  </div>
+                </div>
+                <span className="text-right text-sm font-semibold tabular-nums text-destructive">
+                  {formatMoney(amount, s.currency)}
+                </span>
+                <ChevronRight className="size-4 text-muted-foreground" />
+              </Link>
+            ))}
+            <div className="flex justify-between pt-2.5 text-sm font-semibold">
+              <span>Total del mes</span>
+              <span className="tabular-nums">
+                {(["ARS", "USD"] as const)
+                  .map((c) => ({ c, v: iPayThisMonth.filter((x) => x.s.currency === c).reduce((a, x) => a + x.amount, 0) }))
+                  .filter((x) => x.v > 0.009)
+                  .map((x) => formatMoney(Math.round(x.v * 100) / 100, x.c))
+                  .join(" + ")}
+              </span>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {myThisMonth.length > 0 && (
         <Card className="rounded-3xl">
           <CardHeader className="pb-1">
@@ -210,6 +266,16 @@ export default function CuentasConGentePage() {
                 </Link>
               );
             })}
+            <div className="flex justify-between pt-2.5 text-sm font-semibold">
+              <span>Total que te toca cobrar este mes</span>
+              <span className="tabular-nums text-success">
+                {(["ARS", "USD"] as const)
+                  .map((c) => ({ c, v: myThisMonth.filter((x) => x.s.currency === c).reduce((a, x) => a + x.others, 0) }))
+                  .filter((x) => x.v > 0.009)
+                  .map((x) => formatMoney(Math.round(x.v * 100) / 100, x.c))
+                  .join(" + ")}
+              </span>
+            </div>
           </CardContent>
         </Card>
       )}

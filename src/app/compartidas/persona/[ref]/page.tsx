@@ -16,11 +16,17 @@ import { apiPost, errorText } from "@/lib/api";
 import { ledgerNow } from "@/lib/domain/debts";
 import { useMonth } from "@/hooks/use-month";
 import { formatMonth } from "@/lib/format";
-import { transferSide, type PersonRef } from "@/lib/domain/people";
+import { participantSchedule, transferSide, type PersonRef, type Split } from "@/lib/domain/people";
 import type { Currency } from "@/lib/domain/types";
 import { formatMoney } from "@/lib/format";
 
 const ddmm = (ymd: string) => ymd.split("-").reverse().join("/");
+/** En cuotas: el monto de una cuota (si no, la parte entera). */
+const perCuota = (s: Split, amount: number) => participantSchedule(s, amount)[0]?.amount ?? amount;
+const cuotasText = (s: Split, amount: number) => {
+  const n = participantSchedule(s, amount).length;
+  return n > 1 ? ` · ${n} cuotas · total ${formatMoney(amount, s.currency)}` : "";
+};
 
 interface Row {
   key: string;
@@ -57,6 +63,7 @@ export default function PersonPage({ params }: { params: Promise<{ ref: string }
     const l = ledger.get(ref);
     if (l) {
       const bySplit = new Map<string, Row>();
+      const splitEntries = new Map<string, typeof l.entries>();
       for (const e of l.entries) {
         if (e.kind === "transfer") {
           const t = transfers.find((x) => x.id === e.id);
@@ -74,23 +81,37 @@ export default function PersonPage({ params }: { params: Promise<{ ref: string }
           continue;
         }
         const k = `s-${e.id}-${e.currency}`;
-        const row = bySplit.get(k);
-        if (row) {
-          row.amount = Math.round((row.amount + e.amount) * 100) / 100;
-          row.date = e.date < row.date ? e.date : row.date;
-        } else {
-          const s = splits.find((x) => x.id === e.id);
-          bySplit.set(k, {
-            key: k,
-            kind: "split",
-            id: e.id,
-            date: s?.date ?? e.date,
-            title: e.description,
-            detail: e.amount > 0 ? "Su parte de un gasto tuyo" : "Tu parte de un gasto suyo",
-            amount: e.amount,
-            currency: e.currency,
-          });
+        const list = splitEntries.get(k) ?? [];
+        list.push(e);
+        splitEntries.set(k, list);
+      }
+      // Gastos divididos: uno por gasto. En cuotas, el monto es la cuota del
+      // mes que se mira (o la próxima), con "cuota k/n" y el total al lado.
+      for (const [k, list] of splitEntries) {
+        const e0 = list[0];
+        const sorted = [...list].sort((x, y) => x.paymentMonth.localeCompare(y.paymentMonth));
+        const total = Math.round(sorted.reduce((acc, x) => acc + x.amount, 0) * 100) / 100;
+        const s = splits.find((x) => x.id === e0.id);
+        const base = e0.amount > 0 ? "Su parte de un gasto tuyo" : "Tu parte de un gasto suyo";
+        if (sorted.length === 1) {
+          bySplit.set(k, { key: k, kind: "split", id: e0.id, date: s?.date ?? e0.date, title: e0.description, detail: base, amount: total, currency: e0.currency });
+          continue;
         }
+        let idx = sorted.findIndex((x) => x.paymentMonth === monthKey);
+        const isThisMonth = idx >= 0;
+        if (idx < 0) idx = sorted.findIndex((x) => x.paymentMonth > monthKey);
+        const cuota = idx >= 0 ? sorted[idx] : sorted[sorted.length - 1];
+        const n = idx >= 0 ? idx + 1 : sorted.length;
+        bySplit.set(k, {
+          key: k,
+          kind: "split",
+          id: e0.id,
+          date: cuota.date,
+          title: e0.description,
+          detail: `${base} · cuota ${n}/${sorted.length}${isThisMonth ? "" : idx >= 0 ? " (la próxima)" : " (la última)"} · total ${formatMoney(Math.abs(total), e0.currency)}`,
+          amount: cuota.amount,
+          currency: e0.currency,
+        });
       }
       out.push(...bySplit.values());
     }
@@ -105,8 +126,8 @@ export default function PersonPage({ params }: { params: Promise<{ ref: string }
             id: s.id,
             date: s.date,
             title: s.description,
-            detail: "Su parte de un gasto tuyo",
-            amount: p.amount,
+            detail: `Su parte de un gasto tuyo${cuotasText(s, p.amount)}`,
+            amount: perCuota(s, p.amount),
             currency: s.currency,
             pendingLabel: p.status === "pending" ? "sin responder" : "no aceptó",
           });
@@ -120,8 +141,8 @@ export default function PersonPage({ params }: { params: Promise<{ ref: string }
             id: s.id,
             date: s.date,
             title: s.description,
-            detail: "Te asignó una parte",
-            amount: -p.amount,
+            detail: `Te asignó una parte${cuotasText(s, p.amount)}`,
+            amount: -perCuota(s, p.amount),
             currency: s.currency,
             pendingLabel: "respondé",
           });
@@ -147,7 +168,7 @@ export default function PersonPage({ params }: { params: Promise<{ ref: string }
       });
     }
     return out.sort((a, b) => b.date.localeCompare(a.date));
-  }, [ledger, splits, transfers, me, ref]);
+  }, [ledger, splits, transfers, me, ref, monthKey]);
 
   // "Me pagó" / "Le pagué" se precargan con lo de ahora (no con las cuotas que vienen).
   const owedARS = l ? ledgerNow(l, "ARS").now : 0;
