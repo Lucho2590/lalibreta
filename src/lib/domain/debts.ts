@@ -133,18 +133,41 @@ export const computePeopleLedger = ({ me, splits, transfers, nowMonth }: LedgerI
 /** Neto total con una persona en una moneda (vencido + cuotas que vienen). */
 export const ledgerTotal = (l: PersonLedger, c: Currency) => round2(l.due[c] + l.upcoming[c]);
 
-/** Totales: lo que me deben y lo que debo, por moneda (sobre el neto de cada persona). */
+/**
+ * Con una persona, en una moneda: lo que corresponde AHORA (cuotas vencidas
+ * hasta el mes, menos lo pagado) y lo que queda para las cuotas que vienen.
+ * Si alguien pagó por adelantado, primero cubre lo vencido y el resto va a
+ * las cuotas que vienen (no se muestra como "le debés").
+ */
+export const ledgerNow = (l: PersonLedger, c: Currency) => {
+  const due = l.due[c];
+  const upcoming = l.upcoming[c];
+  const total = round2(due + upcoming);
+  let now = due;
+  if (due * upcoming < 0) now = Math.abs(due) > Math.abs(upcoming) ? total : 0;
+  now = round2(now);
+  return { now, later: round2(total - now), total };
+};
+
+/**
+ * Totales por moneda: lo que me deben y lo que debo AHORA (hasta el mes de
+ * la cuenta) y aparte lo de cuotas que vienen.
+ */
 export const ledgerTotals = (ledger: Iterable<PersonLedger>) => {
   const owedToMe = zero();
   const iOwe = zero();
+  const laterToMe = zero();
+  const laterIOwe = zero();
   for (const l of ledger) {
     for (const c of ["ARS", "USD"] as const) {
-      const t = ledgerTotal(l, c);
-      if (t > 0.009) owedToMe[c] = round2(owedToMe[c] + t);
-      else if (t < -0.009) iOwe[c] = round2(iOwe[c] - t);
+      const { now, later } = ledgerNow(l, c);
+      if (now > 0.009) owedToMe[c] = round2(owedToMe[c] + now);
+      else if (now < -0.009) iOwe[c] = round2(iOwe[c] - now);
+      if (later > 0.009) laterToMe[c] = round2(laterToMe[c] + later);
+      else if (later < -0.009) laterIOwe[c] = round2(laterIOwe[c] - later);
     }
   }
-  return { owedToMe, iOwe };
+  return { owedToMe, iOwe, laterToMe, laterIOwe };
 };
 
 // === Cuánto de cada gasto repartido es mío ===
