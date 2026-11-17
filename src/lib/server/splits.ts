@@ -504,23 +504,12 @@ export const cancelSplit = async (
  * participantes.
  */
 export const resyncSplitsForTx = async (ownerUid: string, txIds: string[]): Promise<number> => {
+  // Mismo camino que cuando un estimado pasa a real: copia los meses y el
+  // total, recalcula las partes en %, rehace los asientos y avisa si cambió.
   let n = 0;
   for (const txId of txIds) {
-    const snaps = await col().where("ownerTxId", "==", txId).get();
-    for (const d of snaps.docs) {
-      const split = toSplit(d);
-      if (split.ownerUid !== ownerUid || split.status !== "active") continue;
-      const tx = await loadOwnerExpense(ownerUid, txId).catch(() => null);
-      if (!tx) continue;
-      const updated: Split = { ...split, schedule: tx.schedule, totalAmount: tx.totalAmount };
-      await d.ref.update({ schedule: tx.schedule, totalAmount: tx.totalAmount, updatedAt: FieldValue.serverTimestamp() });
-      for (const p of split.participants) {
-        if (!p.uid || !p.participantTxId || !p.categoryId) continue;
-        await removeParticipantBooks(p.uid, split.id);
-        const batch = adminDb().batch();
-        await writeParticipantBooks(batch, p.uid, updated, p, p.categoryId);
-        await batch.commit();
-      }
+    for (const splitId of await activeSplitIdsForTx(ownerUid, txId)) {
+      await relinkSplit(ownerUid, splitId, txId);
       n += 1;
     }
   }
@@ -586,9 +575,9 @@ export const relinkSplit = async (ownerUid: string, splitId: string, newTxId: st
       await notify(p.uid, {
         kind: "split-request",
         title: `Cambió el monto de ${split.description}`,
-        body: `Llegó el monto real: ahora te toca ${shareText(updated, p.amount)} (antes ${formatMoney(prev.amount, split.currency)}).`,
+        body: `${split.ownerName} actualizó el gasto: ahora te toca ${shareText(updated, p.amount)} (antes ${formatMoney(prev.amount, split.currency)}).`,
         url: `/compartidas/gasto/${split.id}`,
-        dedupeKey: `split-relink-${split.id}-${p.uid}-${newTxId}`,
+        dedupeKey: `split-relink-${split.id}-${p.uid}-${newTxId}-${p.amount}`,
       });
     }
   }
