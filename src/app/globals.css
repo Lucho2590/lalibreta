@@ -189,7 +189,8 @@
       width: 28rem;
       max-width: min(28rem, 100vw);
       height: 100vh;
-      max-height: 100vh;
+      /* !important: le gana al max-h-[92dvh] de las hojas de abajo (mobile). */
+      max-height: 100vh !important;
       border-radius: 0;
       border: 0;
       border-left: 1px solid var(--border);
