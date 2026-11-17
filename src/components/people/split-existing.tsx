@@ -20,7 +20,7 @@ export function SplitExistingSheet({ item, onClose }: { item: Installment | null
   const total = Math.round(item.amount * Math.max(1, item.totalInstallments) * 100) / 100;
 
   const save = async () => {
-    const payload = splitPayload(total, split);
+    const payload = splitPayload(total, split, item.totalInstallments);
     if (payload.error) return toast.error(payload.error);
     setBusy(true);
     try {
@@ -49,8 +49,9 @@ export function SplitExistingSheet({ item, onClose }: { item: Installment | null
         <SheetHeader className="px-5 pt-5">
           <SheetTitle>Dividir “{item.description || "gasto"}”</SheetTitle>
           <p className="text-sm text-muted-foreground">
-            {formatMoney(total, currency)}
-            {item.totalInstallments > 1 && ` en ${item.totalInstallments} cuotas`}
+            {item.totalInstallments > 1
+              ? `${item.totalInstallments} cuotas de ${formatMoney(item.amount, currency)} (total ${formatMoney(total, currency)})`
+              : formatMoney(total, currency)}
           </p>
         </SheetHeader>
         <div className="space-y-4 px-5 pb-6 pt-3">

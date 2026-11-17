@@ -42,9 +42,19 @@ export interface SplitState {
 
 export const emptySplit = (): SplitState => ({ enabled: false, people: [], mode: "installments", always: false });
 
-/** Partes listas para mandar al server (o el error para mostrar). */
-export const splitPayload = (total: number, s: SplitState) => {
-  const participants = s.people.map((p) => ({ ref: p.ref, shareType: p.shareType, value: parseAmount(p.input) || 0 }));
+/** ¿Los montos se escriben y se muestran por cuota? (gasto en cuotas que se paga en cuotas) */
+export const perCuota = (s: Pick<SplitState, "mode">, installments: number) => installments > 1 && s.mode === "installments";
+
+/**
+ * Partes listas para mandar al server (o el error para mostrar). Si se paga
+ * en cuotas, los montos en $ se escriben por cuota: acá se pasan al total.
+ */
+export const splitPayload = (total: number, s: SplitState, installments = 1) => {
+  const k = perCuota(s, installments) ? installments : 1;
+  const participants = s.people.map((p) => {
+    const v = parseAmount(p.input) || 0;
+    return { ref: p.ref, shareType: p.shareType, value: p.shareType === "amount" ? r2(v * k) : v };
+  });
   const { amounts, error } = computeShares(total, participants);
   return { participants, amounts, error: s.people.length === 0 ? "Elegí con quién dividirlo" : error };
 };
@@ -87,9 +97,13 @@ export function SplitSection({
 
   const available = people.filter((p) => !value.people.some((x) => x.ref === p.ref));
   const known = new Set(people.map((p) => p.ref));
-  const { amounts, error } = splitPayload(totalAmount, value);
+  const { amounts, error } = splitPayload(totalAmount, value, installments);
   const others = r2(amounts.reduce((s, a) => s + a, 0));
   const mine = r2(totalAmount - others);
+  // En cuotas, todo se ve (y los montos se escriben) por cuota.
+  const k = perCuota(value, installments) ? installments : 1;
+  const per = (n: number) => r2(n / k);
+  const perLabel = k > 1 ? " por cuota" : "";
 
   const addPerson = (ref: string) => {
     const p = people.find((x) => x.ref === ref);
@@ -161,7 +175,7 @@ export function SplitSection({
                   ) : (
                     "Sin la app: te lo debe"
                   )}
-                  {amounts[i] > 0 && ` · ${formatMoney(amounts[i], currency)}`}
+                  {amounts[i] > 0 && ` · ${formatMoney(per(amounts[i]), currency)}${perLabel}`}
                 </div>
               </div>
               <Input
@@ -183,12 +197,12 @@ export function SplitSection({
                         input:
                           t === p.shareType || !(amounts[i] > 0)
                             ? p.input
-                            : num(t === "amount" ? amounts[i] : r2((amounts[i] / (totalAmount || 1)) * 100)),
+                            : num(t === "amount" ? per(amounts[i]) : r2((amounts[i] / (totalAmount || 1)) * 100)),
                       })
                     }
                     className={`h-7 rounded px-2 text-xs font-medium ${p.shareType === t ? "bg-background shadow-sm" : "text-muted-foreground"}`}
                   >
-                    {t === "percent" ? "%" : currency === "USD" ? "US$" : "$"}
+                    {t === "percent" ? "%" : `${currency === "USD" ? "US$" : "$"}${k > 1 ? "/cuota" : ""}`}
                   </button>
                 ))}
               </div>
@@ -268,7 +282,19 @@ export function SplitSection({
                   <button
                     key={o.v}
                     type="button"
-                    onClick={() => set({ mode: o.v })}
+                    onClick={() => {
+                      if (o.v === value.mode) return;
+                      // Los montos fijos se escriben por cuota en "en cuotas" y por el total en "todo junto".
+                      const factor = o.v === "installments" ? 1 / installments : installments;
+                      set({
+                        mode: o.v,
+                        people: value.people.map((p) =>
+                          p.shareType === "amount" && parseAmount(p.input) > 0
+                            ? { ...p, input: num(r2(parseAmount(p.input) * factor)) }
+                            : p,
+                        ),
+                      });
+                    }}
                     className={`h-8 rounded-md text-xs font-medium ${value.mode === o.v ? "bg-background shadow-sm" : "text-muted-foreground"}`}
                   >
                     {o.label}
@@ -297,7 +323,8 @@ export function SplitSection({
             <div className={`text-xs ${error ? "text-destructive" : "text-muted-foreground"}`}>
               {error ?? (
                 <>
-                  Te toca a vos: <span className="font-semibold text-foreground">{formatMoney(mine, currency)}</span>
+                  Te toca a vos: <span className="font-semibold text-foreground">{formatMoney(per(mine), currency)}{perLabel}</span>
+                  {k > 1 && ` (total ${formatMoney(mine, currency)})`}
                   {value.people.some((p) => p.isApp) && " · hasta que acepten, cuenta entero para vos"}
                 </>
               )}

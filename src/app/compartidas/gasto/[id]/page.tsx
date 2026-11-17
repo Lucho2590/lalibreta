@@ -125,13 +125,20 @@ export default function SplitDetailPage({ params }: { params: Promise<{ id: stri
         name: p.name,
         isApp: !!p.uid,
         shareType: p.shareType,
-        input: num(p.shareType === "percent" && p.percent != null ? p.percent : p.amount),
+        // En cuotas, los montos fijos se editan por cuota.
+        input: num(
+          p.shareType === "percent" && p.percent != null
+            ? p.percent
+            : split.mode === "installments" && split.schedule.length > 1
+              ? Math.round((p.amount / split.schedule.length) * 100) / 100
+              : p.amount,
+        ),
       })),
     });
 
   const saveEdit = async () => {
     if (!editing) return;
-    const payload = splitPayload(split.totalAmount, editing);
+    const payload = splitPayload(split.totalAmount, editing, split.schedule.length);
     if (payload.error) return toast.error(payload.error);
     const ok = await run(
       () => apiPost("/api/splits/update", { splitId: split.id, mode: editing.mode, participants: payload.participants }),
@@ -150,6 +157,12 @@ export default function SplitDetailPage({ params }: { params: Promise<{ id: stri
   };
 
   const mySchedule = me ? participantSchedule(split, me.amount) : [];
+  // En cuotas, los montos se muestran por cuota (con el total al lado).
+  const cuotas = split.mode === "installments" ? split.schedule.length : 1;
+  const money = (n: number) =>
+    cuotas > 1
+      ? `${formatMoney(Math.round((n / cuotas) * 100) / 100, split.currency)}/cuota · ${formatMoney(n, split.currency)}`
+      : formatMoney(n, split.currency);
   const rule = isOwner ? rules.find((r) => r.key === normalizeMerchant(split.description)) : undefined;
 
   const makeRule = () =>
@@ -195,7 +208,10 @@ export default function SplitDetailPage({ params }: { params: Promise<{ id: stri
         <Card className={`rounded-3xl ${me.status === "pending" ? "ring-2 ring-brand/30" : ""}`}>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-semibold">
-              Tu parte: {formatMoney(me.amount, split.currency)}
+              Tu parte:{" "}
+              {cuotas > 1
+                ? `${formatMoney(Math.round((me.amount / cuotas) * 100) / 100, split.currency)} por cuota`
+                : formatMoney(me.amount, split.currency)}
               {me.percent != null && <span className="text-muted-foreground"> ({num(me.percent)}%)</span>}
             </CardTitle>
             <p className="text-xs text-muted-foreground">
@@ -337,7 +353,7 @@ export default function SplitDetailPage({ params }: { params: Promise<{ id: stri
             <span>
               {isOwner ? "Vos" : split.ownerName} <span className="text-muted-foreground">(pagó)</span>
             </span>
-            <span className="font-semibold tabular-nums">{formatMoney(ownerShare, split.currency)}</span>
+            <span className="font-semibold tabular-nums">{money(ownerShare)}</span>
           </div>
           {split.participants.map((p) => (
             <div key={p.ref} className="flex items-center justify-between gap-2 py-2.5 text-sm">
@@ -352,7 +368,7 @@ export default function SplitDetailPage({ params }: { params: Promise<{ id: stri
                 {STATUS[p.status].label}
                 {p.autoAccept && p.status === "accepted" && " · siempre"}
               </span>
-              <span className="w-28 shrink-0 text-right font-semibold tabular-nums">{formatMoney(p.amount, split.currency)}</span>
+              <span className="w-32 shrink-0 text-right font-semibold tabular-nums">{money(p.amount)}</span>
             </div>
           ))}
           {isOwner && !cancelled && (

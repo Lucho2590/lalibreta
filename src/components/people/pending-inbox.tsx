@@ -164,8 +164,10 @@ export function PendingInbox({ compact = false }: { compact?: boolean }) {
               </span>
               <div className="min-w-0 flex-1 text-sm">
                 <span className="font-semibold">{s.ownerName}</span> te asignó{" "}
-                <span className="font-semibold">{formatMoney(mine.amount, s.currency)}</span>
-                {n > 1 && ` en ${n} cuotas`} de {s.description}
+                <span className="font-semibold">
+                  {n > 1 ? `${n} cuotas de ${formatMoney(Math.round((mine.amount / n) * 100) / 100, s.currency)}` : formatMoney(mine.amount, s.currency)}
+                </span>{" "}
+                de {s.description}
               </div>
               <span className="text-xs font-medium text-brand">Responder</span>
             </Link>
