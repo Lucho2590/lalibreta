@@ -1,21 +1,25 @@
 import type { Metadata, Viewport } from "next";
-import { Plus_Jakarta_Sans, JetBrains_Mono } from "next/font/google";
+import localFont from "next/font/local";
 import { Suspense } from "react";
 import "./globals.css";
 import { AuthProvider } from "@/hooks/use-auth";
 import { AppShell } from "@/components/layout/app-shell";
 import { Toaster } from "@/components/ui/sonner";
 
-const sans = Plus_Jakarta_Sans({
+// Fuentes guardadas en el repo (versión variable, de Fontsource): con
+// next/font/google el build de Vercel a veces fallaba al bajarlas.
+const sans = localFont({
+  src: "./fonts/plus-jakarta-sans.woff2",
   variable: "--font-sans",
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700", "800"],
+  weight: "200 800",
+  display: "swap",
 });
 
-const mono = JetBrains_Mono({
+const mono = localFont({
+  src: "./fonts/jetbrains-mono.woff2",
   variable: "--font-mono",
-  subsets: ["latin"],
-  weight: ["400", "500"],
+  weight: "100 800",
+  display: "swap",
 });
 
 export const metadata: Metadata = {
