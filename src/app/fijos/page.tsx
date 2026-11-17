@@ -10,7 +10,7 @@ import {
   updateDoc,
   where,
 } from "firebase/firestore";
-import { Check, Pause, Play, Plus, Repeat, Trash2 } from "lucide-react";
+import { Check, Pause, Pencil, Play, Plus, Repeat, Trash2 } from "lucide-react";
 import { CategoryIcon } from "@/components/category-icon";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -141,6 +141,7 @@ export default function FijosPage() {
     }
   };
 
+  const [editingRec, setEditingRec] = useState<RecurringExpense | null>(null);
   const active = recurring.filter((r) => r.active);
   const paused = recurring.filter((r) => !r.active);
 
@@ -182,6 +183,9 @@ export default function FijosPage() {
                 </Button>
               )
             )}
+            <Button size="icon" variant="ghost" onClick={() => setEditingRec(rec)} aria-label="Editar">
+              <Pencil className="size-4" />
+            </Button>
             <Button
               size="icon"
               variant="ghost"
@@ -217,6 +221,23 @@ export default function FijosPage() {
           <Button variant="outline" onClick={applyAll} disabled={active.length === 0}>
             Aplicar todos a {formatMonth(year, month)}
           </Button>
+          <Sheet open={!!editingRec} onOpenChange={(o) => !o && setEditingRec(null)}>
+            <SheetContent side="bottom" className="sheet-md-modal max-h-[92vh] overflow-y-auto p-0">
+              <SheetHeader className="px-5 pt-5">
+                <SheetTitle>Editar fijo</SheetTitle>
+              </SheetHeader>
+              <div className="px-5 pb-6 pt-2">
+                {editingRec && (
+                  <RecurringForm
+                    key={editingRec.id}
+                    initial={editingRec}
+                    viewMonth={monthKey}
+                    onCreated={() => setEditingRec(null)}
+                  />
+                )}
+              </div>
+            </SheetContent>
+          </Sheet>
           <Sheet open={open} onOpenChange={setOpen}>
             <SheetTrigger
               render={<Button className="bg-brand-grad text-white hover:opacity-95" />}

@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { ArrowLeftRight, ChevronDown, CreditCard, Trash2, Users } from "lucide-react";
+import { ArrowLeftRight, ChevronDown, CreditCard, Pencil, Trash2, Users } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -18,6 +18,7 @@ import { otherUid, personRefFromAccountId, profileName } from "@/lib/domain/peop
 import { apiPost, errorText } from "@/lib/api";
 import { isPersonAccountId } from "@/lib/domain/people";
 import { SplitExistingSheet } from "@/components/people/split-existing";
+import { EditTransactionSheet } from "./edit-transaction-sheet";
 
 interface Props {
   items: Installment[];
@@ -63,6 +64,8 @@ export function TransactionList({
   const [open, setOpen] = useState<Set<string>>(new Set());
   // Gasto ya cargado que se va a dividir con otras personas.
   const [splitting, setSplitting] = useState<Installment | null>(null);
+  // Gasto/ingreso que se está editando.
+  const [editing, setEditing] = useState<Installment | null>(null);
   const toggle = (id: string) =>
     setOpen((prev) => {
       const next = new Set(prev);
@@ -310,6 +313,19 @@ export function TransactionList({
                 </div>
               )}
             </div>
+            {/* Editar un gasto o ingreso mío (no transferencias ni mi parte de un gasto ajeno). */}
+            {(it.kind === "expense" || it.kind === "income") && !it.splitId && !isPersonAccountId(it.accountId) && (
+              <Button
+                size="icon"
+                variant="ghost"
+                className="text-muted-foreground"
+                onClick={() => setEditing(it)}
+                aria-label="Editar"
+                title="Editar"
+              >
+                <Pencil className="size-4" />
+              </Button>
+            )}
             {/* Dividir un gasto mío ya cargado (no repartido todavía). */}
             {adjustment &&
               it.kind === "expense" &&
@@ -372,6 +388,12 @@ export function TransactionList({
   return (
     <div className="space-y-2">
       <SplitExistingSheet key={splitting?.id ?? "none"} item={splitting} onClose={() => setSplitting(null)} />
+      <EditTransactionSheet
+        key={editing?.id ?? "none-edit"}
+        item={editing}
+        split={editing ? adjustment?.byTxId.get(editing.transactionId) : undefined}
+        onClose={() => setEditing(null)}
+      />
       {entries.map((e) => {
         if (e.type === "row") return renderRow(e.it);
         const acc = accountMap.get(e.accountId);

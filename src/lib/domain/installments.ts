@@ -46,6 +46,10 @@ export interface CreateTransactionInput {
    * gastos repartidos apuntan a él). Solo gastos/ingresos.
    */
   transactionId?: string;
+  /** Gasto estimado (suscripción proyectada): se mantiene al editarlo. */
+  projected?: boolean;
+  /** Si lo cargó otra persona (cuenta compartida): se mantiene al editarlo. */
+  createdByName?: string;
 }
 
 export const createTransactionWithInstallments = async (
@@ -215,6 +219,8 @@ export const createTransactionWithInstallments = async (
       description: input.description,
       currency: input.currency ?? "ARS",
       ...(input.recurringId ? { recurringId: input.recurringId } : {}),
+      ...(input.projected ? { projected: true } : {}),
+      ...(input.createdByName ? { createdByName: input.createdByName } : {}),
       // Plata que "entra" a una tarjeta = saldo a favor, no ingreso.
       ...(followsCardCycle && input.kind === "income" ? { cardCredit: true } : {}),
     };
@@ -333,4 +339,23 @@ export const regenerateFutureInstallmentsForAccount = async (
   }
   void deleteDoc;
   return touched;
+};
+
+/**
+ * Editar un gasto o ingreso ya cargado: se rehacen sus cuotas con los datos
+ * nuevos y se mantiene el id (los gastos divididos apuntan a él).
+ */
+export const updateTransaction = async (
+  uid: string,
+  account: Account,
+  transactionId: string,
+  input: Omit<CreateTransactionInput, "transactionId" | "kind"> & { kind: "expense" | "income" },
+): Promise<void> => {
+  const old = await getDocs(
+    query(collection(db, installmentsCollectionPath(uid)), where("transactionId", "==", transactionId)),
+  );
+  const batch = writeBatch(db);
+  old.forEach((d) => batch.delete(d.ref));
+  await batch.commit();
+  await createTransactionWithInstallments(uid, account, { ...input, transactionId });
 };

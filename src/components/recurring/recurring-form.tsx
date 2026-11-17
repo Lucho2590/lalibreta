@@ -1,10 +1,16 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Timestamp,
   addDoc,
   collection,
+  doc,
+  getDoc,
+  getDocs,
+  query,
+  updateDoc,
+  where,
 } from "firebase/firestore";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -23,12 +29,28 @@ import { db } from "@/lib/firebase/client";
 import { parseAmount } from "@/lib/format";
 import { accountCurrencies, type Currency } from "@/lib/domain/types";
 import { recurringCollectionPath } from "@/lib/domain/recurring";
-import { monthKey, type TransactionKind } from "@/lib/domain/types";
+import { monthKey, type RecurringExpense, type Transaction, type TransactionKind } from "@/lib/domain/types";
+import {
+  installmentsCollectionPath,
+  transactionsCollectionPath,
+  updateTransaction,
+} from "@/lib/domain/installments";
+import { apiPost } from "@/lib/api";
 
 /** Nombres que son claramente un cobro, no un gasto. */
 const INCOME_WORDS = /\b(sueldo|salario|honorarios?|aguinaldo|cobro|freelance|jubilacion|pension)\b/;
 
-export function RecurringForm({ onCreated }: { onCreated?: () => void }) {
+export function RecurringForm({
+  onCreated,
+  initial,
+  viewMonth,
+}: {
+  onCreated?: () => void;
+  /** Editar un fijo existente. */
+  initial?: RecurringExpense;
+  /** Mes que se está mirando (YYYY-MM): si ese mes ya se cargó, se ofrece actualizarlo también. */
+  viewMonth?: string;
+}) {
   const { user } = useAuth();
   const { data: accounts } = useAccounts();
   const { data: categories } = useCategories();
@@ -36,15 +58,30 @@ export function RecurringForm({ onCreated }: { onCreated?: () => void }) {
   const today = useMemo(() => new Date(), []);
   const currentMonth = monthKey(today.getFullYear(), today.getMonth() + 1);
 
-  const [kind, setKind] = useState<TransactionKind>("expense");
-  const [name, setName] = useState("");
-  const [amount, setAmount] = useState("");
-  const [currency, setCurrency] = useState<Currency>("ARS");
-  const [accountId, setAccountId] = useState("");
-  const [categoryId, setCategoryId] = useState("");
-  const [day, setDay] = useState(1);
-  const [start, setStart] = useState(currentMonth);
-  const [end, setEnd] = useState("");
+  const [kind, setKind] = useState<TransactionKind>(initial?.kind ?? "expense");
+  const [name, setName] = useState(initial?.name ?? "");
+  const [amount, setAmount] = useState(
+    initial ? new Intl.NumberFormat("es-AR", { maximumFractionDigits: 2 }).format(initial.amount) : "",
+  );
+  const [currency, setCurrency] = useState<Currency>(initial?.currency ?? "ARS");
+  const [accountId, setAccountId] = useState(initial?.accountId ?? "");
+  const [categoryId, setCategoryId] = useState(initial?.categoryId ?? "");
+  const [day, setDay] = useState(initial?.dayOfMonth ?? 1);
+  const [start, setStart] = useState(initial?.startMonth ?? currentMonth);
+  const [end, setEnd] = useState(initial?.endMonth ?? "");
+  // Editando: el del mes que se mira, si ya se cargó (para actualizarlo también).
+  const [appliedTxId, setAppliedTxId] = useState<string | null>(null);
+  const [updateApplied, setUpdateApplied] = useState(true);
+  useEffect(() => {
+    if (!user || !initial || !viewMonth) return;
+    getDocs(
+      query(
+        collection(db, installmentsCollectionPath(user.uid)),
+        where("recurringId", "==", initial.id),
+        where("billingMonth", "==", viewMonth),
+      ),
+    ).then((snap) => setAppliedTxId((snap.docs[0]?.data().transactionId as string | undefined) ?? null));
+  }, [user, initial, viewMonth]);
   const [busy, setBusy] = useState(false);
 
   const selectableAccounts = accounts.filter((a) => a.active !== false);
@@ -84,6 +121,41 @@ export function RecurringForm({ onCreated }: { onCreated?: () => void }) {
     if (!user || !name.trim() || !accountId || !categoryId) return;
     setBusy(true);
     try {
+      if (initial) {
+        await updateDoc(doc(db, recurringCollectionPath(user.uid), initial.id), {
+          name: name.trim(),
+          amount: amt,
+          currency: effCurrency,
+          accountId,
+          categoryId,
+          kind,
+          dayOfMonth: Math.min(31, Math.max(1, day)),
+          startMonth: start,
+          endMonth: end || null,
+        });
+        // El de este mes ya estaba cargado: se actualiza también (y su reparto, si está dividido).
+        if (appliedTxId && updateApplied && selectedAccount) {
+          const snap = await getDoc(doc(db, transactionsCollectionPath(user.uid), appliedTxId));
+          if (snap.exists()) {
+            const t = snap.data() as Omit<Transaction, "id">;
+            await updateTransaction(user.uid, selectedAccount, appliedTxId, {
+              accountId,
+              categoryId,
+              description: name.trim(),
+              totalAmount: amt,
+              purchaseDate: t.purchaseDate.toDate(),
+              kind: kind === "income" ? "income" : "expense",
+              installments: 1,
+              currency: effCurrency,
+              recurringId: initial.id,
+            });
+            await apiPost("/api/splits/resync", { txIds: [appliedTxId] }).catch(() => {});
+          }
+        }
+        toast.success("Fijo actualizado");
+        onCreated?.();
+        return;
+      }
       await addDoc(collection(db, recurringCollectionPath(user.uid)), {
         name: name.trim(),
         amount: amt,
@@ -277,12 +349,29 @@ export function RecurringForm({ onCreated }: { onCreated?: () => void }) {
         </div>
       </div>
 
+      {initial && (
+        <div className="space-y-2 rounded-lg bg-muted/40 p-3 text-xs text-muted-foreground">
+          <p>El cambio vale de acá en adelante: lo que ya se cargó en otros meses no cambia.</p>
+          {appliedTxId && viewMonth && (
+            <label className="flex cursor-pointer items-center gap-2 text-foreground">
+              <input
+                type="checkbox"
+                className="size-4 accent-brand"
+                checked={updateApplied}
+                onChange={(e) => setUpdateApplied(e.target.checked)}
+              />
+              Actualizar también el de este mes ({viewMonth.split("-").reverse().join("/")}), que ya está cargado
+            </label>
+          )}
+        </div>
+      )}
+
       <Button
         type="submit"
         className="w-full h-12 bg-brand-grad text-white hover:opacity-95"
         disabled={busy || !name.trim() || !amount || !accountId || !categoryId}
       >
-        {busy ? "Guardando…" : "Guardar"}
+        {busy ? "Guardando…" : initial ? "Guardar cambios" : "Guardar"}
       </Button>
     </form>
   );
