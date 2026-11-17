@@ -218,17 +218,20 @@ export function useSplitAdjustment(opts: { projected?: boolean } = {}): SharedAd
   );
 }
 
-/** Cuánto me debe (o le debo a) cada persona. */
-export function usePeopleLedger() {
+/**
+ * Cuánto me debe (o le debo a) cada persona. `nowMonth` (YYYY-MM): las
+ * cuotas hasta ese mes son "de ahora", las posteriores "que vienen".
+ */
+export function usePeopleLedger(nowMonth?: string) {
   const { user } = useAuth();
   const { data: splits, loading: l1 } = useSplits();
   const { data: transfers, loading: l2 } = usePersonTransfers();
   const ledger = useMemo(
     () =>
       user
-        ? computePeopleLedger({ me: user.uid, splits, transfers, nowMonth: paymentMonthOf(new Date()) })
+        ? computePeopleLedger({ me: user.uid, splits, transfers, nowMonth: nowMonth ?? paymentMonthOf(new Date()) })
         : new Map(),
-    [user, splits, transfers],
+    [user, splits, transfers, nowMonth],
   );
   return { ledger, splits, transfers, loading: l1 || l2 };
 }

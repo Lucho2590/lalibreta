@@ -9,6 +9,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { useAuth } from "@/hooks/use-auth";
 import { usePeopleLedger, useSplitRules } from "@/hooks/use-data";
+import { useMonth } from "@/hooks/use-month";
+import { participantSchedule } from "@/lib/domain/people";
+import { formatMonth } from "@/lib/format";
 import { apiPost, errorText } from "@/lib/api";
 import { toast } from "sonner";
 import { Repeat } from "lucide-react";
@@ -27,7 +30,11 @@ const moneyLine = (m: Record<Currency, number>) =>
 
 export default function CuentasConGentePage() {
   const { user } = useAuth();
-  const { ledger, splits, loading } = usePeopleLedger();
+  // Lo que corresponde hasta el mes que se mira (arriba en la barra); lo de
+  // después son cuotas que vienen.
+  const { monthKey, year, month } = useMonth();
+  const monthName = formatMonth(year, month);
+  const { ledger, splits, loading } = usePeopleLedger(monthKey);
   const [open, setOpen] = useState(false);
   const { data: rules } = useSplitRules();
   const removeRule = async (id: string, label: string) => {
@@ -48,13 +55,30 @@ export default function CuentasConGentePage() {
     [ledger],
   );
   const totals = useMemo(() => ledgerTotals(ledger.values()), [ledger]);
-  const myRecent = useMemo(
+  // Gastos míos divididos que tienen cuota (o pago) en este mes, con lo que
+  // le toca a la otra gente ESTE mes.
+  const myThisMonth = useMemo(
     () =>
       splits
         .filter((s) => s.ownerUid === user?.uid && s.status === "active")
-        .sort((a, b) => b.date.localeCompare(a.date))
-        .slice(0, 8),
-    [splits, user],
+        .map((s) => {
+          let others = 0;
+          let k = 0;
+          for (const p of s.participants) {
+            if (p.status === "rejected") continue;
+            const sched = participantSchedule(s, p.amount);
+            const idx = sched.findIndex((c) => c.paymentMonth === monthKey);
+            if (idx >= 0) {
+              others += sched[idx].amount;
+              k = sched.length > 1 ? idx + 1 : 0;
+            }
+          }
+          const n = participantSchedule(s, s.totalAmount).length;
+          return { s, others: Math.round(others * 100) / 100, cuota: k, cuotas: n };
+        })
+        .filter((x) => x.others > 0)
+        .sort((a, b) => b.others - a.others),
+    [splits, user, monthKey],
   );
 
   return (
@@ -78,8 +102,11 @@ export default function CuentasConGentePage() {
               <ArrowDownLeft className="size-5" />
             </div>
             <div>
-              <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Te deben</div>
+              <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Te deben · hasta {monthName}</div>
               <div className="text-xl font-semibold tabular-nums text-success">{moneyLine(totals.owedToMe)}</div>
+              {(totals.laterToMe.ARS > 0.009 || totals.laterToMe.USD > 0.009) && (
+                <div className="text-xs text-muted-foreground">+ {moneyLine(totals.laterToMe)} de cuotas que vienen</div>
+              )}
             </div>
           </CardContent>
         </Card>
@@ -89,8 +116,11 @@ export default function CuentasConGentePage() {
               <ArrowUpRight className="size-5" />
             </div>
             <div>
-              <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Le debés</div>
+              <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Le debés · hasta {monthName}</div>
               <div className="text-xl font-semibold tabular-nums text-destructive">{moneyLine(totals.iOwe)}</div>
+              {(totals.laterIOwe.ARS > 0.009 || totals.laterIOwe.USD > 0.009) && (
+                <div className="text-xs text-muted-foreground">+ {moneyLine(totals.laterIOwe)} de cuotas que vienen</div>
+              )}
             </div>
           </CardContent>
         </Card>
@@ -116,7 +146,6 @@ export default function CuentasConGentePage() {
           )}
           {people.map((l) => {
             const b = personBalanceText(l);
-            const future = CURS.filter((c) => l.upcoming[c] > 0.009);
             return (
               <Link
                 key={l.ref}
@@ -133,11 +162,7 @@ export default function CuentasConGentePage() {
                       <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">sin app</span>
                     )}
                   </div>
-                  {future.length > 0 && (
-                    <div className="text-xs text-muted-foreground">
-                      incluye {future.map((c) => formatMoney(l.upcoming[c], c)).join(" + ")} de cuotas que vienen
-                    </div>
-                  )}
+                  {b.later && <div className="text-xs text-muted-foreground">+ {b.later}</div>}
                 </div>
                 <span
                   className={`text-right text-sm font-semibold tabular-nums ${
@@ -153,15 +178,16 @@ export default function CuentasConGentePage() {
         </CardContent>
       </Card>
 
-      {myRecent.length > 0 && (
+      {myThisMonth.length > 0 && (
         <Card className="rounded-3xl">
           <CardHeader className="pb-1">
             <CardTitle className="flex items-center gap-1.5 text-sm font-semibold">
-              <HandCoins className="size-4" /> Gastos que dividiste
+              <HandCoins className="size-4" /> Gastos divididos de {monthName}
             </CardTitle>
+            <p className="text-xs text-muted-foreground">Lo que le toca a la otra gente este mes (en cuotas, la cuota del mes).</p>
           </CardHeader>
           <CardContent className="divide-y">
-            {myRecent.map((s) => {
+            {myThisMonth.map(({ s, others, cuota, cuotas }) => {
               const pending = s.participants.filter((p) => p.status === "pending").length;
               const rejected = s.participants.filter((p) => p.status === "rejected").length;
               return (
@@ -169,12 +195,17 @@ export default function CuentasConGentePage() {
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-sm font-medium">{s.description}</div>
                     <div className="truncate text-xs text-muted-foreground">
-                      con {s.participants.map((p) => p.name.split(" ")[0]).join(", ")} · {s.date.split("-").reverse().join("/")}
+                      con {s.participants.map((p) => p.name.split(" ")[0]).join(", ")}
+                      {cuota > 0 ? ` · cuota ${cuota}/${cuotas}` : ` · ${s.date.split("-").reverse().join("/")}`}
+                      {` · total ${formatMoney(s.totalAmount, s.currency)}`}
                       {pending > 0 && ` · ${pending} sin responder`}
                       {rejected > 0 && ` · ${rejected} no aceptó`}
                     </div>
                   </div>
-                  <span className="text-sm font-semibold tabular-nums">{formatMoney(s.totalAmount, s.currency)}</span>
+                  <span className="text-right text-sm font-semibold tabular-nums">
+                    {formatMoney(others, s.currency)}
+                    <span className="block text-[10px] font-normal text-muted-foreground">les toca</span>
+                  </span>
                   <ChevronRight className="size-4 text-muted-foreground" />
                 </Link>
               );

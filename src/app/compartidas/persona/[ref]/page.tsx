@@ -13,7 +13,9 @@ import { usePeople, usePeopleLedger } from "@/hooks/use-data";
 import { PersonTransferForm, type PersonDirection } from "@/components/people/person-transfer-form";
 import { personBalanceText } from "@/components/people/balance-text";
 import { apiPost, errorText } from "@/lib/api";
-import { ledgerTotal } from "@/lib/domain/debts";
+import { ledgerNow } from "@/lib/domain/debts";
+import { useMonth } from "@/hooks/use-month";
+import { formatMonth } from "@/lib/format";
 import { transferSide, type PersonRef } from "@/lib/domain/people";
 import type { Currency } from "@/lib/domain/types";
 import { formatMoney } from "@/lib/format";
@@ -39,7 +41,8 @@ export default function PersonPage({ params }: { params: Promise<{ ref: string }
   const ref = decodeURIComponent(raw) as PersonRef;
   const { user } = useAuth();
   const { data: people } = usePeople();
-  const { ledger, splits, transfers, loading } = usePeopleLedger();
+  const { monthKey, year, month } = useMonth();
+  const { ledger, splits, transfers, loading } = usePeopleLedger(monthKey);
   const [sheet, setSheet] = useState<{ direction: PersonDirection; amount?: number; currency: Currency } | null>(null);
 
   const l = ledger.get(ref);
@@ -146,11 +149,12 @@ export default function PersonPage({ params }: { params: Promise<{ ref: string }
     return out.sort((a, b) => b.date.localeCompare(a.date));
   }, [ledger, splits, transfers, me, ref]);
 
-  const owedARS = l ? ledgerTotal(l, "ARS") : 0;
-  const owedUSD = l ? ledgerTotal(l, "USD") : 0;
+  // "Me pagó" / "Le pagué" se precargan con lo de ahora (no con las cuotas que vienen).
+  const owedARS = l ? ledgerNow(l, "ARS").now : 0;
+  const owedUSD = l ? ledgerNow(l, "USD").now : 0;
   const mainCur: Currency = Math.abs(owedUSD) > 0 && Math.abs(owedARS) < 0.01 ? "USD" : "ARS";
   const mainOwed = mainCur === "USD" ? owedUSD : owedARS;
-  const balance = l ? personBalanceText(l) : { text: "Están a mano", tone: "muted" as const };
+  const balance = l ? personBalanceText(l) : { text: "Están a mano", tone: "muted" as const, later: "" };
 
   const removeTransfer = async (id: string) => {
     if (!confirm("¿Borrar esta transferencia? Se borra para los dos y deja de contar para lo que se deben.")) return;
@@ -179,14 +183,10 @@ export default function PersonPage({ params }: { params: Promise<{ ref: string }
           </div>
         </div>
         <div className="mt-5 text-2xl font-bold tabular-nums">{balance.text}</div>
-        {l && (["ARS", "USD"] as const).some((c) => l.upcoming[c] > 0.009 || l.upcoming[c] < -0.009) && (
-          <div className="mt-1 text-sm opacity-90">
-            {(["ARS", "USD"] as const)
-              .filter((c) => Math.abs(l.upcoming[c]) > 0.009)
-              .map((c) => `${formatMoney(Math.abs(l.upcoming[c]), c)} son de cuotas que vienen`)
-              .join(" · ")}
-          </div>
-        )}
+        <div className="mt-1 text-sm opacity-90">
+          Hasta {formatMonth(year, month)}
+          {balance.later ? ` · + ${balance.later}` : ""}
+        </div>
         <div className="mt-4 flex flex-wrap gap-2">
           <Button
             size="sm"
