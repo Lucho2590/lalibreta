@@ -243,7 +243,7 @@ function MovementForm({
         return;
       }
       const splitting = values.kind === "expense" && split.enabled && split.people.length > 0;
-      const payload = splitting ? splitPayload(values.amount, split) : null;
+      const payload = splitting ? splitPayload(values.amount, split, isCredit ? values.installments : 1) : null;
       if (payload?.error) {
         toast.error(payload.error);
         return;

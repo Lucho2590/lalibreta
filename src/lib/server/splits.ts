@@ -160,7 +160,7 @@ const indexUids = (ownerUid: string, participants: SplitParticipant[]) => [
 const shareText = (s: Pick<Split, "currency" | "mode" | "installments" | "schedule" | "totalAmount">, amount: number) => {
   const sched = participantSchedule(s, amount);
   return sched.length > 1
-    ? `${formatMoney(amount, s.currency)} en ${sched.length} cuotas`
+    ? `${sched.length} cuotas de ${formatMoney(sched[0].amount, s.currency)} (total ${formatMoney(amount, s.currency)})`
     : formatMoney(amount, s.currency);
 };
 

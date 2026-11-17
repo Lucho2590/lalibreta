@@ -1,11 +1,10 @@
 "use client";
 
-import { useRouter, useSearchParams, usePathname } from "next/navigation";
+import { useSearchParams, usePathname } from "next/navigation";
 import { useCallback, useMemo } from "react";
 import { monthKey, parseMonthKey } from "@/lib/domain/types";
 
 export function useMonth() {
-  const router = useRouter();
   const pathname = usePathname();
   const params = useSearchParams();
 
@@ -20,9 +19,13 @@ export function useMonth() {
     (next: string) => {
       const usp = new URLSearchParams(params.toString());
       usp.set("month", next);
-      router.replace(`${pathname}?${usp.toString()}`);
+      // Sin ir al servidor: el mes vive en la URL y todo se calcula en el
+      // cliente. router.replace pedía la página de nuevo a Vercel y, con el
+      // servidor "frío", cambiar de mes tardaba varios segundos (parecía que
+      // no andaba). replaceState se sincroniza con useSearchParams.
+      window.history.replaceState(null, "", `${pathname}?${usp.toString()}`);
     },
-    [params, pathname, router],
+    [params, pathname],
   );
 
   const shift = useCallback(
