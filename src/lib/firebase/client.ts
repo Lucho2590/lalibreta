@@ -1,6 +1,12 @@
 import { getApp, getApps, initializeApp } from "firebase/app";
 import { GoogleAuthProvider, getAuth } from "firebase/auth";
-import { getFirestore } from "firebase/firestore";
+import {
+  type Firestore,
+  getFirestore,
+  initializeFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager,
+} from "firebase/firestore";
 
 /**
  * En nuestros dominios, el login de Google pasa por el MISMO dominio de la app
@@ -31,5 +37,22 @@ export const isFirebaseConfigured = () =>
 
 export const firebaseApp = getApps().length ? getApp() : initializeApp(firebaseConfig);
 export const auth = getAuth(firebaseApp);
-export const db = getFirestore(firebaseApp);
+/**
+ * En el navegador, Firestore guarda lo que ya bajó (IndexedDB): al abrir la
+ * app se ve al instante lo último conocido y después se actualiza solo, en
+ * vez de esperar a bajar todo de cero. Compartido entre pestañas.
+ * En el server (SSR) no hay IndexedDB: va sin caché.
+ */
+const makeDb = (): Firestore => {
+  if (typeof window === "undefined") return getFirestore(firebaseApp);
+  try {
+    return initializeFirestore(firebaseApp, {
+      localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
+    });
+  } catch {
+    // Ya inicializado (recarga en caliente en desarrollo).
+    return getFirestore(firebaseApp);
+  }
+};
+export const db = makeDb();
 export const googleProvider = new GoogleAuthProvider();
