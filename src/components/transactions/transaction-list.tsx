@@ -2,10 +2,18 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { ArrowLeftRight, ChevronDown, CreditCard, Pencil, Trash2, Users } from "lucide-react";
+import { ArrowLeftRight, ChevronDown, CreditCard, MoreVertical, Pencil, Trash2, Users } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { cn } from "@/lib/utils";
 import { useAccounts, useCategories, useConnections, useContacts } from "@/hooks/use-data";
 import { useAuth } from "@/hooks/use-auth";
 import { deleteTransactionAndInstallments } from "@/lib/domain/installments";
@@ -195,9 +203,72 @@ export function TransactionList({
       const displayAmount = splitInfo ? Math.round(it.amount * splitInfo.factor * 100) / 100 : it.amount;
       const showDiff = !!splitInfo && Math.abs(displayAmount - it.amount) >= 0.01;
 
+      const title =
+        it.description || (isTransfer ? transferLabel : cat?.name || "Movimiento");
+      const subtitle = isTransfer
+        ? `${fromName === toName ? (fromName ?? "—") : `${fromName ?? "—"} → ${toName ?? "—"}`}${!isCardPayment && exchangeRate ? ` · a ${formatMoney(Math.round(exchangeRate * 100) / 100, "ARS")}` : ""} · ${formatShortDate(it.billingDate.toDate())}`
+        : `${cat?.name ?? "—"} · ${person ? `Pagó ${person} (le debés tu parte)` : (acc?.name ?? "—")} · ${formatShortDate(it.billingDate.toDate())}`;
+      const amountText = flowSign
+        ? `${flowSign}${formatMoney(it.amount, cur)}`
+        : isTransfer
+          ? isExchange && otherLeg
+            ? `${formatMoney(it.transferRole === "destination" ? otherLeg.amount : it.amount, it.transferRole === "destination" ? currencyOf(otherLeg) : cur)} → ${formatMoney(it.transferRole === "destination" ? it.amount : otherLeg.amount, it.transferRole === "destination" ? cur : currencyOf(otherLeg))}`
+            : formatMoney(it.amount, cur)
+          : it.kind === "income"
+            ? `+${formatMoney(displayAmount, cur)}`
+            : `-${formatMoney(displayAmount, cur)}`;
+
+      // Editar un gasto o ingreso mío (no transferencias ni mi parte de un gasto ajeno).
+      const canEdit =
+        (it.kind === "expense" || it.kind === "income") && !it.splitId && !isPersonAccountId(it.accountId);
+      // Dividir un gasto mío ya cargado (no repartido todavía).
+      const canSplit =
+        !!adjustment && it.kind === "expense" && !splitInfo && !it.splitId && !isPersonAccountId(it.accountId);
+
+      const pill = "whitespace-nowrap rounded-full px-2 py-0.5 text-[10px] font-medium";
+      const badges = [
+        !isTransfer && it.totalInstallments > 1 && (
+          <span key="cuota" className={cn(pill, "bg-muted text-muted-foreground")}>
+            Cuota {it.installmentNumber}/{it.totalInstallments}
+          </span>
+        ),
+        // Si el título ya dice el tipo de transferencia, no lo repito.
+        isTransfer && title !== transferLabel && (
+          <span key="tipo" className={cn(pill, "bg-muted text-muted-foreground")}>
+            {transferLabel}
+          </span>
+        ),
+        it.cardCredit && (
+          <span
+            key="credito"
+            className={cn(pill, "bg-success/10 text-success")}
+            title="Reintegro en la tarjeta: baja lo que tenés que pagar"
+          >
+            saldo a favor
+          </span>
+        ),
+        it.projected && (
+          <span
+            key="estimado"
+            className={cn(pill, "border border-dashed border-muted-foreground/40 text-muted-foreground")}
+            title="Suscripción estimada: se reemplaza por el monto real al importar el resumen"
+          >
+            estimado
+          </span>
+        ),
+        it.createdByName && (
+          <span key="autor" className={cn(pill, "bg-brand/10 text-brand")}>
+            {it.createdByName}
+          </span>
+        ),
+      ].filter(Boolean);
+
       return (
-        <Card key={it.id} className={`rounded-2xl transition hover:shadow-sm ${nested ? "bg-muted/20 shadow-none" : ""}`}>
-          <CardContent className="flex items-center gap-3 py-3.5">
+        <Card
+          key={it.id}
+          className={cn("rounded-2xl py-0 transition hover:shadow-sm", nested && "bg-muted/20 shadow-none")}
+        >
+          <CardContent className="flex items-start gap-3 px-3 py-3 sm:px-4">
             <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-muted text-foreground">
               {isTransfer ? (
                 <ArrowLeftRight className="size-5" />
@@ -206,54 +277,46 @@ export function TransactionList({
               )}
             </div>
             <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2">
-                <span className="truncate text-sm font-semibold">
-                  {it.description ||
-                    (isTransfer
-                      ? transferLabel
-                      : cat?.name || "Movimiento")}
-                </span>
-                {isTransfer && (
-                  <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
-                    {transferLabel}
-                  </span>
-                )}
-                {it.cardCredit && (
-                  <span
-                    className="rounded-full bg-success/10 px-2 py-0.5 text-[10px] font-medium text-success"
-                    title="Reintegro en la tarjeta: baja lo que tenés que pagar"
+              {/* Título y monto en la misma línea: el texto usa todo el ancho. */}
+              <div className="flex items-start justify-between gap-2">
+                <span className="min-w-0 truncate text-sm font-semibold leading-5">{title}</span>
+                <div className="shrink-0 text-right">
+                  <div
+                    className={cn(
+                      "whitespace-nowrap text-sm font-semibold leading-5 tabular-nums",
+                      it.kind === "income" || flowSign === "+"
+                        ? "text-success"
+                        : isTransfer && !flowSign && "text-muted-foreground",
+                    )}
                   >
-                    saldo a favor
-                  </span>
-                )}
-                {it.projected && (
-                  <span
-                    className="rounded-full border border-dashed border-muted-foreground/40 px-2 py-0.5 text-[10px] font-medium text-muted-foreground"
-                    title="Suscripción estimada: se reemplaza por el monto real al importar el resumen"
-                  >
-                    estimado
-                  </span>
-                )}
-                {it.createdByName && (
-                  <span className="rounded-full bg-brand/10 px-2 py-0.5 text-[10px] font-medium text-brand">
-                    {it.createdByName}
-                  </span>
-                )}
-                {!isTransfer && it.totalInstallments > 1 && (
-                  <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
-                    {it.installmentNumber}/{it.totalInstallments}
-                  </span>
-                )}
+                    {amountText}
+                  </div>
+                  {isExchange && !!it.exchangeDiff && (
+                    <div
+                      className={`text-[10px] font-medium tabular-nums ${it.exchangeDiff < 0 ? "text-destructive" : "text-success"}`}
+                      title={
+                        it.quotedRate
+                          ? `Diferencia contra la cotización pactada (${formatMoney(it.quotedRate, "ARS")}): redondeo o comisión`
+                          : "Diferencia por redondeo o comisión"
+                      }
+                    >
+                      dif. {it.exchangeDiff > 0 ? "+" : "−"}
+                      {formatMoney(Math.abs(it.exchangeDiff), "ARS")}
+                    </div>
+                  )}
+                  {showDiff && (
+                    <div className="text-[10px] text-muted-foreground line-through tabular-nums">
+                      {formatMoney(it.amount, cur)}
+                    </div>
+                  )}
+                </div>
               </div>
-              <div className="text-xs text-muted-foreground">
-                {isTransfer
-                  ? `${fromName === toName ? (fromName ?? "—") : `${fromName ?? "—"} → ${toName ?? "—"}`}${!isCardPayment && exchangeRate ? ` · a ${formatMoney(Math.round(exchangeRate * 100) / 100, "ARS")}` : ""} · ${formatShortDate(it.billingDate.toDate())}`
-                  : `${cat?.name ?? "—"} · ${person ? `Pagó ${person} (le debés tu parte)` : (acc?.name ?? "—")} · ${formatShortDate(it.billingDate.toDate())}`}
-              </div>
+              <div className="text-xs text-muted-foreground">{subtitle}</div>
+              {badges.length > 0 && <div className="mt-1.5 flex flex-wrap gap-1">{badges}</div>}
               {splitInfo && (
                 <Link
                   href={`/compartidas/gasto/${splitInfo.split.id}`}
-                  className="mt-1 inline-flex items-center gap-1 rounded-full bg-brand/10 px-2 py-0.5 text-[10px] font-medium text-brand hover:bg-brand/20"
+                  className="mt-1.5 inline-flex items-center gap-1 rounded-full bg-brand/10 px-2 py-0.5 text-[10px] font-medium text-brand hover:bg-brand/20"
                 >
                   <Users className="size-3" />
                   Dividido con {splitInfo.split.participants.map((p) => p.name.split(" ")[0]).join(", ")}
@@ -267,71 +330,29 @@ export function TransactionList({
               {it.splitId && (
                 <Link
                   href={`/compartidas/gasto/${it.splitId}`}
-                  className="mt-1 inline-flex items-center gap-1 rounded-full bg-brand/10 px-2 py-0.5 text-[10px] font-medium text-brand hover:bg-brand/20"
+                  className="mt-1.5 inline-flex items-center gap-1 rounded-full bg-brand/10 px-2 py-0.5 text-[10px] font-medium text-brand hover:bg-brand/20"
                 >
                   <Users className="size-3" />
                   Tu parte de un gasto compartido
                 </Link>
               )}
             </div>
-            <div className="flex flex-col items-end">
-              <div
-                className={`text-sm font-semibold tabular-nums ${
-                  it.kind === "income" || flowSign === "+"
-                    ? "text-success"
-                    : isTransfer && !flowSign
-                      ? "text-muted-foreground"
-                      : ""
-                }`}
-              >
-                {flowSign
-                  ? `${flowSign}${formatMoney(it.amount, cur)}`
-                  : isTransfer
-                  ? isExchange && otherLeg
-                    ? `${formatMoney(it.transferRole === "destination" ? otherLeg.amount : it.amount, it.transferRole === "destination" ? currencyOf(otherLeg) : cur)} → ${formatMoney(it.transferRole === "destination" ? it.amount : otherLeg.amount, it.transferRole === "destination" ? cur : currencyOf(otherLeg))}`
-                    : formatMoney(it.amount, cur)
-                  : it.kind === "income"
-                    ? `+${formatMoney(displayAmount, cur)}`
-                    : `-${formatMoney(displayAmount, cur)}`}
-              </div>
-              {isExchange && !!it.exchangeDiff && (
-                <div
-                  className={`text-[10px] font-medium tabular-nums ${it.exchangeDiff < 0 ? "text-destructive" : "text-success"}`}
-                  title={
-                    it.quotedRate
-                      ? `Diferencia contra la cotización pactada (${formatMoney(it.quotedRate, "ARS")}): redondeo o comisión`
-                      : "Diferencia por redondeo o comisión"
-                  }
+
+            {/* Compu: botones a la vista. */}
+            <div className="hidden items-center sm:flex">
+              {canEdit && (
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="text-muted-foreground"
+                  onClick={() => setEditing(it)}
+                  aria-label="Editar"
+                  title="Editar"
                 >
-                  dif. {it.exchangeDiff > 0 ? "+" : "−"}
-                  {formatMoney(Math.abs(it.exchangeDiff), "ARS")}
-                </div>
+                  <Pencil className="size-4" />
+                </Button>
               )}
-              {showDiff && (
-                <div className="text-[10px] text-muted-foreground line-through tabular-nums">
-                  {formatMoney(it.amount, cur)}
-                </div>
-              )}
-            </div>
-            {/* Editar un gasto o ingreso mío (no transferencias ni mi parte de un gasto ajeno). */}
-            {(it.kind === "expense" || it.kind === "income") && !it.splitId && !isPersonAccountId(it.accountId) && (
-              <Button
-                size="icon"
-                variant="ghost"
-                className="text-muted-foreground"
-                onClick={() => setEditing(it)}
-                aria-label="Editar"
-                title="Editar"
-              >
-                <Pencil className="size-4" />
-              </Button>
-            )}
-            {/* Dividir un gasto mío ya cargado (no repartido todavía). */}
-            {adjustment &&
-              it.kind === "expense" &&
-              !splitInfo &&
-              !it.splitId &&
-              !isPersonAccountId(it.accountId) && (
+              {canSplit && (
                 <Button
                   size="icon"
                   variant="ghost"
@@ -343,15 +364,49 @@ export function TransactionList({
                   <Users className="size-4" />
                 </Button>
               )}
-            <Button
-              size="icon"
-              variant="ghost"
-              className="text-muted-foreground"
-              onClick={() => remove(it)}
-              aria-label="Eliminar"
-            >
-              <Trash2 className="size-4" />
-            </Button>
+              <Button
+                size="icon"
+                variant="ghost"
+                className="text-muted-foreground"
+                onClick={() => remove(it)}
+                aria-label="Eliminar"
+                title="Eliminar"
+              >
+                <Trash2 className="size-4" />
+              </Button>
+            </div>
+
+            {/* Celular: un solo botón con las acciones, para no comerle lugar al texto. */}
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                render={
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="-mr-1 -mt-0.5 text-muted-foreground sm:hidden"
+                    aria-label="Acciones"
+                  />
+                }
+              >
+                <MoreVertical className="size-4" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                {canEdit && (
+                  <DropdownMenuItem onClick={() => setEditing(it)}>
+                    <Pencil className="mr-2 size-4" /> Editar
+                  </DropdownMenuItem>
+                )}
+                {canSplit && (
+                  <DropdownMenuItem onClick={() => setSplitting(it)}>
+                    <Users className="mr-2 size-4" /> Dividir con otras personas
+                  </DropdownMenuItem>
+                )}
+                {(canEdit || canSplit) && <DropdownMenuSeparator />}
+                <DropdownMenuItem onClick={() => remove(it)} className="text-destructive">
+                  <Trash2 className="mr-2 size-4" /> Eliminar
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </CardContent>
         </Card>
       );
@@ -402,12 +457,12 @@ export function TransactionList({
         const due = e.items[0].billingDate.toDate();
         return (
           <div key={`card-${e.accountId}`} className="space-y-2">
-            <Card className="rounded-2xl transition hover:shadow-sm">
-              <CardContent className="py-0">
+            <Card className="rounded-2xl py-0 transition hover:shadow-sm">
+              <CardContent className="px-3 py-0 sm:px-4">
                 <button
                   type="button"
                   onClick={() => toggle(e.accountId)}
-                  className="flex w-full items-center gap-3 py-3.5 text-left"
+                  className="flex w-full items-center gap-3 py-3 text-left"
                   aria-expanded={isOpen}
                 >
                   <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-muted text-foreground">
@@ -416,7 +471,7 @@ export function TransactionList({
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
                       <span className="truncate text-sm font-semibold">{acc?.name ?? "Tarjeta"}</span>
-                      <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+                      <span className="whitespace-nowrap rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
                         {e.items.length} consumos
                       </span>
                     </div>
@@ -424,7 +479,7 @@ export function TransactionList({
                       Resumen · vence {formatShortDate(due)}
                     </div>
                   </div>
-                  <div className="text-right text-sm font-semibold tabular-nums">
+                  <div className="shrink-0 whitespace-nowrap text-right text-sm font-semibold tabular-nums">
                     {(["ARS", "USD"] as const)
                       .filter((c) => c === "ARS" || Math.abs(total[c]) > 0.009)
                       .map((c) => (
@@ -438,7 +493,7 @@ export function TransactionList({
               </CardContent>
             </Card>
             {isOpen && (
-              <div className="ml-4 space-y-2 border-l-2 border-muted pl-3">
+              <div className="ml-2 space-y-2 border-l-2 border-muted pl-2 sm:ml-4 sm:pl-3">
                 {e.items.map((it) => renderRow(it, true))}
               </div>
             )}
