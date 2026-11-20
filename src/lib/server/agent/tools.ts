@@ -681,7 +681,8 @@ export const TOOL_DEFINITIONS: ChatCompletionFunctionTool[] = [
     type: "function",
     function: {
       name: "list_recent_transactions",
-      description: "Últimos movimientos cargados, del más nuevo al más viejo.",
+      description:
+        "Últimos movimientos YA GUARDADOS, del más nuevo al más viejo. Es la fuente de verdad para saber si algo quedó guardado. shownInMonth es el mes en que aparece en la app (con tarjeta, el del vencimiento del resumen: dueDate).",
       parameters: {
         type: "object",
         properties: {
@@ -2284,7 +2285,11 @@ export const executeTool = async (
       if (!parsed.success) return issues(parsed.error);
       const list = await listRecentTransactions(ctx.uid, parsed.data.limit ?? 5);
       return {
-        transactions: list.map((t) => ({ ...t, date: formatShortDateAR(t.date) })),
+        transactions: list.map((t) => ({
+          ...t,
+          date: formatShortDateAR(t.date),
+          ...(t.dueDate ? { dueDate: formatShortDateAR(t.dueDate) } : {}),
+        })),
       };
     }
 
