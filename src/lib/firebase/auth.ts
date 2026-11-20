@@ -6,7 +6,8 @@ import {
   signInWithRedirect,
   signOut as fbSignOut,
 } from "firebase/auth";
-import { auth, googleProvider } from "./client";
+import { clearIndexedDbPersistence, terminate } from "firebase/firestore";
+import { auth, db, googleProvider } from "./client";
 
 export const signInWithEmail = (email: string, password: string) =>
   signInWithEmailAndPassword(auth, email, password);
@@ -31,4 +32,19 @@ export const signInWithGoogle = () =>
 /** Resultado de la redirección (si la hubo): sirve para mostrar errores. */
 export const completeGoogleRedirect = () => getRedirectResult(auth);
 
-export const signOut = () => fbSignOut(auth);
+/**
+ * Cierra sesión y borra los datos guardados en el navegador (en una compu
+ * compartida no tienen que quedar). Después de terminate() la base no se
+ * puede volver a usar: se recarga en el login.
+ */
+export const signOut = async () => {
+  await fbSignOut(auth);
+  try {
+    await terminate(db);
+    await clearIndexedDbPersistence(db);
+  } catch (err) {
+    // Otra pestaña abierta la sigue usando: se borra la próxima vez.
+    console.warn("[auth] no se pudo borrar la caché local", err);
+  }
+  window.location.assign("/login");
+};
