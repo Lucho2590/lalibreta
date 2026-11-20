@@ -371,6 +371,13 @@ export interface RecentTransaction {
   installments: number;
   accountName: string;
   categoryName: string;
+  /**
+   * Mes ("YYYY-MM") en que aparece en la app: el del vencimiento del resumen
+   * para los gastos con tarjeta (la 1ª cuota), el de la fecha para el resto.
+   */
+  shownInMonth?: string;
+  /** Tarjeta: vencimiento del resumen donde entra (la 1ª cuota). */
+  dueDate?: Date;
   /** Transferencias y cambios: destino, tipo y (en un cambio) lo que entró y la cotización. */
   transfer?: {
     type: string;
@@ -396,9 +403,27 @@ export const listRecentTransactions = async (
   ]);
   const accName = new Map(accounts.map((a) => [a.id, a.name]));
   const catName = new Map(categories.map((c) => [c.id, c.name]));
+  // Primera cuota de cada movimiento: dice en qué mes se ve en la app.
+  const firstInstallment = new Map<string, FirebaseFirestore.DocumentData>();
+  const ids = snap.docs.map((d) => d.id);
+  if (ids.length) {
+    const ins = await adminDb()
+      .collection(`users/${uid}/installments`)
+      .where("transactionId", "in", ids)
+      .get();
+    for (const i of ins.docs) {
+      const data = i.data();
+      if (Number(data.installmentNumber ?? 1) === 1) firstInstallment.set(String(data.transactionId), data);
+    }
+  }
+  const creditIds = new Set(accounts.filter((a) => a.type === "credit").map((a) => a.id));
   return snap.docs.map((d) => {
     const t = d.data();
+    const first = firstInstallment.get(d.id);
+    const onCard = creditIds.has(t.accountId as string) && t.kind !== "transfer";
     return {
+      ...(first?.paymentMonth ? { shownInMonth: String(first.paymentMonth) } : {}),
+      ...(onCard && first?.billingDate ? { dueDate: (first.billingDate as Timestamp).toDate() } : {}),
       date: (t.purchaseDate as Timestamp).toDate(),
       kind: String(t.kind),
       description: String(t.description ?? ""),

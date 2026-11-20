@@ -15,18 +15,19 @@ import {
   loadRecurring,
   toServerAccount,
 } from "../queries-admin";
-import { dateFromYMD } from "../time";
+import { currentMonthKey, dateFromYMD, formatShortDateAR } from "../time";
 import { ensureAgentName } from "../onboarding";
 import { runAgent, type AgentInput } from "../agent/run-agent";
 import { draftButtons, pendingDatesText, renderDraft } from "../agent/render";
 import { transcribeAudio } from "../agent/openai";
 import { extractPdfText } from "../agent/pdf-text";
 import { formatMoney } from "@/lib/format";
+import { AsyncLocalStorage } from "node:async_hooks";
 import {
   downloadMedia,
   markAsReadWithTyping,
   sendButtons,
-  sendText,
+  sendText as rawSendText,
 } from "./client";
 import { consumeLinkCode, getLinkedUid } from "./linking";
 import { loadCategoryRules, loadStatementDraftLines } from "../statement-import";
@@ -61,6 +62,43 @@ import {
   type TransactionDraft,
   type WaIncomingMessage,
 } from "./types";
+
+/**
+ * Lo que se le manda al usuario mientras se resuelve un borrador (Confirmar /
+ * Cancelar). Se guarda en el historial: si no, el agente solo ve su "¿Lo
+ * guardo?" y cree que sigue pendiente aunque ya esté guardado.
+ */
+const sentDuringDecision = new AsyncLocalStorage<string[]>();
+const sendText: typeof rawSendText = (waId, text) => {
+  sentDuringDecision.getStore()?.push(text);
+  return rawSendText(waId, text);
+};
+
+const MONTH_NAMES = [
+  "enero", "febrero", "marzo", "abril", "mayo", "junio",
+  "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
+];
+
+/**
+ * Gasto con tarjeta que se paga en otro mes: avisa cuándo vence y en qué mes
+ * aparece en la app (los meses muestran lo que se paga, no lo que se compró).
+ */
+const cardDueText = async (uid: string, txId: string): Promise<string> => {
+  const snap = await adminDb()
+    .collection(`users/${uid}/installments`)
+    .where("transactionId", "==", txId)
+    .get();
+  const first = snap.docs
+    .map((d) => d.data())
+    .find((i) => Number(i.installmentNumber) === 1);
+  if (!first?.billingDate || !first.paymentMonth) return "";
+  const month = String(first.paymentMonth);
+  if (month === currentMonthKey()) return "";
+  const due = formatShortDateAR((first.billingDate as Timestamp).toDate()).slice(0, 5);
+  const name = MONTH_NAMES[Number(month.slice(5, 7)) - 1];
+  const cuota = Number(first.totalInstallments) > 1 ? "La 1ª cuota va" : "Va";
+  return `\n📅 ${cuota} en el resumen que vence el ${due}: en la app lo ves en *${name}*.`;
+};
 
 const appUrl = () => process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
 
@@ -417,6 +455,27 @@ const decideDraft = async (
   draftId: string | null,
   action: DraftAction,
 ) => {
+  const sent: string[] = [];
+  try {
+    await sentDuringDecision.run(sent, () => resolveDraft(waId, uid, draftId, action));
+  } finally {
+    // Que el agente sepa cómo terminó el borrador (guardado, descartado o vencido).
+    if (sent.length) {
+      const session = await loadSession(waId, uid);
+      await saveSession(waId, session, [
+        { role: "user", content: action === "cancel" ? "❌ Cancelar" : "✅ Confirmar" },
+        ...sent.map((content) => ({ role: "assistant" as const, content })),
+      ]);
+    }
+  }
+};
+
+const resolveDraft = async (
+  waId: string,
+  uid: string,
+  draftId: string | null,
+  action: DraftAction,
+) => {
   const draft = await takeDraft(waId, uid, draftId);
   if (!draft) {
     await sendText(
@@ -535,9 +594,13 @@ const confirmTransaction = async (waId: string, uid: string, draft: TransactionD
   }
 
   const cuotas = draft.installments > 1 ? ` en ${draft.installments} cuotas` : "";
+  const dueText =
+    account.type === "credit" && draft.kind === "expense"
+      ? await cardDueText(uid, txId).catch(() => "")
+      : "";
   await sendText(
     waId,
-    `✅ Guardado: *${draft.description}* por *${formatMoney(draft.amount, draft.currency ?? "ARS")}*${cuotas} (${account.name}).${createdCategory ? `\n🏷️ Creé la categoría *${category.name}*.` : ""}${splitText}`,
+    `✅ Guardado: *${draft.description}* por *${formatMoney(draft.amount, draft.currency ?? "ARS")}*${cuotas} (${account.name}).${dueText}${createdCategory ? `\n🏷️ Creé la categoría *${category.name}*.` : ""}${splitText}`,
   );
 };
 
@@ -879,7 +942,7 @@ const confirmSharedTransaction = async (waId: string, uid: string, draft: Transa
 
   const me = await displayNameOf(uid);
   const account = stillShared.account;
-  await createTransactionAdmin({
+  const txId = await createTransactionAdmin({
     ownerUid: shared.ownerUid,
     account: toServerAccount(account),
     accountId: account.id,
@@ -896,6 +959,8 @@ const confirmSharedTransaction = async (waId: string, uid: string, draft: Transa
 
   const money = formatMoney(draft.amount, draft.currency ?? "ARS");
   const cuotas = draft.installments > 1 ? ` en ${draft.installments} cuotas` : "";
+  const dueText =
+    account.type === "credit" ? await cardDueText(shared.ownerUid, txId).catch(() => "") : "";
   const notified = (
     await notify(shared.ownerUid, {
       kind: "shared-expense",
@@ -907,6 +972,6 @@ const confirmSharedTransaction = async (waId: string, uid: string, draft: Transa
   ).stored;
   await sendText(
     waId,
-    `✅ Cargado en la *${account.name}* de ${shared.ownerName}: *${draft.description}* por *${money}*${cuotas}.${notified ? ` Le avisé a ${shared.ownerName}.` : ""}`,
+    `✅ Cargado en la *${account.name}* de ${shared.ownerName}: *${draft.description}* por *${money}*${cuotas}.${dueText}${notified ? ` Le avisé a ${shared.ownerName}.` : ""}`,
   );
 };
