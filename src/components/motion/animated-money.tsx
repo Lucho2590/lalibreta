@@ -30,3 +30,8 @@ export function AnimatedMoney({ amounts }: { amounts: Partial<Record<Currency, n
     </>
   );
 }
+
+/** Un monto en una moneda (con su signo), animado. */
+export function AnimatedAmount({ value, currency }: { value: number; currency: Currency }) {
+  return <AnimatedNumber value={value} format={formatters[currency]} />;
+}

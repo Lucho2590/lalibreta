@@ -19,6 +19,7 @@ import { PendingInbox } from "@/components/people/pending-inbox";
 import { PersonTransferForm } from "@/components/people/person-transfer-form";
 import { ledgerTotal, ledgerTotals } from "@/lib/domain/debts";
 import { personBalanceText } from "@/components/people/balance-text";
+import { PersonBalanceText, PersonLaterText } from "@/components/people/person-balance";
 import type { Currency } from "@/lib/domain/types";
 import { formatMoney } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -185,24 +186,18 @@ export default function CuentasConGentePage() {
                       <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">sin app</span>
                     )}
                   </div>
-                  {b.later && <div className="text-xs text-muted-foreground">+ {b.later}</div>}
+                  {b.later && (
+                    <div className="text-xs text-muted-foreground">
+                      + <PersonLaterText balance={b} />
+                    </div>
+                  )}
                 </div>
                 <span
                   className={`text-right text-sm font-semibold tabular-nums ${
                     b.tone === "success" ? "text-success" : b.tone === "destructive" ? "text-destructive" : "text-muted-foreground"
                   }`}
                 >
-                  {b.kind === "owes" ? (
-                    <>Te debe <AnimatedMoney amounts={b.amounts.owes} /></>
-                  ) : b.kind === "iOwe" ? (
-                    <>Le debés <AnimatedMoney amounts={b.amounts.iOwe} /></>
-                  ) : b.kind === "both" ? (
-                    <>
-                      Te debe <AnimatedMoney amounts={b.amounts.owes} /> · le debés <AnimatedMoney amounts={b.amounts.iOwe} />
-                    </>
-                  ) : (
-                    b.text
-                  )}
+                  <PersonBalanceText balance={b} />
                 </span>
                 <ChevronRight className="size-4 text-muted-foreground" />
               </Link>

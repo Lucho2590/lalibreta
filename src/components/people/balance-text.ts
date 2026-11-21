@@ -25,9 +25,16 @@ export function personBalanceText(l: PersonLedger) {
   // Los montos por separado (en valor absoluto), para mostrarlos animados.
   const toRecord = (xs: Array<{ c: Currency; v: number }>) =>
     Object.fromEntries(xs.map((p) => [p.c, Math.abs(p.v)])) as Partial<Record<Currency, number>>;
-  const amounts = { owes: toRecord(owes), iOwe: toRecord(iOwe) };
+  const amounts = {
+    owes: toRecord(owes),
+    iOwe: toRecord(iOwe),
+    laterToMe: toRecord(laterToMe),
+    laterIOwe: toRecord(laterIOwe),
+  };
   if (!now.length) return { text: later ? "Al día" : "Están a mano", tone: "muted" as const, later, kind: "settled" as const, amounts };
   if (owes.length && !iOwe.length) return { text: `Te debe ${fmt(owes)}`, tone: "success" as const, later, kind: "owes" as const, amounts };
   if (iOwe.length && !owes.length) return { text: `Le debés ${fmt(iOwe)}`, tone: "destructive" as const, later, kind: "iOwe" as const, amounts };
   return { text: `Te debe ${fmt(owes)} · le debés ${fmt(iOwe)}`, tone: "muted" as const, later, kind: "both" as const, amounts };
 }
+
+export type PersonBalance = ReturnType<typeof personBalanceText>;
