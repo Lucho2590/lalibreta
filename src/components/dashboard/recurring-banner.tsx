@@ -26,7 +26,10 @@ export function RecurringBanner() {
   const { data: recurring } = useRecurring();
   const { data: accounts } = useAccounts();
   const { monthKey, year, month } = useMonth();
-  const [appliedIds, setAppliedIds] = useState<Set<string>>(new Set());
+  // Los fijos ya aplicados, junto con el mes al que corresponden: al cambiar
+  // de mes, hasta que llega la consulta del mes nuevo no se muestra nada (si
+  // no, se comparaba con los del mes anterior y aparecían todos "sin aplicar").
+  const [applied, setApplied] = useState<{ key: string; ids: Set<string> } | null>(null);
   const [busy, setBusy] = useState(false);
   // Se incrementa al aplicar, para volver a leer qué fijos ya están en el mes.
   const [refresh, setRefresh] = useState(0);
@@ -46,16 +49,17 @@ export function RecurringBanner() {
         const r = (d.data() as { recurringId?: string }).recurringId;
         if (r) ids.add(r);
       });
-      if (active) setAppliedIds(ids);
+      if (active) setApplied({ key: `${user.uid}:${monthKey}`, ids });
     })();
     return () => {
       active = false;
     };
   }, [user, monthKey, recurring, refresh]);
 
-  const pending = recurring.filter(
-    (r) => r.active && isInRange(r, year, month) && !appliedIds.has(r.id),
-  );
+  const ready = !!user && applied?.key === `${user.uid}:${monthKey}`;
+  const pending = ready
+    ? recurring.filter((r) => r.active && isInRange(r, year, month) && !applied.ids.has(r.id))
+    : [];
 
   if (pending.length === 0) return null;
 
@@ -63,14 +67,14 @@ export function RecurringBanner() {
     if (!user) return;
     setBusy(true);
     try {
-      const { applied } = await applyAllRecurringToMonth(
+      const { applied: count } = await applyAllRecurringToMonth(
         user.uid,
         pending,
         accounts,
         year,
         month,
       );
-      toast.success(`${applied} ${applied === 1 ? "fijo aplicado" : "fijos aplicados"}`);
+      toast.success(`${count} ${count === 1 ? "fijo aplicado" : "fijos aplicados"}`);
       setRefresh((n) => n + 1);
     } catch (err) {
       toast.error("Error al aplicar");
