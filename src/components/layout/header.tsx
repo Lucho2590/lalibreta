@@ -11,6 +11,7 @@ import {
   Users,
   Wallet,
   CalendarDays,
+  CloudSun,
 } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -72,6 +73,9 @@ export function Header({ variant = "mobile" }: { variant?: "mobile" | "desktop" 
           <DropdownMenuSeparator />
           <DropdownMenuItem render={<Link href="/agenda" />}>
             <CalendarDays className="mr-2 size-4" /> Agenda
+          </DropdownMenuItem>
+          <DropdownMenuItem render={<Link href="/clima" />}>
+            <CloudSun className="mr-2 size-4" /> Clima
           </DropdownMenuItem>
           <DropdownMenuItem render={<Link href="/fijos" />}>
             <Repeat className="mr-2 size-4" /> Fijos

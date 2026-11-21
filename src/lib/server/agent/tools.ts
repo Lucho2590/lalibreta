@@ -20,6 +20,7 @@ import type { Currency } from "@/lib/domain/types";
 import { setAccountBalanceAdmin, setAccountParentAdmin, setCardDatesAdmin } from "../accounts-admin";
 import { PROPOSE_BATCH_TOOL, proposeBatch } from "./batch-tool";
 import { AGENDA_TOOLS, AGENDA_TOOL_NAMES, runAgendaTool } from "./agenda-tool";
+import { WEATHER_TOOLS, WEATHER_TOOL_NAMES, runWeatherTool } from "./weather-tool";
 import type { AgentPending, AgentPerson } from "../people";
 import { ensureOfflineContact, loadPeopleContext } from "../people";
 import { createSplitRule, deleteSplitRule, loadSplitRules } from "../split-rules";
@@ -760,6 +761,7 @@ export const TOOL_DEFINITIONS: ChatCompletionFunctionTool[] = [
     },
   },
   ...AGENDA_TOOLS,
+  ...WEATHER_TOOLS,
 ];
 
 // ---------- Schemas ----------
@@ -1856,6 +1858,7 @@ export const executeTool = async (
   }
 
   if (AGENDA_TOOL_NAMES.has(name)) return runAgendaTool(ctx.uid, name, args);
+  if (WEATHER_TOOL_NAMES.has(name)) return runWeatherTool(ctx.uid, name, args);
 
   switch (name) {
     case "propose_transaction":

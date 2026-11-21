@@ -18,6 +18,7 @@ import {
   Tag,
   Users,
   Wallet,
+  CloudSun,
 } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -32,6 +33,7 @@ const navItems = [
   { href: "/movimientos", label: "Movimientos", icon: List },
   { href: "/cuentas", label: "Cuentas", icon: CreditCard },
   { href: "/agenda", label: "Agenda", icon: CalendarDays },
+  { href: "/clima", label: "Clima", icon: CloudSun },
   { href: "/resumenes", label: "Importar resumen", icon: FileText },
   { href: "/fijos", label: "Fijos", icon: Repeat },
   { href: "/ingresos", label: "Ingresos", icon: Wallet },

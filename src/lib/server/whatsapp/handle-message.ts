@@ -42,6 +42,8 @@ import {
   shareCodeExists,
 } from "../sharing";
 import { notify } from "../notifications";
+import { saveUserLocation } from "../weather";
+import { placeText } from "@/lib/domain/weather";
 import { ensureOfflineContact, loadPeopleContext } from "../people";
 import { createSplit } from "../splits";
 import { applySplitRules, createSplitRule } from "../split-rules";
@@ -351,6 +353,19 @@ const routeMessage = async (
       historyText = `📄 [${doc.filename ?? "archivo"}] ${caption}`.trim();
       // Leer un resumen largo tarda: avisamos para que no parezca colgado.
       if (isPdf) await sendText(waId, "Dame un toque que lo leo 📄👀");
+      break;
+    }
+    case "location": {
+      // Ubicación compartida (📎 → Ubicación): queda guardada para el clima y
+      // las alertas del SMN, y el agente sigue (si venía preguntando el clima, contesta).
+      const loc = message.location;
+      if (!loc || !Number.isFinite(loc.latitude) || !Number.isFinite(loc.longitude)) return;
+      const { location } = await saveUserLocation(uid, loc.latitude, loc.longitude, "whatsapp");
+      const where = location ? placeText(location) : "tu zona";
+      input = {
+        text: `(el usuario compartió su ubicación: ${where}. Ya quedó guardada para el clima y las alertas del SMN)`,
+      };
+      historyText = `📍 [ubicación] ${where}`;
       break;
     }
     default:

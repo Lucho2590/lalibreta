@@ -22,6 +22,9 @@ export type NotificationKind =
   | "p2p-response"
   | "debt-reminder"
   | "pending-reminder"
+  // Clima
+  | "weather-alert"
+  | "weather-daily"
   | "test";
 
 export interface AppNotification {
@@ -54,6 +57,10 @@ export interface NotificationPrefs {
   debtsEveryDays: number;
   /** Recordar lo que me mandaron para aceptar (gastos, transferencias, conexiones). */
   pendingReminders: boolean;
+  /** Alertas meteorológicas del SMN en la zona del usuario. */
+  weatherAlerts: boolean;
+  /** A la mañana, el pronóstico del día. */
+  weatherDaily: boolean;
 }
 
 export const DEFAULT_NOTIFICATION_PREFS: NotificationPrefs = {
@@ -66,6 +73,8 @@ export const DEFAULT_NOTIFICATION_PREFS: NotificationPrefs = {
   debts: true,
   debtsEveryDays: 7,
   pendingReminders: true,
+  weatherAlerts: true,
+  weatherDaily: true,
 };
 
 export const withDefaultPrefs = (p: Partial<NotificationPrefs> | null | undefined): NotificationPrefs => ({

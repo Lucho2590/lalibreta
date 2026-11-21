@@ -20,6 +20,7 @@ import {
   Tag,
   Users,
   Wallet,
+  CloudSun,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { signOut } from "@/lib/firebase/auth";
@@ -35,6 +36,7 @@ const items = [
 /** Todo lo que en la compu está en la barra lateral y no entra abajo. */
 const moreItems = [
   { href: "/agenda", label: "Agenda", icon: CalendarDays },
+  { href: "/clima", label: "Clima", icon: CloudSun },
   { href: "/ingresos", label: "Ingresos", icon: Wallet },
   { href: "/fijos", label: "Fijos", icon: Repeat },
   { href: "/compartidas", label: "Cuentas con gente", icon: Handshake },
