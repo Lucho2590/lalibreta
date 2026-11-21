@@ -14,7 +14,7 @@ import {
   type ServerRecurringInfo,
 } from "../queries-admin";
 import { getLatestStatement, getStatementHistory } from "../statements-admin";
-import { getUsdRate } from "../fx";
+import { getRates, getUsdRate } from "../fx";
 import type { BalancesSnapshot } from "../queries-admin";
 import type { Currency } from "@/lib/domain/types";
 import { setAccountBalanceAdmin, setAccountParentAdmin, setCardDatesAdmin } from "../accounts-admin";
@@ -620,10 +620,19 @@ export const TOOL_DEFINITIONS: ChatCompletionFunctionTool[] = [
     type: "function",
     function: {
       name: "get_fx_rate",
-      description: "Cotización oficial del dólar según el BCRA (de hoy o de una fecha).",
+      description:
+        "Cotizaciones oficiales del BCRA (de hoy o de una fecha) de todas las monedas que publica: dólar, euro, real, libra, peso uruguayo/chileno, yen, etc. Devuelve pesos por unidad (rate) y dólares por unidad (usdPerUnit). \"El dólar\" a secas es USD oficial. Pasá currencies para pedir solo algunas; sin currencies, trae todas.",
       parameters: {
         type: "object",
-        properties: { date: { type: "string", description: "YYYY-MM-DD (opcional)" } },
+        properties: {
+          date: { type: "string", description: "YYYY-MM-DD (opcional)" },
+          currencies: {
+            type: "array",
+            items: { type: "string" },
+            description:
+              'Códigos del BCRA (opcional), ej. ["EUR","BRL"]. USD dólar, EUR euro, GBP libra, BRL real, UYU peso uruguayo, CLP peso chileno, PYG guaraní, MXP peso mexicano, JPY yen, CHF franco suizo, CAD dólar canadiense',
+          },
+        },
         additionalProperties: false,
       },
     },
@@ -855,7 +864,10 @@ const recurringSchema = z.object({
   dayOfMonth: z.number().int().min(1).max(31),
 });
 
-const fxSchema = z.object({ date: optYMD });
+const fxSchema = z.object({
+  date: optYMD,
+  currencies: z.array(z.string().trim().min(2).max(5)).max(40).optional(),
+});
 
 const shareCodeSchema = z.object({
   accountIds: z.array(z.string().min(1)).min(1).max(10),
@@ -2090,8 +2102,18 @@ export const executeTool = async (
       const parsed = fxSchema.safeParse(args);
       if (!parsed.success) return issues(parsed.error);
       try {
-        const fx = await getUsdRate(parsed.data.date);
-        return { rate: fx.rate, date: fx.date, source: "BCRA (cotización oficial de referencia)" };
+        const fx = await getRates(parsed.data.date);
+        const wanted = parsed.data.currencies?.map((c) => c.toUpperCase());
+        // MXN es el código ISO; el BCRA usa MXP.
+        const codes = wanted?.map((c) => (c === "MXN" ? "MXP" : c));
+        const rates = codes ? fx.rates.filter((r) => codes.includes(r.code)) : fx.rates;
+        const missing = codes?.filter((c) => !fx.rates.some((r) => r.code === c)) ?? [];
+        return {
+          date: fx.date,
+          source: "BCRA (cotización oficial de referencia)",
+          rates,
+          ...(missing.length ? { notPublished: missing } : {}),
+        };
       } catch {
         return { error: "No pude consultar el BCRA ahora." };
       }
