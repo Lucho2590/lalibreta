@@ -16,12 +16,16 @@ import { cn } from "@/lib/utils";
  */
 export function WeatherCard() {
   const { data, loading } = useWeather();
-  const visible =
-    !loading && !!data && !data.optOut && (!data.location || !!data.forecast || data.alerts.length > 0);
+  const visible = weatherCardVisible(data, loading);
   return <Reveal show={visible}>{visible && data && <WeatherCardContent data={data} />}</Reveal>;
 }
 
-function WeatherCardContent({ data }: { data: WeatherData }) {
+/** Si hay algo para mostrar: clima, alerta, o el aviso de activar la ubicación. */
+export function weatherCardVisible(data: WeatherData | null, loading: boolean): data is WeatherData {
+  return !loading && !!data && !data.optOut && (!data.location || !!data.forecast || data.alerts.length > 0);
+}
+
+export function WeatherCardContent({ data }: { data: WeatherData }) {
 
   if (!data.location) {
     return (
