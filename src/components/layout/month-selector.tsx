@@ -8,10 +8,10 @@ import { formatMonth } from "@/lib/format";
 
 /**
  * Pantallas donde el mes elegido cambia lo que se ve. En las demás (Cuentas
- * muestra el saldo de hoy; Agenda, Clima, Notificaciones…) el selector no se
+ * muestra el saldo de hoy; Clima, Notificaciones…) el selector no se
  * muestra, para no confundir. Si una pantalla nueva usa useMonth(), sumarla acá.
  */
-const MONTH_PAGES = ["/", "/movimientos", "/ingresos", "/fijos", "/compartidas"];
+const MONTH_PAGES = ["/", "/movimientos", "/ingresos", "/fijos", "/compartidas", "/agenda"];
 const MONTH_PAGE_PREFIXES = ["/cuentas/", "/compartidas/persona/"];
 
 export const usesMonth = (pathname: string) =>
