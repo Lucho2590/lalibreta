@@ -1,0 +1,44 @@
+# Alertas meteorológicas del SMN: cada 30 min le pega a /api/cron/weather.
+# (El cron de Vercel en el plan Hobby corre solo una vez por día.)
+#
+# Secrets del repo (Settings → Secrets and variables → Actions):
+#   APP_URL      URL de producción, sin barra final (ej. https://lalibreta.vercel.app)
+#   CRON_SECRET  el mismo valor que la variable CRON_SECRET de Vercel
+#
+# GitHub puede atrasar los cron unos minutos y pausa los workflows
+# programados si el repo pasa 60 días sin actividad.
+name: Alertas del clima
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Solo mostrar qué se mandaría"
+        type: boolean
+        default: false
+
+concurrency:
+  group: weather-alerts
+  cancel-in-progress: false
+
+jobs:
+  alerts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Revisar alertas del SMN
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          DRY_RUN: ${{ inputs.dry_run && '1' || '0' }}
+        run: |
+          if [ -z "$APP_URL" ] || [ -z "$CRON_SECRET" ]; then
+            echo "::warning::Faltan los secrets APP_URL y/o CRON_SECRET"
+            exit 0
+          fi
+          curl -fsS --max-time 300 --retry 2 --retry-delay 20 \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$APP_URL/api/cron/weather?dryRun=$DRY_RUN"
+          echo

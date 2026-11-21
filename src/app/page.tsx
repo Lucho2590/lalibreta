@@ -36,6 +36,7 @@ import { ApprovalsBanner } from "@/components/dashboard/approvals-banner";
 import { PendingInbox } from "@/components/people/pending-inbox";
 import { isPersonAccountId } from "@/lib/domain/people";
 import { TodayAgenda } from "@/components/dashboard/today-agenda";
+import { WeatherCard } from "@/components/dashboard/weather-card";
 import { Onboarding } from "@/components/dashboard/onboarding";
 import { CategoryIcon } from "@/components/category-icon";
 import { AccountIcon, defaultIconForType } from "@/components/account-icon";
@@ -125,6 +126,7 @@ export default function Dashboard() {
           <ApprovalsBanner />
           <PendingInbox compact />
           <RecurringBanner />
+          <WeatherCard />
           <TodayAgenda />
 
           <section className="grid gap-4 md:grid-cols-3">

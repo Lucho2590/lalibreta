@@ -28,6 +28,7 @@ export interface WaIncomingMessage {
     list_reply?: { id: string; title: string };
   };
   button?: { payload: string; text: string };
+  location?: { latitude: number; longitude: number; name?: string; address?: string };
 }
 
 export interface WaContact {

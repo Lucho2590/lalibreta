@@ -105,5 +105,18 @@ service cloud.firestore {
     match /accountShareCodes/{id} {
       allow read, write: if false;
     }
+    // Clima: ubicación de cada usuario (GPS redondeado a ~1 km; no va en
+    // users/{uid} porque ese doc lo lee cualquier logueado), alertas del SMN
+    // cacheadas y metadatos de la sincronización. Solo server; la app usa
+    // /api/users/location y /api/weather.
+    match /userLocations/{uid} {
+      allow read, write: if false;
+    }
+    match /weatherAlerts/{id} {
+      allow read, write: if false;
+    }
+    match /weatherMeta/{id} {
+      allow read, write: if false;
+    }
   }
 }

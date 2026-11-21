@@ -10,6 +10,8 @@ import {
   CalendarDays,
   CalendarX,
   CheckCheck,
+  CloudLightning,
+  CloudSun,
   CreditCard,
   Download,
   Handshake,
@@ -453,6 +455,20 @@ function PrefsCard() {
           checked={prefs.pendingReminders}
           onChange={(v) => save({ pendingReminders: v })}
         />
+        <PrefRow
+          icon={CloudLightning}
+          title="Alertas del clima"
+          detail="Alertas meteorológicas del SMN (tormentas, viento, calor, nevadas) en tu zona. Necesita tu ubicación."
+          checked={prefs.weatherAlerts}
+          onChange={(v) => save({ weatherAlerts: v })}
+        />
+        <PrefRow
+          icon={CloudSun}
+          title="Clima del día"
+          detail="A la mañana, el pronóstico de hoy donde estás."
+          checked={prefs.weatherDaily}
+          onChange={(v) => save({ weatherDaily: v })}
+        />
       </CardContent>
     </Card>
   );
@@ -521,6 +537,8 @@ const KIND_ICON: Record<NotificationKind, React.ComponentType<{ className?: stri
   "p2p-response": ArrowLeftRight,
   "debt-reminder": HandCoins,
   "pending-reminder": Inbox,
+  "weather-alert": CloudLightning,
+  "weather-daily": CloudSun,
   test: Sparkles,
 };
 

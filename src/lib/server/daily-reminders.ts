@@ -13,6 +13,7 @@ import { formatMoney } from "@/lib/format";
 import { computePeopleLedger } from "@/lib/domain/debts";
 import { loadSplitsFor } from "./splits";
 import { loadTransfersFor } from "./person-transfers";
+import { weatherDailyReminders } from "./weather-alerts";
 
 /**
  * Avisos del día (los corre el cron de Vercel una vez por día, a la mañana):
@@ -21,7 +22,8 @@ import { loadTransfersFor } from "./person-transfers";
  * - fijos que tocan hoy y todavía no se cargaron,
  * - lo que hay en la agenda del día,
  * - cobrarle a la gente sin la app que te debe plata (cada N días),
- * - lo que te mandaron para responder y quedó colgado (gastos, transferencias, conexiones).
+ * - lo que te mandaron para responder y quedó colgado (gastos, transferencias, conexiones),
+ * - el pronóstico del día (a quien activó la ubicación).
  * Cada aviso tiene una clave fija, así que correrlo dos veces no repite nada.
  */
 
@@ -62,6 +64,11 @@ export const runDailyReminders = async (now = new Date()): Promise<DailyRunResul
     sent += await agendaReminders(today, (uid) => prefsByUid.get(uid) ?? null);
   } catch (err) {
     console.error("[cron] agenda del día", err);
+  }
+  try {
+    sent += await weatherDailyReminders(today, (uid) => prefsByUid.get(uid) ?? null);
+  } catch (err) {
+    console.error("[cron] clima del día", err);
   }
   return { users: users.size, sent };
 };
