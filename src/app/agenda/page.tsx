@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { CalendarDays, LayoutList, Plus } from "lucide-react";
+import { CalendarDays, CalendarSync, LayoutList, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -14,6 +14,7 @@ import { formatMonth } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { ENTER, enterDelay } from "@/components/motion/enter";
 import { MonthCalendar } from "@/components/agenda/month-calendar";
+import { CalendarSyncSheet } from "@/components/agenda/calendar-sync-sheet";
 import { apiFetch } from "@/lib/api";
 import {
   dayLabel,
@@ -50,6 +51,7 @@ export default function AgendaPage() {
     window.localStorage.setItem(VIEW_KEY, v);
   };
   const [pickedDay, setPickedDay] = useState<string | null>(null);
+  const [syncOpen, setSyncOpen] = useState(false);
   const [expenseFor, setExpenseFor] = useState<{ activity: Activity; split: boolean } | null>(null);
 
   const mine = useMemo<Mine[]>(
@@ -207,6 +209,15 @@ export default function AgendaPage() {
           <p className="text-sm text-muted-foreground">{formatMonth(year, month)}</p>
         </div>
         <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            className="rounded-xl"
+            onClick={() => setSyncOpen(true)}
+            aria-label="Ver la agenda en tu calendario"
+            title="Ver la agenda en Google Calendar o en el celular"
+          >
+            <CalendarSync className="size-4" /> <span className="hidden lg:inline">Tu calendario</span>
+          </Button>
           <Tabs value={view} onValueChange={(v) => changeView(v as View)}>
             <TabsList>
               <TabsTrigger value="list" aria-label="Ver en lista">
@@ -307,6 +318,8 @@ export default function AgendaPage() {
           </section>
         </div>
       )}
+
+      <CalendarSyncSheet open={syncOpen} onOpenChange={setSyncOpen} />
 
       <Sheet open={!!formFor} onOpenChange={(o) => !o && setFormFor(null)}>
         <SheetContent side="bottom" className="sheet-md-modal max-h-[92vh] overflow-y-auto p-0">

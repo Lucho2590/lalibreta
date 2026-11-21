@@ -118,5 +118,10 @@ service cloud.firestore {
     match /weatherMeta/{id} {
       allow read, write: if false;
     }
+    // Suscripción a la agenda desde otros calendarios: token privado → uid.
+    // Solo server (/api/agenda/feed y /api/agenda/ics/<token>).
+    match /calendarFeeds/{token} {
+      allow read, write: if false;
+    }
   }
 }
