@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { ENTER, enterDelay } from "@/components/motion/enter";
 import Link from "next/link";
 import { ArrowLeftRight, ChevronDown, CreditCard, MoreVertical, Pencil, Trash2, Users } from "lucide-react";
 import { toast } from "sonner";
@@ -40,14 +41,6 @@ interface Props {
   /** Agrupa los consumos de cada tarjeta en una fila desplegable (default: sí). */
   groupCards?: boolean;
 }
-
-/**
- * Las filas entran en cascada (de arriba hacia abajo) cuando aparecen: al
- * cambiar de mes o de filtro (la lista se vuelve a montar), al abrir los
- * consumos de una tarjeta y cuando se carga un movimiento nuevo.
- */
-const ENTER = "animate-in fade-in-0 slide-in-from-top-2 fill-mode-backwards duration-300 motion-reduce:animate-none";
-const enterDelay = (index: number): React.CSSProperties => ({ animationDelay: `${Math.min(index, 12) * 40}ms` });
 
 export function TransactionList({
   items,
