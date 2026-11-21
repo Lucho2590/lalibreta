@@ -32,13 +32,9 @@ import { CARD_CURRENCIES, FOREIGN_CURRENCIES, accountCurrencies, paymentMonthOf,
 import { currencyLabel, currencySymbol, formatCurrency, formatMoney, formatMonth, formatShortDate, moneyFormatter } from "@/lib/format";
 import { cardFloorMonth, summarizeCardMonth } from "@/lib/domain/card-summary";
 import { monthRates } from "@/lib/domain/exchanges";
-import { RecurringBanner } from "@/components/dashboard/recurring-banner";
 import { ExchangeSummaryCard } from "@/components/transactions/exchange-summary-card";
-import { ApprovalsBanner } from "@/components/dashboard/approvals-banner";
-import { PendingInbox } from "@/components/people/pending-inbox";
 import { isPersonAccountId } from "@/lib/domain/people";
-import { TodayAgenda } from "@/components/dashboard/today-agenda";
-import { WeatherCard } from "@/components/dashboard/weather-card";
+import { HomeShortcuts } from "@/components/dashboard/home-shortcuts";
 import { Onboarding } from "@/components/dashboard/onboarding";
 import { AnimatedNumber } from "@/components/motion/animated-number";
 import { ENTER, enterDelay } from "@/components/motion/enter";
@@ -163,11 +159,8 @@ export default function Dashboard() {
       {/* Sin cuentas no hay nada que mostrar: el onboarding ocupa el inicio. */}
       {(accountsLoading || accounts.length > 0) && (
         <>
-          <ApprovalsBanner />
-          <PendingInbox compact />
-          <RecurringBanner />
-          <WeatherCard />
-          <TodayAgenda />
+          {/* Fijos, pendientes, agenda y clima: íconos que abren su tarjeta. */}
+          <HomeShortcuts />
 
           <section className="grid gap-4 md:grid-cols-3">
             <div className="md:col-span-2 overflow-hidden rounded-3xl bg-brand-grad p-6 text-white shadow-lg">

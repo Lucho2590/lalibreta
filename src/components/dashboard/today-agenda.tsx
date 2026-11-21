@@ -15,14 +15,14 @@ import {
   type Activity,
 } from "@/lib/domain/activities";
 
-/** En el inicio: lo de hoy y mañana, y las invitaciones sin responder. */
-export function TodayAgenda() {
+/** Lo de hoy y mañana, y las invitaciones sin responder. */
+export function useTodayAgenda() {
   const { user } = useAuth();
   const { data } = useActivities();
   const today = ymdAR();
   const tomorrow = addDaysYMD(today, 1);
 
-  const { todays, tomorrows, invites } = useMemo(() => {
+  return useMemo(() => {
     const going: Activity[] = [];
     let invites = 0;
     for (const a of data) {
@@ -34,14 +34,23 @@ export function TodayAgenda() {
       }
       going.push(a);
     }
+    const todays = going.filter((a) => a.date === today);
+    const tomorrows = going.filter((a) => a.date === tomorrow);
     return {
-      todays: going.filter((a) => a.date === today),
-      tomorrows: going.filter((a) => a.date === tomorrow),
+      todays,
+      tomorrows,
       invites,
+      visible: !!user && (todays.length > 0 || tomorrows.length > 0 || invites > 0),
     };
   }, [data, user, today, tomorrow]);
+}
 
-  if (!user || (todays.length === 0 && tomorrows.length === 0 && invites === 0)) return null;
+/** En el inicio: lo de hoy y mañana, y las invitaciones sin responder. */
+export function TodayAgenda() {
+  const { user } = useAuth();
+  const { todays, tomorrows, invites, visible } = useTodayAgenda();
+
+  if (!user || !visible) return null;
 
   const row = (a: Activity) => {
     const others = companions(a, user).filter((p) => p.status === "owner" || p.status === "accepted");
