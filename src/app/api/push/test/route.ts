@@ -19,5 +19,5 @@ export async function POST(req: Request) {
     body: "Así te vamos a avisar de vencimientos, fijos y cuentas compartidas.",
     url: "/notificaciones",
   });
-  return NextResponse.json({ ok: r.stored, pushed: r.pushed });
+  return NextResponse.json({ ok: r.stored, pushed: r.pushed, whatsapp: r.whatsapp });
 }

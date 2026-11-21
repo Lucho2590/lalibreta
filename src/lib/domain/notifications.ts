@@ -61,6 +61,12 @@ export interface NotificationPrefs {
   weatherAlerts: boolean;
   /** A la mañana, el pronóstico del día. */
   weatherDaily: boolean;
+  /**
+   * Mandar cada aviso también por WhatsApp, aunque haya llegado el push.
+   * Sirve para relojes que no muestran las notificaciones de la web app
+   * (ej. Amazfit con iPhone), pero sí las de WhatsApp.
+   */
+  whatsappCopy: boolean;
 }
 
 export const DEFAULT_NOTIFICATION_PREFS: NotificationPrefs = {
@@ -75,6 +81,7 @@ export const DEFAULT_NOTIFICATION_PREFS: NotificationPrefs = {
   pendingReminders: true,
   weatherAlerts: true,
   weatherDaily: true,
+  whatsappCopy: false,
 };
 
 export const withDefaultPrefs = (p: Partial<NotificationPrefs> | null | undefined): NotificationPrefs => ({
