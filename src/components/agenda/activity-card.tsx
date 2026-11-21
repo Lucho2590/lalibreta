@@ -1,6 +1,7 @@
 "use client";
 
-import { Check, MapPin, MoreVertical, Pencil, Receipt, Split, Trash2, Unlink, UserMinus, Users } from "lucide-react";
+import { CalendarPlus, Check, MapPin, MoreVertical, Pencil, Receipt, Split, Trash2, Unlink, UserMinus, Users } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -12,6 +13,9 @@ import {
 import { companions, participantName, type Activity, type ActivityParticipant } from "@/lib/domain/activity-model";
 import { formatMoney } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { activityToEvent } from "@/lib/domain/activity-calendar";
+import { googleCalendarEventUrl } from "@/lib/domain/ical";
+import { getCalendarFeed, singleEventIcsUrl } from "@/lib/agenda/calendar-feed-client";
 
 export interface ActivityCardActions {
   onRespond: (a: Activity, response: "accepted" | "rejected") => void;
@@ -23,6 +27,16 @@ export interface ActivityCardActions {
 }
 
 const goingOrInvited = (p: ActivityParticipant) => p.status !== "rejected";
+
+/** Baja el .ics de la actividad: el iPhone/Android ofrecen agregarla al calendario. */
+const addToDeviceCalendar = async (activityId: string) => {
+  try {
+    const feed = await getCalendarFeed();
+    window.location.href = singleEventIcsUrl(feed, activityId);
+  } catch {
+    toast.error("No se pudo preparar el evento");
+  }
+};
 
 export function ActivityCard({
   activity: a,
@@ -80,6 +94,16 @@ export function ActivityCard({
                     <DropdownMenuItem onClick={() => actions.onEdit(a)}>
                       <Pencil className="mr-2 size-4" /> Editar
                     </DropdownMenuItem>
+                  )}
+                  {going && (
+                    <>
+                      <DropdownMenuItem onClick={() => window.open(googleCalendarEventUrl(activityToEvent(a, myUid, window.location.origin)), "_blank", "noopener")}>
+                        <CalendarPlus className="mr-2 size-4" /> Agregar a Google Calendar
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => void addToDeviceCalendar(a.id)}>
+                        <CalendarPlus className="mr-2 size-4" /> Agregar al calendario del celular
+                      </DropdownMenuItem>
+                    </>
                   )}
                   {myExpense && (
                     <DropdownMenuItem onClick={() => actions.onUnlinkExpense(a)}>
