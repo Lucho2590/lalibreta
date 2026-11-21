@@ -301,15 +301,12 @@ export default function MovimientosPage() {
       {loading ? (
         <SkeletonList />
       ) : (
-        // Al llegar los movimientos de otro mes, entran con un fundido; mientras
-        // tanto, los del mes anterior quedan atenuados (sin saltos).
+        // Al llegar los movimientos de otro mes (o al cambiar de filtro) la lista
+        // se vuelve a montar y las filas entran en cascada; mientras llega el mes
+        // nuevo, los del anterior quedan atenuados (sin saltos).
         <div
-          key={dataMonth}
-          className={cn(
-            "animate-in fade-in-0 slide-in-from-bottom-1 duration-300 motion-reduce:animate-none",
-            "transition-opacity",
-            stale && "opacity-50",
-          )}
+          key={`${dataMonth}|${kindFilter ?? "all"}|${accountFilter ?? ""}`}
+          className={cn("transition-opacity duration-200", stale && "opacity-50")}
         >
           {filtered.length === 0 ? (
             <Card className="rounded-3xl">

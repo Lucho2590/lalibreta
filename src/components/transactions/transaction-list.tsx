@@ -41,6 +41,14 @@ interface Props {
   groupCards?: boolean;
 }
 
+/**
+ * Las filas entran en cascada (de arriba hacia abajo) cuando aparecen: al
+ * cambiar de mes o de filtro (la lista se vuelve a montar), al abrir los
+ * consumos de una tarjeta y cuando se carga un movimiento nuevo.
+ */
+const ENTER = "animate-in fade-in-0 slide-in-from-top-2 fill-mode-backwards duration-300 motion-reduce:animate-none";
+const enterDelay = (index: number): React.CSSProperties => ({ animationDelay: `${Math.min(index, 12) * 40}ms` });
+
 export function TransactionList({
   items,
   adjustment,
@@ -145,7 +153,7 @@ export function TransactionList({
   );
 
 
-  const renderRow = (it: Installment, nested = false) => {
+  const renderRow = (it: Installment, nested = false, index = 0) => {
       const acc = accountMap.get(it.accountId);
       const cat = categoryMap.get(it.categoryId);
       const isTransfer = it.kind === "transfer";
@@ -266,7 +274,8 @@ export function TransactionList({
       return (
         <Card
           key={it.id}
-          className={cn("rounded-2xl py-0 transition hover:shadow-sm", nested && "bg-muted/20 shadow-none")}
+          className={cn("rounded-2xl py-0 transition hover:shadow-sm", ENTER, nested && "bg-muted/20 shadow-none")}
+          style={enterDelay(index)}
         >
           <CardContent className="flex items-start gap-3 px-3 py-3 sm:px-4">
             <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-muted text-foreground">
@@ -449,14 +458,14 @@ export function TransactionList({
         split={editing ? adjustment?.byTxId.get(editing.transactionId) : undefined}
         onClose={() => setEditing(null)}
       />
-      {entries.map((e) => {
-        if (e.type === "row") return renderRow(e.it);
+      {entries.map((e, index) => {
+        if (e.type === "row") return renderRow(e.it, false, index);
         const acc = accountMap.get(e.accountId);
         const total = groupTotal(e.items);
         const isOpen = open.has(e.accountId);
         const due = e.items[0].billingDate.toDate();
         return (
-          <div key={`card-${e.accountId}`} className="space-y-2">
+          <div key={`card-${e.accountId}`} className={cn("space-y-2", ENTER)} style={enterDelay(index)}>
             <Card className="rounded-2xl py-0 transition hover:shadow-sm">
               <CardContent className="px-3 py-0 sm:px-4">
                 <button
@@ -494,7 +503,7 @@ export function TransactionList({
             </Card>
             {isOpen && (
               <div className="ml-2 space-y-2 border-l-2 border-muted pl-2 sm:ml-4 sm:pl-3">
-                {e.items.map((it) => renderRow(it, true))}
+                {e.items.map((it, j) => renderRow(it, true, j))}
               </div>
             )}
           </div>
