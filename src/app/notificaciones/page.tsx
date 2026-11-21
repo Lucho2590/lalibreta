@@ -40,6 +40,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAuth } from "@/hooks/use-auth";
 import { useNotifications } from "@/hooks/use-data";
+import { WatchSetupCard } from "@/components/pwa/watch-setup-card";
 import { db } from "@/lib/firebase/client";
 import { apiFetch } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -96,6 +97,7 @@ export default function NotificacionesPage() {
             <DeviceCard />
             <InstallCard />
           </div>
+          <WatchSetupCard />
           <h2 className="pt-2 text-sm font-semibold text-muted-foreground">Qué querés que te avisemos</h2>
           <PrefsCard />
         </TabsContent>
@@ -401,9 +403,10 @@ function DeviceCard() {
     setBusy(true);
     try {
       const res = await apiFetch("/api/push/test", { method: "POST" });
-      const data = (await res.json()) as { pushed?: number };
+      const data = (await res.json()) as { pushed?: number; whatsapp?: boolean };
       if (!res.ok) throw new Error();
-      if (!data.pushed) toast("Te dejé el aviso acá, pero no llegó a ningún dispositivo");
+      if (data.whatsapp) toast("También te lo mandé por WhatsApp");
+      else if (!data.pushed) toast("Te dejé el aviso acá, pero no llegó a ningún dispositivo");
     } catch {
       toast.error("No se pudo mandar la prueba");
     } finally {

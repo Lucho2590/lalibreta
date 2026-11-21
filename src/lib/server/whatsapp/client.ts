@@ -61,6 +61,45 @@ export const sendText = async (to: string, body: string) =>
     text: { body: body.slice(0, MAX_TEXT), preview_url: false },
   });
 
+/**
+ * Meta rechaza parámetros de plantilla vacíos, con saltos de línea, tabs o
+ * más de 4 espacios seguidos.
+ */
+const templateParam = (text: string, max: number) => {
+  const clean = text
+    .replace(/\s*[\r\n\t]+\s*/g, " · ")
+    .replace(/ {4,}/g, "   ")
+    .trim()
+    .slice(0, max);
+  return clean || "—";
+};
+
+/**
+ * Mensaje con una plantilla aprobada en Meta. Es lo único que WhatsApp deja
+ * mandar fuera de las 24 h desde el último mensaje del usuario.
+ */
+export const sendTemplate = async (
+  to: string,
+  name: string,
+  language: string,
+  bodyParams: string[],
+) =>
+  postMessage({
+    recipient_type: "individual",
+    to: toSendableNumber(to),
+    type: "template",
+    template: {
+      name,
+      language: { code: language },
+      components: [
+        {
+          type: "body",
+          parameters: bodyParams.map((p) => ({ type: "text", text: templateParam(p, 400) })),
+        },
+      ],
+    },
+  });
+
 export interface ReplyButton {
   id: string;
   /** Máximo 20 caracteres. */
