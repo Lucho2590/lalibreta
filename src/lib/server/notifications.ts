@@ -55,6 +55,13 @@ export const subscriptionId = (endpoint: string) =>
 
 const subsCol = (uid: string) => adminDb().collection("users").doc(uid).collection("pushSubscriptions");
 const notifCol = (uid: string) => adminDb().collection("users").doc(uid).collection("notifications");
+/**
+ * Avisos que el usuario borró de la bandeja. Se guarda solo la marca para que
+ * los avisos con dedupeKey (vencimientos, alertas del clima) no vuelvan a
+ * llegar por haber desaparecido el original.
+ */
+export const dismissedCol = (uid: string) =>
+  adminDb().collection("users").doc(uid).collection("dismissedNotifications");
 
 export const savePushSubscription = async (
   uid: string,
@@ -122,7 +129,10 @@ export const notify = async (uid: string, input: NotifyInput): Promise<NotifyRes
   const result: NotifyResult = { stored: false, pushed: 0, whatsapp: false };
   try {
     const ref = input.dedupeKey ? notifCol(uid).doc(input.dedupeKey) : notifCol(uid).doc();
-    if (input.dedupeKey && (await ref.get()).exists) return result;
+    if (input.dedupeKey) {
+      const [existing, dismissed] = await adminDb().getAll(ref, dismissedCol(uid).doc(input.dedupeKey));
+      if (existing.exists || dismissed.exists) return result;
+    }
     await ref.set({
       kind: input.kind,
       title: input.title,

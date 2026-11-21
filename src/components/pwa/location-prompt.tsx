@@ -21,9 +21,10 @@ import {
  * Ubicación para el clima y las alertas del SMN.
  *
  * Cada vez que se abre la app:
- * - Si ya está activa (permiso dado y ubicación guardada), la actualiza en
- *   silencio (el server solo escribe si se movió más de 1 km o pasaron 6 h).
- * - Si no, muestra un cartel pidiendo activarla, hasta que quede activa.
+ * - Si ya hay una ubicación guardada, no pregunta nada: si el permiso está
+ *   dado la actualiza en silencio (el server solo escribe si se movió más de
+ *   1 km o pasaron 6 h).
+ * - Si nunca la activó, muestra un cartel pidiendo activarla, hasta que la active.
  *   "Ahora no" lo oculta solo hasta que se cierre la app.
  * - Si el permiso está bloqueado, explica cómo habilitarlo a mano.
  * - Si el usuario eligió "Dejar de usar mi ubicación" (en /clima), no molesta.
@@ -108,17 +109,25 @@ export function LocationPrompt() {
       }
       if (saved.optOut) return;
 
+      // Ya tiene ubicación guardada: no se le vuelve a preguntar nunca. En el
+      // celular (sobre todo iPhone) el navegador olvida el permiso entre
+      // aperturas y dice "prompt" aunque ya lo haya aceptado; pedirle la
+      // posición ahí le mostraría el cartel del sistema cada vez. Solo se
+      // actualiza en silencio si el permiso está dado de verdad.
+      if (saved.location) {
+        if (perm === "granted") await pushLocation(false).catch(() => {});
+        return;
+      }
+
+      // Nunca la activó: se le pide (hasta que la active o elija no usarla).
       if (perm === "denied") return show("denied");
-      if (perm === "prompt") return show("ask");
-      // "granted", o "unknown" (Safari no deja consultar): si hay ubicación
-      // guardada o el permiso está dado, se actualiza en silencio.
-      if (perm === "granted" || saved.location) {
+      if (perm === "granted") {
         try {
           await pushLocation(false);
+          return;
         } catch (err) {
-          if (!saved.location) show(isPermissionDenied(err) ? "denied" : "ask");
+          return show(isPermissionDenied(err) ? "denied" : "ask");
         }
-        return;
       }
       show("ask");
     })();
