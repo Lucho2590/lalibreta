@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Check, Copy, ExternalLink, Loader2, RotateCw } from "lucide-react";
+import { CalendarDays, Check, ChevronRight, Copy, Loader2, RotateCw, Smartphone } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -68,17 +68,38 @@ export function CalendarSyncSheet({ open, onOpenChange }: { open: boolean; onOpe
             </div>
           ) : (
             <>
-              <div className="grid gap-2 sm:grid-cols-2">
-                <Button
-                  nativeButton={false}
-                  className="rounded-xl bg-brand-grad text-white hover:opacity-95"
-                  render={<a href={googleCalendarSubscribeUrl(feed.url)} target="_blank" rel="noreferrer" />}
-                >
-                  <ExternalLink className="size-4" /> Agregar a Google Calendar
-                </Button>
-                <Button variant="outline" nativeButton={false} className="rounded-xl" render={<a href={webcalUrl(feed.url)} />}>
-                  <ExternalLink className="size-4" /> Agregar al iPhone o la Mac
-                </Button>
+              <div className="space-y-1.5">
+                <div className="text-xs font-medium text-muted-foreground">Agregala a</div>
+                <div className="grid gap-2">
+                  <a
+                    href={googleCalendarSubscribeUrl(feed.url)}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="group flex items-center gap-3 rounded-2xl border p-3 transition hover:border-primary/40 hover:bg-primary/[0.04]"
+                  >
+                    <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-brand-grad text-white">
+                      <CalendarDays className="size-5" />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block font-semibold">Google Calendar</span>
+                      <span className="block text-xs text-muted-foreground">Android, la compu y la app de Google</span>
+                    </span>
+                    <ChevronRight className="size-4 shrink-0 text-muted-foreground transition group-hover:translate-x-0.5" />
+                  </a>
+                  <a
+                    href={webcalUrl(feed.url)}
+                    className="group flex items-center gap-3 rounded-2xl border p-3 transition hover:border-primary/40 hover:bg-primary/[0.04]"
+                  >
+                    <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-muted text-foreground">
+                      <Smartphone className="size-5" />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block font-semibold">iPhone o Mac</span>
+                      <span className="block text-xs text-muted-foreground">Calendario de Apple</span>
+                    </span>
+                    <ChevronRight className="size-4 shrink-0 text-muted-foreground transition group-hover:translate-x-0.5" />
+                  </a>
+                </div>
               </div>
 
               <div className="space-y-1.5">
