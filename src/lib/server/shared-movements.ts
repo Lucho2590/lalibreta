@@ -4,7 +4,7 @@ import type { Timestamp } from "firebase-admin/firestore";
 import { adminDb } from "./firebase-admin";
 import { loadCategories } from "./queries-admin";
 import { displayNameOf } from "./sharing";
-import { currencyOf, isCardCredit, type AccountShare, type Currency, type Installment, type ShareVisibility } from "@/lib/domain/types";
+import { CURRENCIES, currencyOf, zeroMoney, isCardCredit, type AccountShare, type Currency, type Installment, type ShareVisibility } from "@/lib/domain/types";
 import type { SharedMovement, SharedMovementsResponse } from "@/lib/domain/shared-movements";
 
 /**
@@ -18,7 +18,9 @@ import type { SharedMovement, SharedMovementsResponse } from "@/lib/domain/share
 export class ShareAccessError extends Error {}
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
-const zero = (): Record<Currency, number> => ({ ARS: 0, USD: 0 });
+const zero = (): Record<Currency, number> => zeroMoney();
+const roundMoney = (m: Record<Currency, number>): Record<Currency, number> =>
+  Object.fromEntries(CURRENCIES.map((c) => [c, round2(m[c])])) as Record<Currency, number>;
 
 export const visibilityOf = (share: Pick<AccountShare, "visibility">): ShareVisibility =>
   share.visibility === "all" ? "all" : "own";
@@ -128,8 +130,8 @@ export const loadSharedMovements = async (
     visibility,
     month,
     items,
-    mineTotal: { ARS: round2(mineTotal.ARS), USD: round2(mineTotal.USD) },
-    accountTotal: visibility === "all" ? { ARS: round2(accountTotal.ARS), USD: round2(accountTotal.USD) } : null,
+    mineTotal: roundMoney(mineTotal),
+    accountTotal: visibility === "all" ? roundMoney(accountTotal) : null,
     dueDate: dueDate ? (dueDate as Date).toISOString() : null,
   };
 };

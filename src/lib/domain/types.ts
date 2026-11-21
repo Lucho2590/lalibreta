@@ -90,19 +90,59 @@ export type TransactionKind = "expense" | "income" | "transfer";
 
 // === Monedas ===
 
-export type Currency = "ARS" | "USD";
-export const CURRENCIES: Currency[] = ["ARS", "USD"];
+/**
+ * Monedas que se pueden usar en cuentas. Es la única lista: para sumar otra,
+ * agregarla acá (con su código del BCRA para la cotización).
+ */
+export const CURRENCY_META = {
+  ARS: { symbol: "$", singular: "peso", plural: "Pesos", bcraCode: null },
+  USD: { symbol: "US$", singular: "dólar", plural: "Dólares", bcraCode: "USD" },
+  EUR: { symbol: "€", singular: "euro", plural: "Euros", bcraCode: "EUR" },
+  GBP: { symbol: "£", singular: "libra", plural: "Libras", bcraCode: "GBP" },
+  BRL: { symbol: "R$", singular: "real", plural: "Reales", bcraCode: "BRL" },
+  UYU: { symbol: "$U", singular: "peso uruguayo", plural: "Pesos uruguayos", bcraCode: "UYU" },
+  CLP: { symbol: "CLP$", singular: "peso chileno", plural: "Pesos chilenos", bcraCode: "CLP" },
+} as const satisfies Record<
+  string,
+  { symbol: string; singular: string; plural: string; bcraCode: string | null }
+>;
+
+export type Currency = keyof typeof CURRENCY_META;
+export const CURRENCIES = Object.keys(CURRENCY_META) as Currency[];
+/** Monedas distintas del peso (las que se compran/venden y se pasan a pesos con cotización). */
+export const FOREIGN_CURRENCIES: Currency[] = CURRENCIES.filter((c) => c !== "ARS");
+/** Las tarjetas de crédito argentinas liquidan en pesos y dólares. */
+export const CARD_CURRENCIES: Currency[] = ["ARS", "USD"];
+
+export const isCurrency = (x: unknown): x is Currency =>
+  typeof x === "string" && x in CURRENCY_META;
+
+/** { ARS: 0, USD: 0, EUR: 0, … } */
+export const zeroMoney = (): Record<Currency, number> =>
+  Object.fromEntries(CURRENCIES.map((c) => [c, 0])) as Record<Currency, number>;
+
+/** Monedas con monto distinto de cero, en el orden de CURRENCIES. */
+export const nonZeroCurrencies = (m: Partial<Record<Currency, number>>): Currency[] =>
+  CURRENCIES.filter((c) => Math.abs(m[c] ?? 0) >= 0.005);
 
 /** Los docs viejos no tienen moneda: son pesos. */
 export const currencyOf = (x: { currency?: Currency | null }): Currency =>
   x.currency ?? "ARS";
 
-/** Monedas que maneja una cuenta. Las tarjetas de crédito aceptan ambas. */
+/** Monedas que maneja una cuenta. Las tarjetas de crédito aceptan pesos y dólares. */
 export const accountCurrencies = (a: {
   type: AccountType;
   currencies?: Currency[] | null;
 }): Currency[] =>
-  a.type === "credit" ? CURRENCIES : a.currencies?.length ? a.currencies : ["ARS"];
+  a.type === "credit" ? CARD_CURRENCIES : a.currencies?.length ? a.currencies : ["ARS"];
+
+/** Monedas que usa el usuario en alguna cuenta (siempre incluye pesos), en el orden de CURRENCIES. */
+export const userCurrencies = (
+  accounts: Array<{ type: AccountType; currencies?: Currency[] | null; active?: boolean }>,
+): Currency[] =>
+  CURRENCIES.filter(
+    (c) => c === "ARS" || accounts.some((a) => a.active !== false && accountCurrencies(a).includes(c)),
+  );
 
 /**
  * Tipo de transferencia:
@@ -279,7 +319,7 @@ export interface StatementLine {
   date: string | null;
   description: string;
   amount: number;
-  currency: "ARS" | "USD";
+  currency: Currency;
   /** "3/6" para cuotas. */
   installment: string | null;
   type: StatementLineType;

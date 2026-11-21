@@ -1,5 +1,5 @@
 import type { Account, AccountType, Currency, Installment } from "./types";
-import { CURRENCIES, accountCurrencies, currencyOf } from "./types";
+import { CURRENCIES, accountCurrencies, currencyOf, zeroMoney } from "./types";
 
 /**
  * Saldos por cuenta y por moneda (funciones puras: las usan la web y el agente).
@@ -12,7 +12,7 @@ import { CURRENCIES, accountCurrencies, currencyOf } from "./types";
 
 export type Money = Record<Currency, number>;
 
-export const emptyMoney = (): Money => ({ ARS: 0, USD: 0 });
+export const emptyMoney = (): Money => zeroMoney();
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 

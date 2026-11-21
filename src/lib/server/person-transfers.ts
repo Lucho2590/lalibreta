@@ -15,7 +15,7 @@ import {
   type PersonTransfer,
 } from "@/lib/domain/people";
 import type { Currency } from "@/lib/domain/types";
-import { formatMoney } from "@/lib/format";
+import { currencyLabel, formatMoney } from "@/lib/format";
 
 /**
  * Plata que le paso a una persona o que me pasa (p2pTransfers/{id}). Sirve
@@ -45,7 +45,7 @@ const checkAccount = async (uid: string, accountId: string, currency: Currency) 
   if (acc.type === "credit") throw new PeopleError("Elegí una cuenta (no una tarjeta)");
   const currencies = (acc.currencies as Currency[] | undefined)?.length ? (acc.currencies as Currency[]) : ["ARS"];
   if (!currencies.includes(currency)) {
-    if (acc.type === "reserve") throw new PeopleError(`"${acc.name}" no maneja ${currency === "USD" ? "dólares" : "pesos"}`);
+    if (acc.type === "reserve") throw new PeopleError(`"${acc.name}" no maneja ${currencyLabel(currency).toLowerCase()}`);
     await ref.update({ currencies: [...currencies, currency] });
   }
   return String(acc.name ?? "");

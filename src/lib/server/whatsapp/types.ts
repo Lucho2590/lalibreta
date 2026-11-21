@@ -1,3 +1,5 @@
+import type { Currency } from "@/lib/domain/types";
+
 /** Subconjunto del payload del webhook de WhatsApp Cloud API que usamos. */
 
 export interface WaIncomingMessage {
@@ -61,7 +63,7 @@ export interface TransactionDraft {
   kind: "expense" | "income";
   amount: number;
   /** Default ARS. */
-  currency?: "ARS" | "USD";
+  currency?: Currency;
   description: string;
   accountId: string;
   accountName: string;
@@ -118,7 +120,7 @@ export interface PersonTransferDraft {
   accountId: string;
   accountName: string;
   amount: number;
-  currency: "ARS" | "USD";
+  currency: Currency;
   /** YYYY-MM-DD */
   date: string;
   createdAt: number;
@@ -135,9 +137,9 @@ export interface AccountDraftItem {
   parentName: string | null;
   last4: string | null;
   /** No aplica a tarjetas. */
-  currencies?: Array<"ARS" | "USD">;
+  currencies?: Array<Currency>;
   isMain?: boolean;
-  openingBalances?: Partial<Record<"ARS" | "USD", number>> | null;
+  openingBalances?: Partial<Record<Currency, number>> | null;
 }
 
 /** Una o varias cuentas nuevas, confirmadas juntas. */
@@ -155,7 +157,7 @@ export interface StatementDraftLine {
   date: string | null;
   description: string;
   amount: number;
-  currency: "ARS" | "USD";
+  currency: Currency;
   installment: string | null;
   type:
     | "purchase"
@@ -175,7 +177,7 @@ export interface SubscriptionProposal {
   name: string;
   amount: number;
   /** Default ARS. */
-  currency?: "ARS" | "USD";
+  currency?: Currency;
   categoryId: string;
   categoryName: string;
   dayOfMonth: number;
@@ -216,9 +218,9 @@ export interface ExchangeDraft {
   fromAccountName: string;
   toAccountId: string;
   toAccountName: string;
-  fromCurrency: "ARS" | "USD";
+  fromCurrency: Currency;
   fromAmount: number;
-  toCurrency: "ARS" | "USD";
+  toCurrency: Currency;
   toAmount: number;
   /** Pesos por dólar. */
   rate: number;
@@ -232,7 +234,7 @@ export interface ExchangeDraft {
   /** Diferencia en pesos contra la pactada (redondeo/comisión). Positivo = a favor. */
   exchangeDiff?: number;
   /** Saldos que quedarían después del cambio (para mostrar). */
-  after: Array<{ accountName: string; currency: "ARS" | "USD"; amount: number }>;
+  after: Array<{ accountName: string; currency: Currency; amount: number }>;
   /** YYYY-MM-DD */
   date: string;
   createdAt: number;
@@ -252,9 +254,9 @@ export interface CardPaymentDraft {
    * parte en dólares con pesos).
    */
   payments: Array<{
-    currency: "ARS" | "USD";
+    currency: Currency;
     amount: number;
-    payWith: "ARS" | "USD";
+    payWith: Currency;
     payAmount: number;
     rate: number | null;
   }>;
@@ -272,12 +274,12 @@ export interface TransferDraft {
   fromAccountName: string;
   toAccountId: string;
   toAccountName: string;
-  currency: "ARS" | "USD";
+  currency: Currency;
   amount: number;
   description: string;
   /** YYYY-MM-DD */
   date: string;
-  after: Array<{ accountName: string; currency: "ARS" | "USD"; amount: number }>;
+  after: Array<{ accountName: string; currency: Currency; amount: number }>;
   /** La cuenta destino no tenía esta moneda: se le agrega al confirmar. */
   addCurrencyToDestination?: boolean;
   createdAt: number;
@@ -290,7 +292,7 @@ export interface RecurringDraft {
   kind: "expense" | "income";
   name: string;
   amount: number;
-  currency: "ARS" | "USD";
+  currency: Currency;
   accountId: string;
   accountName: string;
   categoryId: string;
@@ -306,7 +308,7 @@ export interface BatchDraftLine {
   description: string;
   /** Monto del renglón tal como figura (si es una cuota, el de la cuota). */
   amount: number;
-  currency: "ARS" | "USD";
+  currency: Currency;
   kind: "expense" | "income";
   /** YYYY-MM-DD de la compra. */
   date: string;
@@ -329,7 +331,7 @@ export interface BatchDraft {
   id: string;
   lines: BatchDraftLine[];
   /** Renglones que ya estaban cargados y no se repiten (para mostrar). */
-  duplicates: Array<{ description: string; amount: number; currency: "ARS" | "USD" }>;
+  duplicates: Array<{ description: string; amount: number; currency: Currency }>;
   /** Renglones que no se pueden cargar (cuenta inexistente, moneda que no maneja…). */
   skipped: string[];
   createdAt: number;

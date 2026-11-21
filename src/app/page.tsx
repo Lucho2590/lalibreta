@@ -17,19 +17,21 @@ import {
   useInstallmentsForMonth,
   useSplitAdjustment,
 } from "@/hooks/use-data";
-import { useUsdRate } from "@/hooks/use-usd-rate";
+import { useFxRates } from "@/hooks/use-fx-rates";
 import {
   computeMonthlyBalance,
   makeToARS,
+  sumInARS,
+  unconvertedCurrencies,
   sumByAccount,
   sumByCategory,
 } from "@/lib/domain/balance";
 import { computeAccountBalances, totalAvailable } from "@/lib/domain/balances";
 import { sortAccounts } from "@/lib/domain/accounts";
-import { accountCurrencies, paymentMonthOf } from "@/lib/domain/types";
-import { formatCurrency, formatMoney, formatMonth, formatShortDate } from "@/lib/format";
+import { CARD_CURRENCIES, FOREIGN_CURRENCIES, accountCurrencies, paymentMonthOf, type Currency } from "@/lib/domain/types";
+import { currencyLabel, currencySymbol, formatCurrency, formatMoney, formatMonth, formatShortDate, moneyFormatter } from "@/lib/format";
 import { cardFloorMonth, summarizeCardMonth } from "@/lib/domain/card-summary";
-import { monthUsdConversion } from "@/lib/domain/exchanges";
+import { monthRates } from "@/lib/domain/exchanges";
 import { RecurringBanner } from "@/components/dashboard/recurring-banner";
 import { ExchangeSummaryCard } from "@/components/transactions/exchange-summary-card";
 import { ApprovalsBanner } from "@/components/dashboard/approvals-banner";
@@ -44,8 +46,6 @@ import { cn } from "@/lib/utils";
 import { CategoryIcon } from "@/components/category-icon";
 import { AccountIcon, defaultIconForType } from "@/components/account-icon";
 
-const formatUSD = (n: number) => formatMoney(n, "USD");
-
 export default function Dashboard() {
   const { monthKey, year, month } = useMonth();
   const { data: installments, loading, stale } = useInstallmentsForMonth(monthKey);
@@ -55,20 +55,24 @@ export default function Dashboard() {
   const adj = useSplitAdjustment();
   const adjProjected = useSplitAdjustment({ projected: true });
 
-  const usdRate = useUsdRate();
+  const fx = useFxRates();
   const { data: allInstallments } = useAllInstallments();
 
   const balance = useMemo(
     () => computeMonthlyBalance(installments, monthKey, adj, "ARS"),
     [installments, monthKey, adj],
   );
-  const balanceUSD = useMemo(
-    () => computeMonthlyBalance(installments, monthKey, adj, "USD"),
+  // Monedas extranjeras con movimientos en el mes (dólares, euros…).
+  const foreign = useMemo(
+    () =>
+      FOREIGN_CURRENCIES.map((c) => ({ c, b: computeMonthlyBalance(installments, monthKey, adj, c) })).filter(
+        ({ b }) => b.income !== 0 || b.expense !== 0,
+      ),
     [installments, monthKey, adj],
   );
-  const hasUSD = balanceUSD.income !== 0 || balanceUSD.expense !== 0;
-  // Gastos por categoría/cuenta en pesos: los US$ se convierten con el BCRA.
-  const toARS = useMemo(() => makeToARS(usdRate?.rate), [usdRate]);
+  const hasForeign = foreign.length > 0;
+  // Gastos por categoría/cuenta en pesos: las otras monedas se convierten con el BCRA.
+  const toARS = useMemo(() => makeToARS(fx?.rates), [fx]);
   const byCategory = useMemo(
     () => sumByCategory(installments, monthKey, adj, toARS),
     [installments, monthKey, adj, toARS],
@@ -120,14 +124,28 @@ export default function Dashboard() {
   // dólares y los vende tiene "ingresos en pesos = 0" y el balance solo-pesos
   // siempre da negativo. Los dólares se pasan a la cotización a la que vendió
   // este mes (promedio); si no vendió, a la que compró; si no, el oficial BCRA.
-  const conversion = useMemo(() => monthUsdConversion(installments, usdRate?.rate), [installments, usdRate]);
-  const consolidated = hasUSD && conversion ? balance.balance + balanceUSD.balance * conversion.rate : null;
+  const conversion = useMemo(() => monthRates(installments, fx?.rates), [installments, fx]);
+  // Solo se consolida si todas las monedas del mes tienen cotización.
+  const canConsolidate = hasForeign && foreign.every(({ c }) => conversion[c]);
+  const consolidated = canConsolidate
+    ? balance.balance + foreign.reduce((s, { c, b }) => s + b.balance * (conversion[c]?.rate ?? 0), 0)
+    : null;
   const headline = consolidated ?? balance.balance;
   // "Si te pagan": como si la gente sin la app ya te hubiera devuelto su parte.
-  const projBalance = useMemo(() => computeMonthlyBalance(installments, monthKey, adjProjected, "ARS"), [installments, monthKey, adjProjected]);
-  const projBalanceUSD = useMemo(() => computeMonthlyBalance(installments, monthKey, adjProjected, "USD"), [installments, monthKey, adjProjected]);
-  const projectedHeadline =
-    hasUSD && conversion ? projBalance.balance + projBalanceUSD.balance * conversion.rate : projBalance.balance;
+  const projected = useMemo(() => {
+    const ars = computeMonthlyBalance(installments, monthKey, adjProjected, "ARS").balance;
+    if (!canConsolidate) return ars;
+    return foreign.reduce(
+      (s, { c }) =>
+        s + computeMonthlyBalance(installments, monthKey, adjProjected, c).balance * (conversion[c]?.rate ?? 0),
+      ars,
+    );
+  }, [installments, monthKey, adjProjected, canConsolidate, foreign, conversion]);
+  const projectedHeadline = projected;
+  const foreignIncome = Object.fromEntries(foreign.map(({ c, b }) => [c, b.income])) as Partial<Record<Currency, number>>;
+  const foreignExpense = Object.fromEntries(foreign.map(({ c, b }) => [c, b.expense])) as Partial<Record<Currency, number>>;
+  const availableMissing = unconvertedCurrencies(available, fx?.rates);
+  const availableHasForeign = FOREIGN_CURRENCIES.some((c) => available[c] !== 0);
   const showProjected = Math.abs(projectedHeadline - headline) >= 1;
   const positive = headline >= 0;
 
@@ -168,35 +186,48 @@ export default function Dashboard() {
               )}
               {consolidated != null ? (
                 <div className="mt-1 text-sm tabular-nums opacity-90">
-                  <AnimatedNumber value={balance.balance} format={formatCurrency} /> en pesos{" "}
-                  {balanceUSD.balance >= 0 ? "+" : "−"}{" "}
-                  <AnimatedNumber value={Math.abs(balanceUSD.balance)} format={formatUSD} /> en dólares
+                  <AnimatedNumber value={balance.balance} format={formatCurrency} /> en pesos
+                  {foreign.map(({ c, b }) => (
+                    <span key={c}>
+                      {" "}
+                      {b.balance >= 0 ? "+" : "−"}{" "}
+                      <AnimatedNumber value={Math.abs(b.balance)} format={moneyFormatter(c)} /> en{" "}
+                      {currencyLabel(c).toLowerCase()}
+                    </span>
+                  ))}
                 </div>
               ) : (
-                hasUSD && (
-                  <div className="mt-1 text-xl font-semibold tabular-nums opacity-95">
-                    {balanceUSD.balance >= 0 ? "+ " : ""}
-                    <AnimatedNumber value={balanceUSD.balance} format={formatUSD} />
+                foreign.map(({ c, b }) => (
+                  <div key={c} className="mt-1 text-xl font-semibold tabular-nums opacity-95">
+                    {b.balance >= 0 ? "+ " : ""}
+                    <AnimatedNumber value={b.balance} format={moneyFormatter(c)} />
                   </div>
-                )
+                ))
               )}
               <div className="mt-5 grid grid-cols-2 gap-3">
                 <BalancePill
                   icon={<ArrowUpRight className="size-3.5" />}
                   label="Ingresos"
                   value={balance.income}
-                  extra={hasUSD ? balanceUSD.income : undefined}
+                  extra={foreignIncome}
                 />
                 <BalancePill
                   icon={<ArrowDownRight className="size-3.5" />}
                   label="Gastos"
                   value={balance.expense}
-                  extra={hasUSD ? balanceUSD.expense : undefined}
+                  extra={foreignExpense}
                 />
               </div>
-              {consolidated != null && conversion && (
+              {consolidated != null && (
                 <div className="mt-3 text-xs opacity-80">
-                  Todo en pesos, con el dólar a {formatCurrency(conversion.rate)} ({conversion.label}). Los
+                  Todo en pesos, con{" "}
+                  {foreign
+                    .map(({ c }) => {
+                      const r = conversion[c];
+                      return r ? `${currencySymbol(c)} 1 = ${formatCurrency(r.rate)} (${r.label})` : "";
+                    })
+                    .join(", ")}
+                  . Los
                   cambios de moneda y los pagos de tarjeta no son ingresos ni gastos: los consumos de la
                   tarjeta ya cuentan en el mes en que vence el resumen.
                 </div>
@@ -236,7 +267,7 @@ export default function Dashboard() {
                   .map((a) => {
                     // Lo que falta pagar del resumen que vence este mes.
                     const s = summarizeCardMonth(allInstallments, [a.id], paymentMonthOf(new Date()), undefined, cardFloorMonth(a));
-                    const owed = (["ARS", "USD"] as const).filter((c) => s.pending[c] > 0.009);
+                    const owed = CARD_CURRENCIES.filter((c) => s.pending[c] > 0.009);
                     if (owed.length === 0) return null;
                     return (
                       <Link
@@ -263,14 +294,16 @@ export default function Dashboard() {
                     <span>Disponible</span>
                     <span className="text-right tabular-nums">
                       <span className="block">{formatMoney(available.ARS, "ARS")}</span>
-                      {available.USD !== 0 && (
-                        <span className="block">{formatMoney(available.USD, "USD")}</span>
-                      )}
+                      {FOREIGN_CURRENCIES.filter((c) => available[c] !== 0).map((c) => (
+                        <span key={c} className="block">
+                          {formatMoney(available[c], c)}
+                        </span>
+                      ))}
                     </span>
                   </div>
-                  {available.USD !== 0 && usdRate && (
+                  {availableHasForeign && fx && availableMissing.length === 0 && (
                     <p className="mt-1 text-right text-xs text-muted-foreground">
-                      ≈ {formatCurrency(available.ARS + available.USD * usdRate.rate)} en pesos
+                      ≈ {formatCurrency(sumInARS(available, fx.rates))} en pesos
                     </p>
                   )}
                 </div>
@@ -278,7 +311,7 @@ export default function Dashboard() {
             </Card>
           </section>
 
-          {/* Solo aparece si hubo cambios de dólares en el mes. */}
+          {/* Solo aparece si hubo cambios de moneda en el mes. */}
           <ExchangeSummaryCard installments={installments} maxItems={4} />
 
           {/* Mientras llega el mes nuevo, lo del anterior queda atenuado. */}
@@ -286,8 +319,8 @@ export default function Dashboard() {
             <Card className="rounded-3xl">
               <CardHeader className="pb-3">
                 <CardTitle className="text-sm font-semibold">Por categoría</CardTitle>
-                {hasUSD && usdRate && (
-                  <p className="text-[11px] text-muted-foreground">En pesos (US$ al oficial BCRA)</p>
+                {hasForeign && fx && (
+                  <p className="text-[11px] text-muted-foreground">En pesos (otras monedas al oficial BCRA)</p>
                 )}
               </CardHeader>
               <CardContent className="space-y-3">
@@ -320,8 +353,8 @@ export default function Dashboard() {
             <Card className="rounded-3xl">
               <CardHeader className="pb-3">
                 <CardTitle className="text-sm font-semibold">Por cuenta</CardTitle>
-                {hasUSD && usdRate && (
-                  <p className="text-[11px] text-muted-foreground">En pesos (US$ al oficial BCRA)</p>
+                {hasForeign && fx && (
+                  <p className="text-[11px] text-muted-foreground">En pesos (otras monedas al oficial BCRA)</p>
                 )}
               </CardHeader>
               <CardContent className="space-y-1">
@@ -368,7 +401,8 @@ function BalancePill({
   icon: React.ReactNode;
   label: string;
   value: number;
-  extra?: number;
+  /** Lo mismo en otras monedas (dólares, euros…). */
+  extra?: Partial<Record<Currency, number>>;
 }) {
   return (
     <div className="rounded-2xl bg-white/15 px-4 py-3 backdrop-blur">
@@ -379,11 +413,11 @@ function BalancePill({
       <div className="mt-0.5 text-base font-semibold tabular-nums">
         <AnimatedNumber value={value} format={formatCurrency} />
       </div>
-      {extra != null && (
-        <div className="text-sm font-medium tabular-nums opacity-90">
-          <AnimatedNumber value={extra} format={formatUSD} />
+      {Object.entries(extra ?? {}).map(([c, v]) => (
+        <div key={c} className="text-sm font-medium tabular-nums opacity-90">
+          <AnimatedNumber value={v ?? 0} format={moneyFormatter(c as Currency)} />
         </div>
-      )}
+      ))}
     </div>
   );
 }

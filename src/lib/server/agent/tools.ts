@@ -14,9 +14,10 @@ import {
   type ServerRecurringInfo,
 } from "../queries-admin";
 import { getLatestStatement, getStatementHistory } from "../statements-admin";
-import { getRates, getUsdRate } from "../fx";
+import { getRate, getRates, getUsdRate, tryGetAppRates } from "../fx";
 import type { BalancesSnapshot } from "../queries-admin";
-import type { Currency } from "@/lib/domain/types";
+import { CURRENCIES, CURRENCY_META, nonZeroCurrencies, zeroMoney, type Currency } from "@/lib/domain/types";
+import { sumInARS } from "@/lib/domain/balance";
 import { setAccountBalanceAdmin, setAccountParentAdmin, setCardDatesAdmin } from "../accounts-admin";
 import { PROPOSE_BATCH_TOOL, proposeBatch } from "./batch-tool";
 import { AGENDA_TOOLS, AGENDA_TOOL_NAMES, runAgendaTool } from "./agenda-tool";
@@ -108,8 +109,8 @@ export const TOOL_DEFINITIONS: ChatCompletionFunctionTool[] = [
           amount: { type: "number", description: "Monto total, positivo, en la moneda indicada" },
           currency: {
             type: "string",
-            enum: ["ARS", "USD"],
-            description: "Moneda del monto (por defecto ARS). USD si dice dólares/USD/u$s/verdes.",
+            enum: CURRENCIES,
+            description: "Moneda del monto (por defecto ARS). USD si dice dólares/USD/u$s/verdes; EUR euros, GBP libras, BRL reales, UYU pesos uruguayos, CLP pesos chilenos.",
           },
           description: { type: "string", description: "Descripción corta" },
           accountId: { type: "string", description: "id de la cuenta (de la lista)" },
@@ -204,16 +205,28 @@ export const TOOL_DEFINITIONS: ChatCompletionFunctionTool[] = [
                 last4: { type: "string", description: "Solo crédito, opcional: últimos 4 dígitos" },
                 currencies: {
                   type: "array",
-                  items: { type: "string", enum: ["ARS", "USD"] },
+                  items: { type: "string", enum: CURRENCIES },
                   description:
-                    "No crédito: monedas que maneja (ej. banco con caja de ahorro en pesos y en dólares → [\"ARS\",\"USD\"]). Por defecto [\"ARS\"]. Efectivo en dólares → [\"USD\"].",
+                    "No crédito: monedas que maneja (ej. banco con caja de ahorro en pesos y en dólares → [\"ARS\",\"USD\"]). Por defecto [\"ARS\"]. Efectivo en dólares → [\"USD\"]. Cuenta en euros → [\"EUR\"].",
                 },
                 isMain: {
                   type: "boolean",
                   description: "true si es la cuenta principal (donde cobra). Solo una.",
                 },
-                openingARS: { type: "number", description: "Saldo actual en pesos, si lo dijo" },
-                openingUSD: { type: "number", description: "Saldo actual en dólares, si lo dijo" },
+                opening: {
+                  type: "array",
+                  description:
+                    'Saldo actual por moneda, si lo dijo (ej. "tengo 3000 dólares y 150 lucas" → [{currency:"USD",amount:3000},{currency:"ARS",amount:150000}])',
+                  items: {
+                    type: "object",
+                    properties: {
+                      currency: { type: "string", enum: CURRENCIES },
+                      amount: { type: "number" },
+                    },
+                    required: ["currency", "amount"],
+                    additionalProperties: false,
+                  },
+                },
               },
               required: ["name", "type"],
               additionalProperties: false,
@@ -412,13 +425,18 @@ export const TOOL_DEFINITIONS: ChatCompletionFunctionTool[] = [
     function: {
       name: "propose_exchange",
       description:
-        "Cambio de moneda: vender dólares (\"vendí 500 USD a 1480\") o comprar (\"compré 200 dólares\"), en un banco, una billetera o con una persona (\"le cambié 300 dólares a mi señora\"). Si el usuario no dice a cuánto, se usa la cotización oficial del BCRA. Por defecto en la cuenta principal (puede ser la misma cuenta: salen dólares y entran pesos; o distintas: salen del Galicia y entran en Mercado Pago). Se confirma con botones.",
+        "Cambio de moneda extranjera contra pesos: vender dólares (\"vendí 500 USD a 1480\"), comprar (\"compré 200 dólares\"), o lo mismo con euros, libras, reales, etc. (\"vendí 100 euros\"), en un banco, una billetera o con una persona (\"le cambié 300 dólares a mi señora\"). Para comprar o vender una moneda tiene que tener una cuenta en esa moneda. Si el usuario no dice a cuánto, se usa la cotización oficial del BCRA de esa moneda. Por defecto en la cuenta principal (puede ser la misma cuenta: salen dólares y entran pesos; o distintas: salen del Galicia y entran en Mercado Pago). Se confirma con botones.",
       parameters: {
         type: "object",
         properties: {
-          operation: { type: "string", enum: ["sell_usd", "buy_usd"] },
-          usdAmount: { type: "number", description: "Cantidad de dólares" },
-          rate: { type: "number", description: "Pesos por dólar, si el usuario lo dijo" },
+          operation: { type: "string", enum: ["sell", "buy"], description: "sell = vende la moneda extranjera y recibe pesos; buy = paga pesos y recibe la moneda" },
+          currency: {
+            type: "string",
+            enum: CURRENCIES.filter((c) => c !== "ARS"),
+            description: "Moneda extranjera (por defecto USD)",
+          },
+          amount: { type: "number", description: "Cantidad de moneda extranjera" },
+          rate: { type: "number", description: "Pesos por unidad, si el usuario lo dijo" },
           arsAmount: {
             type: "number",
             description:
@@ -432,7 +450,7 @@ export const TOOL_DEFINITIONS: ChatCompletionFunctionTool[] = [
           },
           date: { type: "string", description: "YYYY-MM-DD, por defecto hoy" },
         },
-        required: ["operation", "usdAmount"],
+        required: ["operation", "amount"],
         additionalProperties: false,
       },
     },
@@ -480,7 +498,7 @@ export const TOOL_DEFINITIONS: ChatCompletionFunctionTool[] = [
             description: "Cuenta a donde entra. Si sale de una cobacha y no se dice, se usa la cuenta madre.",
           },
           amount: { type: "number" },
-          currency: { type: "string", enum: ["ARS", "USD"] },
+          currency: { type: "string", enum: CURRENCIES },
           date: { type: "string", description: "YYYY-MM-DD, por defecto hoy" },
           person: {
             type: "string",
@@ -507,7 +525,7 @@ export const TOOL_DEFINITIONS: ChatCompletionFunctionTool[] = [
           kind: { type: "string", enum: ["income", "expense"] },
           name: { type: "string", description: 'Nombre, ej. "Sueldo", "Alquiler"' },
           amount: { type: "number" },
-          currency: { type: "string", enum: ["ARS", "USD"] },
+          currency: { type: "string", enum: CURRENCIES },
           accountId: { type: "string", description: "Cuenta (por defecto la principal)" },
           categoryId: { type: "string", description: "Categoría del mismo tipo que kind" },
           dayOfMonth: { type: "integer", description: "Día del mes (1-31)" },
@@ -522,7 +540,7 @@ export const TOOL_DEFINITIONS: ChatCompletionFunctionTool[] = [
     function: {
       name: "set_account_balance",
       description:
-        "Fija o ajusta el SALDO de una cuenta existente (no tarjeta), sin que cuente como ingreso ni gasto: \"tengo 46100 pesos y 172 dólares en el Galicia\", \"agregale 46100 de saldo a la caja de ahorro\", \"corregí el saldo del efectivo a 20000\". Se aplica en el momento. Si la cuenta no tenía esa moneda, se la agrega.",
+        "Fija o ajusta el SALDO de una cuenta existente (no tarjeta), sin que cuente como ingreso ni gasto: \"tengo 46100 pesos y 172 dólares en el Galicia\", \"tengo 300 euros en la cuenta Euros\", \"agregale 46100 de saldo a la caja de ahorro\", \"corregí el saldo del efectivo a 20000\". Se aplica en el momento. Si la cuenta no tenía esa moneda, se la agrega.",
       parameters: {
         type: "object",
         properties: {
@@ -533,10 +551,21 @@ export const TOOL_DEFINITIONS: ChatCompletionFunctionTool[] = [
             description:
               "set = el saldo actual pasa a ser ese monto (\"tengo X\", \"el saldo es X\"); add = sumar al saldo (\"agregale X\", \"sumale X\")",
           },
-          ARS: { type: "number", description: "Monto en pesos" },
-          USD: { type: "number", description: "Monto en dólares" },
+          amounts: {
+            type: "array",
+            description: 'Monto por moneda, ej. [{currency:"ARS",amount:46100},{currency:"USD",amount:172}]',
+            items: {
+              type: "object",
+              properties: {
+                currency: { type: "string", enum: CURRENCIES },
+                amount: { type: "number" },
+              },
+              required: ["currency", "amount"],
+              additionalProperties: false,
+            },
+          },
         },
-        required: ["accountId", "mode"],
+        required: ["accountId", "mode", "amounts"],
         additionalProperties: false,
       },
     },
@@ -786,7 +815,7 @@ const optYMD = optStr.refine((v) => !v || isYMD(v), "las fechas deben ser YYYY-M
 const proposeSchema = z.object({
   kind: z.enum(["expense", "income"]),
   amount: z.number().positive().max(1_000_000_000),
-  currency: z.enum(["ARS", "USD"]).optional(),
+  currency: z.enum(CURRENCIES).optional(),
   description: z.string().trim().min(1).max(200),
   accountId: z.string().min(1),
   categoryId: optStr,
@@ -822,10 +851,9 @@ const accountItemSchema = z.object({
   parentId: optStr,
   parentName: optStr,
   last4: optStr.refine((v) => !v || /^\d{4}$/.test(v), "last4 debe tener 4 dígitos"),
-  currencies: z.array(z.enum(["ARS", "USD"])).optional(),
+  currencies: z.array(z.enum(CURRENCIES)).optional(),
   isMain: z.boolean().optional(),
-  openingARS: z.number().optional(),
-  openingUSD: z.number().optional(),
+  opening: z.array(z.object({ currency: z.enum(CURRENCIES), amount: z.number() })).max(10).optional(),
 });
 
 const categorySchema = z.object({
@@ -835,8 +863,15 @@ const categorySchema = z.object({
 });
 
 const exchangeSchema = z.object({
-  operation: z.enum(["sell_usd", "buy_usd"]),
-  usdAmount: z.number().positive(),
+  // sell_usd/buy_usd: nombres viejos (por si el modelo los repite).
+  operation: z
+    .enum(["sell", "buy", "sell_usd", "buy_usd"])
+    .transform((v) => (v.startsWith("sell") ? ("sell" as const) : ("buy" as const))),
+  currency: z
+    .enum(CURRENCIES)
+    .optional()
+    .refine((c) => c !== "ARS", "currency es la moneda extranjera (no ARS)"),
+  amount: z.number().positive(),
   rate: z.number().positive().optional(),
   arsAmount: z.number().positive().optional(),
   fromAccountId: optStr,
@@ -858,7 +893,7 @@ const recurringSchema = z.object({
   kind: z.enum(["income", "expense"]),
   name: z.string().trim().min(1).max(60),
   amount: z.number().positive(),
-  currency: z.enum(["ARS", "USD"]),
+  currency: z.enum(CURRENCIES),
   accountId: optStr,
   categoryId: optStr,
   dayOfMonth: z.number().int().min(1).max(31),
@@ -889,7 +924,7 @@ const transferSchema = z.object({
   fromAccountId: optStr,
   toAccountId: optStr,
   amount: z.number().positive(),
-  currency: z.enum(["ARS", "USD"]).optional(),
+  currency: z.enum(CURRENCIES).optional(),
   date: optYMD,
   person: optStr,
   newName: z.string().trim().max(60).optional(),
@@ -942,8 +977,7 @@ const resolveAgentPerson = (ctx: ToolContext, person?: string, newName?: string)
 const balanceSchema = z.object({
   accountId: z.string().min(1),
   mode: z.enum(["set", "add"]),
-  ARS: z.number().optional(),
-  USD: z.number().optional(),
+  amounts: z.array(z.object({ currency: z.enum(CURRENCIES), amount: z.number() })).min(1).max(10),
 });
 
 const accountParentSchema = z.object({
@@ -1084,7 +1118,7 @@ const proposeTransaction = (ctx: ToolContext, raw: unknown): ToolResult => {
   const currency: Currency = args.currency ?? "ARS";
   if (!account.currencies.includes(currency)) {
     return {
-      error: `La cuenta "${account.name}" no maneja ${currency === "USD" ? "dólares" : "pesos"}. Usá otra cuenta o preguntale al usuario.`,
+      error: `La cuenta "${account.name}" no maneja ${currencyWords([currency])}. Usá otra cuenta o preguntale al usuario.`,
     };
   }
 
@@ -1170,16 +1204,15 @@ const proposeTransaction = (ctx: ToolContext, raw: unknown): ToolResult => {
 
 /** Monedas, principal y saldo inicial de una cuenta que no es tarjeta. */
 const accountMoneyFields = (a: z.infer<typeof accountItemSchema>) => {
+  const opening: Partial<Record<Currency, number>> = {};
+  for (const o of a.opening ?? []) if (o.amount) opening[o.currency] = round2((opening[o.currency] ?? 0) + o.amount);
+  const withOpening = CURRENCIES.filter((c) => opening[c]);
   const currencies: Currency[] = a.currencies?.length
     ? [...new Set(a.currencies)]
-    : a.openingUSD && !a.openingARS
-      ? ["USD"]
+    : withOpening.length
+      ? withOpening
       : ["ARS"];
-  if (a.openingUSD && !currencies.includes("USD")) currencies.push("USD");
-  if (a.openingARS && !currencies.includes("ARS")) currencies.unshift("ARS");
-  const opening: Partial<Record<Currency, number>> = {};
-  if (a.openingARS) opening.ARS = round2(a.openingARS);
-  if (a.openingUSD) opening.USD = round2(a.openingUSD);
+  for (const c of withOpening) if (!currencies.includes(c)) currencies.push(c);
   return {
     currencies,
     isMain: a.isMain === true,
@@ -1244,7 +1277,7 @@ const proposeAccounts = (ctx: ToolContext, raw: unknown): ToolResult => {
         ? (() => {
             // Una cobacha tiene una sola moneda y nunca es la principal.
             const f = accountMoneyFields(a);
-            const cur: Currency = a.currencies?.[0] ?? (a.openingUSD && !a.openingARS ? "USD" : "ARS");
+            const cur: Currency = a.currencies?.[0] ?? a.opening?.find((o) => o.amount)?.currency ?? "ARS";
             const opening = f.openingBalances?.[cur];
             return {
               currencies: [cur],
@@ -1512,7 +1545,7 @@ const mainAccount = (ctx: ToolContext) =>
   ctx.accounts.find((a) => a.isMain && a.active && a.type !== "credit");
 
 const currencyWords = (cs: Currency[]) =>
-  cs.map((c) => (c === "USD" ? "dólares" : "pesos")).join(" y ");
+  cs.map((c) => CURRENCY_META[c].plural.toLowerCase()).join(" y ");
 
 /** Cuenta (no tarjeta) que maneje esas monedas: la pedida, la principal o la única posible. */
 const pickAccount = (
@@ -1553,8 +1586,15 @@ const proposeExchange = async (ctx: ToolContext, raw: unknown): Promise<ToolResu
   const parsed = exchangeSchema.safeParse(raw);
   if (!parsed.success) return issues(parsed.error);
   const args = parsed.data;
-  const fromCurrency: Currency = args.operation === "sell_usd" ? "USD" : "ARS";
-  const toCurrency: Currency = args.operation === "sell_usd" ? "ARS" : "USD";
+  const foreign: Currency = args.currency ?? "USD";
+  const fromCurrency: Currency = args.operation === "sell" ? foreign : "ARS";
+  const toCurrency: Currency = args.operation === "sell" ? "ARS" : foreign;
+  // Para comprar o vender una moneda hay que tener una cuenta en esa moneda.
+  if (!ctx.accounts.some((a) => a.active && a.type !== "credit" && a.currencies.includes(foreign))) {
+    return {
+      error: `No tiene ninguna cuenta en ${currencyWords([foreign])}. Para ${args.operation === "sell" ? "vender" : "comprar"} ${currencyWords([foreign])} primero tiene que crear una cuenta en esa moneda (ofrecé crearla con propose_accounts).`,
+    };
+  }
 
   const from = pickAccount(ctx, args.fromAccountId, [fromCurrency]);
   if (!from.account) return { error: from.error };
@@ -1569,10 +1609,10 @@ const proposeExchange = async (ctx: ToolContext, raw: unknown): Promise<ToolResu
   let rate = args.rate;
   let rateSource: ExchangeDraft["rateSource"] = "user";
   let rateDate: string | null = null;
-  if (!rate && args.arsAmount) rate = args.arsAmount / args.usdAmount;
+  if (!rate && args.arsAmount) rate = args.arsAmount / args.amount;
   if (!rate) {
     try {
-      const fx = await getUsdRate(args.date ?? todayYMD());
+      const fx = await getRate(CURRENCY_META[foreign].bcraCode ?? foreign, args.date ?? todayYMD());
       rate = fx.rate;
       rateSource = "BCRA";
       rateDate = fx.date;
@@ -1580,17 +1620,17 @@ const proposeExchange = async (ctx: ToolContext, raw: unknown): Promise<ToolResu
       return { error: "No pude consultar la cotización del BCRA. Pedile al usuario a cuánto cambió." };
     }
   }
-  const ars = round2(args.arsAmount ?? args.usdAmount * rate);
-  const usd = round2(args.usdAmount);
+  const ars = round2(args.arsAmount ?? args.amount * rate);
+  const fAmount = round2(args.amount);
   // Dijo la cotización Y los pesos que le entraron/pagó y no cierran (redondeo,
   // comisión): se registra lo que se movió y la diferencia contra la pactada.
   const exchangeDiff =
     args.rate && args.arsAmount
-      ? exchangeDiffOf(args.operation === "sell_usd" ? "sell" : "buy", usd, args.rate, ars)
+      ? exchangeDiffOf(args.operation, fAmount, args.rate, ars)
       : 0;
-  if (exchangeDiff !== 0) rate = ars / usd;
-  const fromAmount = fromCurrency === "USD" ? usd : ars;
-  const toAmount = toCurrency === "USD" ? usd : ars;
+  if (exchangeDiff !== 0) rate = ars / fAmount;
+  const fromAmount = fromCurrency === "ARS" ? ars : fAmount;
+  const toAmount = toCurrency === "ARS" ? ars : fAmount;
 
   const after: ExchangeDraft["after"] = [];
   const pushAfter = (acc: ServerAccountInfo, c: Currency, delta: number) => {
@@ -1961,19 +2001,17 @@ export const executeTool = async (
     case "set_account_balance": {
       const parsed = balanceSchema.safeParse(args);
       if (!parsed.success) return issues(parsed.error);
-      const { accountId, mode, ARS, USD } = parsed.data;
+      const { accountId, mode } = parsed.data;
       const account = resolveAccount(ctx, accountId);
       if (!account) return { error: "Cuenta inexistente" };
       if (account.type === "credit") {
         return { error: "Las tarjetas no tienen saldo: lo que se debe sale de los gastos y pagos." };
       }
-      if (ARS == null && USD == null) return { error: "Falta el monto (ARS y/o USD)." };
       // Mismo objeto que ctx.balances: si hay otra llamada en esta vuelta, ve el saldo ya ajustado.
       const entry = ctx.balances.accounts.find((a) => a.id === account.id);
-      const current = entry?.amounts ?? { ARS: 0, USD: 0 };
+      const current = entry?.amounts ?? zeroMoney();
       const amounts: Partial<Record<Currency, number>> = {};
-      if (ARS != null) amounts.ARS = ARS;
-      if (USD != null) amounts.USD = USD;
+      for (const a of parsed.data.amounts) amounts[a.currency] = a.amount;
       const result = await setAccountBalanceAdmin(ctx.uid, account, current, amounts, mode);
       for (const c of Object.keys(amounts) as Currency[]) {
         if (!account.currencies.includes(c)) account.currencies.push(c);
@@ -2050,13 +2088,15 @@ export const executeTool = async (
         const st = await getCardStatement(entry.ownerUid, entry.account, month);
         return { account: entry.account.name, owner: entry.ownerName, ...st, dueDate: formatShortDateAR(st.dueDate) };
       }
-      const fx = await getUsdRate().catch(() => null);
-      const summary = await getMonthSummary(entry.ownerUid, month, { accountId: entry.accountId }, fx?.rate ?? null);
+      const fx = await tryGetAppRates();
+      const summary = await getMonthSummary(entry.ownerUid, month, { accountId: entry.accountId }, fx?.rates ?? null);
       return {
         account: entry.account.name,
         owner: entry.ownerName,
         month,
-        expenses: { ARS: summary.byCurrency.ARS.expense, USD: summary.byCurrency.USD.expense },
+        expenses: Object.fromEntries(
+          Object.entries(summary.byCurrency).map(([c, v]) => [c, v.expense]),
+        ),
         byCategoryARS: summary.byCategoryARS,
       };
     }
@@ -2082,19 +2122,31 @@ export const executeTool = async (
 
 
     case "get_balances": {
-      const fx = await getUsdRate().catch(() => null);
+      const fx = await tryGetAppRates();
       const b = ctx.balances;
+      // Solo las monedas con algo (o las que maneja la cuenta), para no llenar de ceros.
+      const pick = (m: Partial<Record<Currency, number>>, keep: Currency[] = ["ARS"]) =>
+        Object.fromEntries(
+          CURRENCIES.filter((c) => keep.includes(c) || nonZeroCurrencies(m).includes(c)).map((c) => [c, m[c] ?? 0]),
+        );
+      const used = nonZeroCurrencies(b.available).filter((c) => c !== "ARS");
+      const missing = used.filter((c) => !fx?.rates[c]);
       return {
         accounts: b.accounts.map((a) => ({
           name: a.name,
           kind: a.type === "credit" ? "tarjeta (lo que se debe)" : a.isMain ? "cuenta principal" : "cuenta",
-          ARS: a.amounts.ARS,
-          USD: a.amounts.USD,
+          ...pick(a.amounts, ctx.accounts.find((x) => x.id === a.id)?.currencies),
         })),
-        available: b.available,
-        cardDebt: b.cardDebt,
-        usdRate: fx ? { rate: fx.rate, date: fx.date, source: "BCRA oficial" } : null,
-        availableInARS: fx ? round2(b.available.ARS + b.available.USD * fx.rate) : null,
+        available: pick(b.available),
+        cardDebt: pick(b.cardDebt),
+        rates: fx
+          ? {
+              date: fx.date,
+              source: "BCRA oficial",
+              pesosPerUnit: Object.fromEntries(used.filter((c) => fx.rates[c]).map((c) => [c, fx.rates[c]])),
+            }
+          : null,
+        availableInARS: fx && missing.length === 0 ? sumInARS(b.available, fx.rates) : null,
       };
     }
 
@@ -2127,16 +2179,16 @@ export const executeTool = async (
       if (categoryId && !ctx.categories.some((c) => c.id === categoryId)) {
         return { error: "Categoría inexistente" };
       }
-      const fx = await getUsdRate().catch(() => null);
+      const fx = await tryGetAppRates();
       const summary = await getMonthSummary(
         ctx.uid,
         month ?? currentMonthKey(),
         { categoryId, accountId },
-        fx?.rate ?? null,
+        fx?.rates ?? null,
       );
       return {
         ...summary,
-        note: "byCurrency: totales en cada moneda. byCategoryARS/byAccountARS: en pesos, con los dólares convertidos a la cotización BCRA (usdRateUsed). exchanges: dólares vendidos/comprados en el mes, pesos recibidos/pagados y cotización promedio (los cambios no son ingresos ni gastos).",
+        note: "byCurrency: totales en cada moneda. byCategoryARS/byAccountARS: en pesos, con las otras monedas convertidas a la cotización BCRA (ratesUsed, pesos por unidad). exchanges.byCurrency: por moneda, cuánto vendió/compró, pesos recibidos/pagados y cotización promedio (los cambios no son ingresos ni gastos).",
       };
     }
 
@@ -2201,8 +2253,12 @@ export const executeTool = async (
           name: l.name,
           usesApp: l.isApp,
           // + = te debe; − = le debés. due = vencido; upcoming = cuotas que vienen.
-          ARS: { total: ledgerTotal(l, "ARS"), due: l.due.ARS, upcoming: l.upcoming.ARS },
-          USD: { total: ledgerTotal(l, "USD"), due: l.due.USD, upcoming: l.upcoming.USD },
+          ...Object.fromEntries(
+            CURRENCIES.filter((c) => c === "ARS" || ledgerTotal(l, c) || l.due[c] || l.upcoming[c]).map((c) => [
+              c,
+              { total: ledgerTotal(l, c), due: l.due[c], upcoming: l.upcoming[c] },
+            ]),
+          ),
           last: l.entries.slice(0, 5).map((e) => ({ date: e.date, what: e.description, amount: e.amount, currency: e.currency })),
         }));
       return {

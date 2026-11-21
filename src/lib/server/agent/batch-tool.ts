@@ -10,6 +10,8 @@ import { isYMD, todayYMD } from "../time";
 import type { ServerAccountInfo, ServerCategoryInfo } from "../queries-admin";
 import type { BatchDraft, BatchDraftLine } from "../whatsapp/types";
 import type { ToolContext } from "./tools";
+import { CURRENCIES } from "@/lib/domain/types";
+import { currencyLabel } from "@/lib/format";
 
 export const MAX_BATCH_LINES = 150;
 
@@ -37,7 +39,7 @@ export const PROPOSE_BATCH_TOOL: ChatCompletionFunctionTool = {
                 type: "number",
                 description: "Monto POSITIVO del renglón tal como figura. Si es una cuota (ej. 3/6), el monto de ESA cuota.",
               },
-              currency: { type: "string", enum: ["ARS", "USD"] },
+              currency: { type: "string", enum: CURRENCIES },
               kind: {
                 type: "string",
                 enum: ["expense", "income"],
@@ -79,7 +81,7 @@ const batchSchema = z.object({
       z.object({
         description: z.string().trim().min(1).max(200),
         amount: z.number().refine((n) => n !== 0, "amount no puede ser 0"),
-        currency: z.enum(["ARS", "USD"]),
+        currency: z.enum(CURRENCIES),
         kind: z.enum(["expense", "income"]).optional(),
         date: optStr,
         installmentNumber: z.number().int().min(1).max(60).optional(),
@@ -135,7 +137,7 @@ export const proposeBatch = async (ctx: ToolContext, raw: unknown) => {
       continue;
     }
     if (!account.currencies.includes(l.currency)) {
-      problems.push(`"${l.description}": ${account.name} no maneja ${l.currency === "USD" ? "dólares" : "pesos"}`);
+      problems.push(`"${l.description}": ${account.name} no maneja ${currencyLabel(l.currency).toLowerCase()}`);
       continue;
     }
     // Un monto negativo es un reintegro/devolución.

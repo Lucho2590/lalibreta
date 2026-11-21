@@ -7,7 +7,7 @@ import { createTransactionAdmin } from "./transactions-admin";
 import { loadAccounts, toServerAccount } from "./queries-admin";
 import { dateFromYMD } from "./time";
 import type { StatementDraft } from "./whatsapp/types";
-import { paymentMonthOf } from "@/lib/domain/types";
+import { paymentMonthOf, type Currency } from "@/lib/domain/types";
 
 /**
  * Guardado y lectura de resúmenes de tarjeta.
@@ -292,7 +292,7 @@ const ymd = (t: Timestamp | null | undefined) =>
 interface StoredLine {
   description: string;
   amount: number;
-  currency: "ARS" | "USD";
+  currency: Currency;
   type: string;
   installment: string | null;
 }

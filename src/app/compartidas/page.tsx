@@ -20,7 +20,7 @@ import { PersonTransferForm } from "@/components/people/person-transfer-form";
 import { ledgerTotal, ledgerTotals } from "@/lib/domain/debts";
 import { personBalanceText } from "@/components/people/balance-text";
 import { PersonBalanceText, PersonLaterText } from "@/components/people/person-balance";
-import type { Currency } from "@/lib/domain/types";
+import { nonZeroCurrencies, type Currency } from "@/lib/domain/types";
 import { formatMoney } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { AnimatedMoney } from "@/components/motion/animated-money";
@@ -127,7 +127,7 @@ export default function CuentasConGentePage() {
             <div>
               <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Te deben · hasta {monthName}</div>
               <div className="text-xl font-semibold tabular-nums text-success"><AnimatedMoney amounts={totals.owedToMe} /></div>
-              {(totals.laterToMe.ARS > 0.009 || totals.laterToMe.USD > 0.009) && (
+              {nonZeroCurrencies(totals.laterToMe).length > 0 && (
                 <div className="text-xs text-muted-foreground">+ <AnimatedMoney amounts={totals.laterToMe} /> de cuotas que vienen</div>
               )}
             </div>
@@ -141,7 +141,7 @@ export default function CuentasConGentePage() {
             <div>
               <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Le debés · hasta {monthName}</div>
               <div className="text-xl font-semibold tabular-nums text-destructive"><AnimatedMoney amounts={totals.iOwe} /></div>
-              {(totals.laterIOwe.ARS > 0.009 || totals.laterIOwe.USD > 0.009) && (
+              {nonZeroCurrencies(totals.laterIOwe).length > 0 && (
                 <div className="text-xs text-muted-foreground">+ <AnimatedMoney amounts={totals.laterIOwe} /> de cuotas que vienen</div>
               )}
             </div>

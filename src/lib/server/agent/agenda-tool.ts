@@ -15,6 +15,7 @@ import {
 } from "../activities";
 import { addDaysYMD, dayLabel, participantName, type Activity, type Invitee } from "@/lib/domain/activity-model";
 import { formatMoney } from "@/lib/format";
+import { CURRENCIES } from "@/lib/domain/types";
 
 /** Agenda por WhatsApp: anotar actividades (y con quién), consultar qué hay y responder invitaciones. */
 export const AGENDA_TOOLS: ChatCompletionFunctionTool[] = [
@@ -33,7 +34,7 @@ export const AGENDA_TOOLS: ChatCompletionFunctionTool[] = [
           location: { type: "string", description: "Dónde (opcional)" },
           notes: { type: "string", description: "Notas (opcional)" },
           estimatedAmount: { type: "number", description: "Si dijo cuánto va a salir (opcional)" },
-          currency: { type: "string", enum: ["ARS", "USD"] },
+          currency: { type: "string", enum: CURRENCIES },
           people: {
             type: "array",
             items: { type: "string" },
@@ -129,7 +130,7 @@ const addSchema = z.object({
   location: optStr,
   notes: optStr,
   estimatedAmount: z.number().positive().max(1_000_000_000).optional(),
-  currency: z.enum(["ARS", "USD"]).optional(),
+  currency: z.enum(CURRENCIES).optional(),
   people: z.array(z.string()).max(20).optional(),
 });
 

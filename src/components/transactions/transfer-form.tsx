@@ -15,14 +15,21 @@ import {
 } from "@/components/ui/select";
 import { useAccounts, useAllInstallments } from "@/hooks/use-data";
 import { useAuth } from "@/hooks/use-auth";
-import { useUsdRate } from "@/hooks/use-usd-rate";
+import { useFxRates } from "@/hooks/use-fx-rates";
 import { createTransactionWithInstallments } from "@/lib/domain/installments";
 import { sortAccounts, updateAccount } from "@/lib/domain/accounts";
 import { computeAccountBalances } from "@/lib/domain/balances";
 import { cardStatementToPay } from "@/lib/domain/card-summary";
 import type { Account, Currency } from "@/lib/domain/types";
-import { accountCurrencies, paymentMonthOf } from "@/lib/domain/types";
-import { formatAmountInput, formatMoney, formatShortDate, parseAmount } from "@/lib/format";
+import { CARD_CURRENCIES, CURRENCIES, accountCurrencies, paymentMonthOf } from "@/lib/domain/types";
+import {
+  currencyLabel,
+  currencySymbol,
+  formatAmountInput,
+  formatMoney,
+  formatShortDate,
+  parseAmount,
+} from "@/lib/format";
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
 const numberText = (n: number) =>
@@ -42,12 +49,15 @@ export function TransferForm({ onSubmitted }: { onSubmitted?: () => void }) {
   const { user } = useAuth();
   const { data: accounts } = useAccounts();
   const { data: allInstallments } = useAllInstallments();
-  const usdRate = useUsdRate();
+  const fx = useFxRates();
+  const usdRate = fx?.rates.USD ?? null;
 
   const [fromId, setFromId] = useState("");
   const [toId, setToId] = useState("");
   const [arsInput, setArsInput] = useState("");
   const [usdInput, setUsdInput] = useState("");
+  // Otras monedas de la cuenta de origen (euros, libras…), solo entre cuentas propias.
+  const [otherInputs, setOtherInputs] = useState<Partial<Record<Currency, string>>>({});
   const [usdPayWith, setUsdPayWith] = useState<Currency | null>(null);
   const [rateInput, setRateInput] = useState("");
   const [date, setDate] = useState(todayLocal);
@@ -71,7 +81,13 @@ export function TransferForm({ onSubmitted }: { onSubmitted?: () => void }) {
 
   const ars = showARS ? parseAmount(arsInput) || 0 : 0;
   const usd = showUSD ? parseAmount(usdInput) || 0 : 0;
-  const rate = parseAmount(rateInput) || usdRate?.rate || 0;
+  const rate = parseAmount(rateInput) || usdRate || 0;
+  const extraCurrencies: Currency[] =
+    !isCard && from ? accountCurrencies(from).filter((c) => !CARD_CURRENCIES.includes(c)) : [];
+  const extra = Object.fromEntries(
+    extraCurrencies.map((c) => [c, parseAmount(otherInputs[c] ?? "") || 0]),
+  ) as Partial<Record<Currency, number>>;
+  const amountOf = (c: Currency) => (c === "ARS" ? ars : c === "USD" ? usd : (extra[c] ?? 0));
   const usdInPesos = usdWith === "ARS" && usd > 0 && rate > 0 ? r2(usd * rate) : 0;
 
   const balances = useMemo(() => computeAccountBalances(active, allInstallments), [active, allInstallments]);
@@ -92,19 +108,17 @@ export function TransferForm({ onSubmitted }: { onSubmitted?: () => void }) {
 
   // Destino sin una de las monedas (ej. pasar dólares a Mercado Pago que solo tenía
   // pesos): se le agrega al guardar. Las cobachas son de una sola moneda: ahí no.
-  const missingAtDest = (["ARS", "USD"] as Currency[]).filter(
-    (c) => !isCard && to && (c === "ARS" ? ars : usd) > 0 && !has(to, c),
-  );
+  const missingAtDest = CURRENCIES.filter((c) => !isCard && to && amountOf(c) > 0 && !has(to, c));
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user) return;
     if (!from) return toast.error("Elegí de qué cuenta sale");
     if (!to) return toast.error("Elegí a qué cuenta va");
-    if (!(ars > 0) && !(usd > 0)) return toast.error("Ingresá un monto en pesos o en dólares");
+    if (!CURRENCIES.some((c) => amountOf(c) > 0)) return toast.error("Ingresá un monto");
     if (usd > 0 && usdWith === "ARS" && !(rate > 0)) return toast.error("Falta la cotización");
     if (to.type === "reserve" && missingAtDest.length) {
-      return toast.error(`${to.name} es una cobacha en ${has(to, "USD") ? "dólares" : "pesos"}`);
+      return toast.error(`${to.name} es una cobacha en ${currencyLabel(accountCurrencies(to)[0]).toLowerCase()}`);
     }
     setSubmitting(true);
     try {
@@ -134,12 +148,17 @@ export function TransferForm({ onSubmitted }: { onSubmitted?: () => void }) {
             : { ...base, totalAmount: r2(usd), currency: "USD" },
         );
       }
-      const parts = [ars > 0 ? formatMoney(ars, "ARS") : null, usd > 0 ? formatMoney(usd, "USD") : null]
-        .filter(Boolean)
+      for (const c of extraCurrencies) {
+        const v = extra[c] ?? 0;
+        if (v > 0) await createTransactionWithInstallments(user.uid, from, { ...base, totalAmount: r2(v), currency: c });
+      }
+      const parts = CURRENCIES.filter((c) => amountOf(c) > 0)
+        .map((c) => formatMoney(amountOf(c), c))
         .join(" + ");
       toast.success(isCard ? `Pago de ${to.name}: ${parts}` : `Transferiste ${parts} a ${to.name}`);
       setArsInput("");
       setUsdInput("");
+      setOtherInputs({});
       setDescription("");
       onSubmitted?.();
     } catch (err) {
@@ -211,7 +230,7 @@ export function TransferForm({ onSubmitted }: { onSubmitted?: () => void }) {
                   {toPay.summary.paid.ARS > 0 || toPay.summary.paid.USD > 0 ? " · falta pagar" : ""}
                 </div>
                 <div className="mt-1.5 flex flex-wrap gap-2">
-                  {(["ARS", "USD"] as Currency[])
+                  {CARD_CURRENCIES
                     .filter((c) => toPay.summary.pending[c] > 0.009)
                     .map((c) => (
                       <button
@@ -277,9 +296,28 @@ export function TransferForm({ onSubmitted }: { onSubmitted?: () => void }) {
           </div>
         )}
       </div>
-      {showARS && showUSD && (
+      {extraCurrencies.length > 0 && (
+        <div className="grid grid-cols-2 gap-3">
+          {extraCurrencies.map((c) => (
+            <div key={c} className="space-y-1">
+              <Label htmlFor={`tr-${c}`}>{currencyLabel(c)}</Label>
+              <Input
+                id={`tr-${c}`}
+                inputMode="decimal"
+                autoComplete="off"
+                placeholder={`${currencySymbol(c)} 0`}
+                className="h-12 text-lg"
+                value={otherInputs[c] ?? ""}
+                onChange={(e) => setOtherInputs((prev) => ({ ...prev, [c]: e.target.value }))}
+                onBlur={(e) => setOtherInputs((prev) => ({ ...prev, [c]: formatAmountInput(e.target.value) }))}
+              />
+            </div>
+          ))}
+        </div>
+      )}
+      {[showARS, showUSD].filter(Boolean).length + extraCurrencies.length > 1 && (
         <p className="-mt-2 text-xs text-muted-foreground">
-          Completá uno o los dos: se guarda todo junto.
+          Completá uno o varios: se guarda todo junto.
         </p>
       )}
 
@@ -309,7 +347,7 @@ export function TransferForm({ onSubmitted }: { onSubmitted?: () => void }) {
                 id="tr-rate"
                 inputMode="decimal"
                 className="h-11"
-                placeholder={usdRate ? numberText(usdRate.rate) : "Ej: 1.480"}
+                placeholder={usdRate ? numberText(usdRate) : "Ej: 1.480"}
                 value={rateInput}
                 onChange={(e) => setRateInput(e.target.value)}
                 onBlur={(e) => setRateInput(formatAmountInput(e.target.value))}
@@ -331,8 +369,8 @@ export function TransferForm({ onSubmitted }: { onSubmitted?: () => void }) {
       {missingAtDest.length > 0 && to && (
         <p className="text-xs text-muted-foreground">
           {to.type === "reserve"
-            ? `${to.name} no maneja ${missingAtDest[0] === "USD" ? "dólares" : "pesos"}.`
-            : `${to.name} no tenía ${missingAtDest.map((c) => (c === "USD" ? "dólares" : "pesos")).join(" ni ")}: se los agrego al guardar.`}
+            ? `${to.name} no maneja ${currencyLabel(missingAtDest[0]).toLowerCase()}.`
+            : `${to.name} no tenía ${missingAtDest.map((c) => currencyLabel(c).toLowerCase()).join(" ni ")}: se los agrego al guardar.`}
         </p>
       )}
 

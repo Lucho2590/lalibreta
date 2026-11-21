@@ -20,7 +20,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { deleteTransactionAndInstallments } from "@/lib/domain/installments";
 import type { Installment } from "@/lib/domain/types";
 import { formatMoney, formatShortDate } from "@/lib/format";
-import { currencyOf } from "@/lib/domain/types";
+import { CURRENCIES, currencyOf, zeroMoney } from "@/lib/domain/types";
 import { CategoryIcon } from "@/components/category-icon";
 import type { SharedAdjustment } from "@/lib/domain/balance";
 import { otherUid, personRefFromAccountId, profileName } from "@/lib/domain/people";
@@ -162,13 +162,13 @@ export function TransactionList({
       const isP2P = it.transferType === "p2p";
       // Persona: la contraparte de una transferencia con gente, o a quién le debo mi parte.
       const person = isP2P ? personName(it.transferCounterpartId) : personName(it.accountId);
-      // Cotización del cambio (pesos por dólar), a partir de las dos patas.
+      // Cotización del cambio (pesos por unidad de la otra moneda), a partir de las dos patas.
       const exchangeRate =
-        isExchange && otherLeg
+        isExchange && otherLeg && (cur === "ARS") !== (currencyOf(otherLeg) === "ARS")
           ? (() => {
-              const usdLeg = cur === "USD" ? it : otherLeg;
-              const arsLeg = cur === "USD" ? otherLeg : it;
-              return usdLeg.amount > 0 ? arsLeg.amount / usdLeg.amount : null;
+              const foreignLeg = cur === "ARS" ? otherLeg : it;
+              const arsLeg = cur === "ARS" ? it : otherLeg;
+              return foreignLeg.amount > 0 ? arsLeg.amount / foreignLeg.amount : null;
             })()
           : null;
       const transferLabel = isCardPayment
@@ -436,7 +436,7 @@ export function TransactionList({
   entries.sort((a, b) => b.at - a.at);
 
   const groupTotal = (list: Installment[]) => {
-    const t: Record<"ARS" | "USD", number> = { ARS: 0, USD: 0 };
+    const t = zeroMoney();
     // Lo que cobra la tarjeta: montos enteros (aunque haya gastos repartidos).
     for (const i of list) t[currencyOf(i)] += i.kind === "income" ? -i.amount : i.amount;
     return t;
@@ -482,7 +482,7 @@ export function TransactionList({
                     </div>
                   </div>
                   <div className="shrink-0 whitespace-nowrap text-right text-sm font-semibold tabular-nums">
-                    {(["ARS", "USD"] as const)
+                    {CURRENCIES
                       .filter((c) => c === "ARS" || Math.abs(total[c]) > 0.009)
                       .map((c) => (
                         <div key={c}>-{formatMoney(Math.round(total[c] * 100) / 100, c)}</div>

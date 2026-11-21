@@ -1,8 +1,8 @@
 import type { Currency, Installment } from "./types";
-import { currencyOf } from "./types";
+import { CURRENCIES, FOREIGN_CURRENCIES, currencyOf } from "./types";
 
 /**
- * Cambios de moneda (vender/comprar dólares). Funciones puras: las usan la
+ * Cambios de moneda (vender/comprar dólares, euros…, siempre contra pesos). Funciones puras: las usan la
  * web y el agente. Un cambio es una transferencia con dos patas en distinta
  * moneda (puede ser dentro de la misma cuenta o entre cuentas, ej. salen
  * dólares del Galicia y entran pesos en Mercado Pago). Los pagos de tarjeta
@@ -27,9 +27,12 @@ export interface ExchangeOp {
   transactionId: string;
   date: Date;
   side: "sell" | "buy";
-  usd: number;
+  /** Moneda extranjera que se vendió o compró. */
+  currency: Currency;
+  /** Cantidad de esa moneda. */
+  amount: number;
   ars: number;
-  /** Pesos por dólar (efectiva: lo que realmente se movió). */
+  /** Pesos por unidad (efectiva: lo que realmente se movió). */
   rate: number;
   /** Cotización pactada, si hubo diferencia (redondeo, comisión). */
   quotedRate: number | null;
@@ -41,18 +44,26 @@ export interface ExchangeOp {
 }
 
 export interface ExchangeSide {
-  usd: number;
+  currency: Currency;
+  /** Cantidad de moneda extranjera. */
+  amount: number;
   ars: number;
-  /** Cotización promedio ponderada (pesos / dólares). */
+  /** Cotización promedio ponderada (pesos / unidad). */
   avgRate: number;
   count: number;
   /** Suma de diferencias por redondeo/comisión, en pesos. Positivo = a favor. */
   diff: number;
 }
 
-export interface ExchangeSummary {
+export interface ExchangeCurrencySummary {
+  currency: Currency;
   sold: ExchangeSide;
   bought: ExchangeSide;
+}
+
+export interface ExchangeSummary {
+  /** Una entrada por moneda con cambios, en el orden de CURRENCIES. */
+  byCurrency: ExchangeCurrencySummary[];
   /** Del más nuevo al más viejo. */
   ops: ExchangeOp[];
 }
@@ -65,8 +76,8 @@ const r2 = (n: number) => Math.round(n * 100) / 100;
  * pagar menos. Ej.: vendo US$ 500 a 1.480 (esperado $ 740.000) y me entran
  * $ 739.650 → −350.
  */
-export const exchangeDiffOf = (side: "sell" | "buy", usd: number, quotedRate: number, ars: number): number => {
-  const expected = usd * quotedRate;
+export const exchangeDiffOf = (side: "sell" | "buy", amount: number, quotedRate: number, ars: number): number => {
+  const expected = amount * quotedRate;
   const d = r2(side === "sell" ? ars - expected : expected - ars);
   return Math.abs(d) < 0.01 ? 0 : d;
 };
@@ -74,7 +85,10 @@ export const exchangeDiffOf = (side: "sell" | "buy", usd: number, quotedRate: nu
 export const isExchangeLeg = (i: Pick<LegLike, "kind" | "transferType">) =>
   i.kind === "transfer" && i.transferType === "exchange";
 
-/** Arma los cambios a partir de las patas (installments) de un período. */
+/**
+ * Arma los cambios a partir de las patas (installments) de un período. Un
+ * cambio es siempre moneda extranjera ↔ pesos; si salen pesos es una compra.
+ */
 export const listExchanges = (installments: LegLike[]): ExchangeOp[] => {
   const legs = new Map<string, { source?: LegLike; destination?: LegLike }>();
   for (const i of installments) {
@@ -89,18 +103,20 @@ export const listExchanges = (installments: LegLike[]): ExchangeOp[] => {
     if (!source || !destination) continue;
     const from: Currency = currencyOf(source);
     const to: Currency = currencyOf(destination);
-    if (from === to) continue;
-    const side = from === "USD" ? "sell" : "buy";
-    const usd = side === "sell" ? source.amount : destination.amount;
+    if (from === to || (from !== "ARS" && to !== "ARS")) continue;
+    const side = from === "ARS" ? "buy" : "sell";
+    const currency = side === "sell" ? from : to;
+    const amount = side === "sell" ? source.amount : destination.amount;
     const ars = side === "sell" ? destination.amount : source.amount;
-    if (!(usd > 0)) continue;
+    if (!(amount > 0)) continue;
     ops.push({
       transactionId,
       date: source.billingDate.toDate(),
       side,
-      usd,
+      currency,
+      amount,
       ars,
-      rate: r2(ars / usd),
+      rate: r2(ars / amount),
       quotedRate: source.exchangeDiff ? (source.quotedRate ?? null) : null,
       diff: source.exchangeDiff ?? 0,
       description: source.description,
@@ -111,33 +127,55 @@ export const listExchanges = (installments: LegLike[]): ExchangeOp[] => {
   return ops.sort((a, b) => b.date.getTime() - a.date.getTime());
 };
 
-const sideOf = (ops: ExchangeOp[]): ExchangeSide => {
-  const usd = r2(ops.reduce((s, o) => s + o.usd, 0));
+const sideOf = (currency: Currency, ops: ExchangeOp[]): ExchangeSide => {
+  const amount = r2(ops.reduce((s, o) => s + o.amount, 0));
   const ars = r2(ops.reduce((s, o) => s + o.ars, 0));
   const diff = r2(ops.reduce((s, o) => s + o.diff, 0));
-  return { usd, ars, avgRate: usd > 0 ? r2(ars / usd) : 0, count: ops.length, diff };
+  return { currency, amount, ars, avgRate: amount > 0 ? r2(ars / amount) : 0, count: ops.length, diff };
 };
 
 export const summarizeExchanges = (installments: LegLike[]): ExchangeSummary => {
   const ops = listExchanges(installments);
-  return {
-    sold: sideOf(ops.filter((o) => o.side === "sell")),
-    bought: sideOf(ops.filter((o) => o.side === "buy")),
-    ops,
-  };
+  const byCurrency = CURRENCIES.flatMap((currency): ExchangeCurrencySummary[] => {
+    const mine = ops.filter((o) => o.currency === currency);
+    if (mine.length === 0) return [];
+    return [
+      {
+        currency,
+        sold: sideOf(currency, mine.filter((o) => o.side === "sell")),
+        bought: sideOf(currency, mine.filter((o) => o.side === "buy")),
+      },
+    ];
+  });
+  return { byCurrency, ops };
 };
 
+export interface MonthRate {
+  rate: number;
+  label: string;
+}
+
 /**
- * A qué cotización pasar los dólares del mes a pesos para el balance "todo en
- * pesos": la de venta del usuario en el mes (promedio); si no vendió, la de
- * compra; si no, el oficial BCRA.
+ * A qué cotización pasar cada moneda extranjera del mes a pesos para el
+ * balance "todo en pesos": la de venta del usuario en el mes (promedio); si no
+ * vendió, la de compra; si no, la oficial del BCRA. Las monedas sin ninguna
+ * de las tres no aparecen.
  */
-export const monthUsdConversion = (
+export const monthRates = (
   installments: LegLike[],
-  bcraRate: number | null | undefined,
-): { rate: number; label: string } | null => {
+  bcraRates: Partial<Record<Currency, number>> | null | undefined,
+): Partial<Record<Currency, MonthRate>> => {
   const ex = summarizeExchanges(installments);
-  if (ex.sold.count) return { rate: ex.sold.avgRate, label: "tu promedio de venta del mes" };
-  if (ex.bought.count) return { rate: ex.bought.avgRate, label: "tu promedio de compra del mes" };
-  return bcraRate ? { rate: bcraRate, label: "dólar oficial BCRA" } : null;
+  const out: Partial<Record<Currency, MonthRate>> = {};
+  for (const c of FOREIGN_CURRENCIES) {
+    const mine = ex.byCurrency.find((x) => x.currency === c);
+    if (mine?.sold.count) out[c] = { rate: mine.sold.avgRate, label: "tu promedio de venta del mes" };
+    else if (mine?.bought.count) out[c] = { rate: mine.bought.avgRate, label: "tu promedio de compra del mes" };
+    else if (bcraRates?.[c]) out[c] = { rate: bcraRates[c] as number, label: "oficial BCRA" };
+  }
+  return out;
 };
+
+/** Solo las cotizaciones de un resultado de monthRates. */
+export const ratesOnly = (m: Partial<Record<Currency, MonthRate>>): Partial<Record<Currency, number>> =>
+  Object.fromEntries(Object.entries(m).map(([c, r]) => [c, r.rate])) as Partial<Record<Currency, number>>;

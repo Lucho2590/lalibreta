@@ -15,12 +15,11 @@ import { useMonth } from "@/hooks/use-month";
 import { useInstallmentsForMonth } from "@/hooks/use-data";
 import { TransactionForm } from "@/components/transactions/transaction-form";
 import { TransactionList } from "@/components/transactions/transaction-list";
-import { formatCurrency, formatMoney, formatMonth } from "@/lib/format";
+import { formatCurrency, formatMonth, moneyFormatter } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { AnimatedNumber } from "@/components/motion/animated-number";
-import { currencyOf, isRealIncome } from "@/lib/domain/types";
+import { FOREIGN_CURRENCIES, currencyOf, isRealIncome } from "@/lib/domain/types";
 
-const formatUSD = (n: number) => formatMoney(n, "USD");
 
 export default function IngresosPage() {
   const [open, setOpen] = useState(false);
@@ -32,7 +31,10 @@ export default function IngresosPage() {
   // Los reintegros de tarjeta no son ingresos (son saldo a favor de la tarjeta).
   const incomes = installments.filter(isRealIncome);
   const total = incomes.filter((i) => currencyOf(i) === "ARS").reduce((s, i) => s + i.amount, 0);
-  const totalUSD = incomes.filter((i) => currencyOf(i) === "USD").reduce((s, i) => s + i.amount, 0);
+  const foreignTotals = FOREIGN_CURRENCIES.map((c) => ({
+    c,
+    total: incomes.filter((i) => currencyOf(i) === c).reduce((s, i) => s + i.amount, 0),
+  })).filter((x) => x.total > 0);
 
   return (
     <div className="space-y-6">
@@ -73,11 +75,11 @@ export default function IngresosPage() {
             <div className="text-3xl font-bold tabular-nums text-success">
               <AnimatedNumber value={total} format={formatCurrency} />
             </div>
-            {totalUSD > 0 && (
-              <div className="text-xl font-semibold tabular-nums text-success">
-                + <AnimatedNumber value={totalUSD} format={formatUSD} />
+            {foreignTotals.map(({ c, total: t }) => (
+              <div key={c} className="text-xl font-semibold tabular-nums text-success">
+                + <AnimatedNumber value={t} format={moneyFormatter(c)} />
               </div>
-            )}
+            ))}
           </div>
         </CardContent>
       </Card>

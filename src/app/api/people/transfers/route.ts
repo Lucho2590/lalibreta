@@ -1,6 +1,7 @@
 import { authedPost } from "@/lib/server/route";
 import { PeopleError } from "@/lib/server/connections";
 import { createPersonTransfer, type PersonTransferInput } from "@/lib/server/person-transfers";
+import { isCurrency } from "@/lib/domain/types";
 
 export const runtime = "nodejs";
 
@@ -14,7 +15,7 @@ export const POST = authedPost<Partial<PersonTransferInput>>(async (user, body) 
     direction: body.direction,
     accountId: body.accountId,
     amount: Number(body.amount),
-    currency: body.currency === "USD" ? "USD" : "ARS",
+    currency: isCurrency(body.currency) ? body.currency : "ARS",
     date: body.date,
     description: body.description,
     kind: body.kind === "loan" ? "loan" : "payment",

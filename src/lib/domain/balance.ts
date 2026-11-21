@@ -16,15 +16,38 @@ export interface SharedAdjustment {
   byTxId: Map<string, SplitTxInfo>;
 }
 
+/** Pesos por unidad de cada moneda extranjera (las que falten no se convierten). */
+export type FxRatesMap = Partial<Record<Currency, number>>;
+
 /**
- * Pasa un monto a pesos. Si no hay cotización, los dólares no se pueden
- * convertir y se ignoran en los totales "en pesos".
+ * Pasa un monto a pesos. Si no hay cotización de esa moneda, no se puede
+ * convertir y se ignora en los totales "en pesos".
  */
 export type ToARS = (amount: number, currency: Currency) => number | null;
 
-export const makeToARS = (usdRate: number | null | undefined): ToARS =>
-  (amount, currency) =>
-    currency === "ARS" ? amount : usdRate ? amount * usdRate : null;
+export const makeToARS = (rates: FxRatesMap | null | undefined): ToARS =>
+  (amount, currency) => {
+    if (currency === "ARS") return amount;
+    const r = rates?.[currency];
+    return r ? amount * r : null;
+  };
+
+/** Suma de un monto por moneda, en pesos (las monedas sin cotización no suman). */
+export const sumInARS = (m: Partial<Record<Currency, number>>, rates: FxRatesMap | null | undefined): number => {
+  const toARS = makeToARS(rates);
+  let total = 0;
+  for (const [c, v] of Object.entries(m) as Array<[Currency, number]>) total += toARS(v ?? 0, c) ?? 0;
+  return Math.round(total * 100) / 100;
+};
+
+/** Monedas extranjeras con monto pero sin cotización (quedan afuera de un total en pesos). */
+export const unconvertedCurrencies = (
+  m: Partial<Record<Currency, number>>,
+  rates: FxRatesMap | null | undefined,
+): Currency[] =>
+  (Object.entries(m) as Array<[Currency, number]>)
+    .filter(([c, v]) => c !== "ARS" && Math.abs(v ?? 0) >= 0.005 && !rates?.[c])
+    .map(([c]) => c);
 
 const expenseAmount = (
   ins: Installment,

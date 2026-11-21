@@ -7,6 +7,7 @@ import {
   makeToARS,
   sumByAccount,
   sumByCategory,
+  type FxRatesMap,
   type SharedAdjustment,
 } from "@/lib/domain/balance";
 import {
@@ -23,7 +24,7 @@ import type {
   Currency,
   Installment,
 } from "@/lib/domain/types";
-import { CURRENCIES, accountCurrencies, currencyOf } from "@/lib/domain/types";
+import { CURRENCIES, accountCurrencies, currencyOf, zeroMoney } from "@/lib/domain/types";
 import { getOrBuildCycle, type ServerAccount } from "./transactions-admin";
 
 /**
@@ -160,21 +161,29 @@ export interface NamedTotal {
 
 export interface MonthSummary {
   month: string;
-  /** Ingresos/gastos/balance por moneda (las transferencias y cambios no cuentan). */
-  byCurrency: Record<Currency, { income: number; expense: number; balance: number }>;
-  /** Gastos por categoría y por cuenta, en pesos (los USD convertidos a la cotización indicada). */
+  /**
+   * Ingresos/gastos/balance por moneda (las transferencias y cambios no
+   * cuentan). Siempre ARS; las demás, solo si tuvieron movimientos.
+   */
+  byCurrency: Partial<Record<Currency, { income: number; expense: number; balance: number }>>;
+  /** Gastos por categoría y por cuenta, en pesos (las otras monedas convertidas a ratesUsed). */
   byCategoryARS: NamedTotal[];
   byAccountARS: NamedTotal[];
-  usdRateUsed: number | null;
+  /** Pesos por unidad usados para convertir (BCRA oficial). */
+  ratesUsed: FxRatesMap | null;
   movements: number;
-  /** Cambios de dólares del mes (sin filtro de categoría; con filtro de cuenta, los que la tocan). */
+  /** Cambios de moneda del mes (sin filtro de categoría; con filtro de cuenta, los que la tocan). */
   exchanges: {
-    sold: { usd: number; ars: number; avgRate: number; count: number; diff: number };
-    bought: { usd: number; ars: number; avgRate: number; count: number; diff: number };
+    byCurrency: Array<{
+      currency: Currency;
+      sold: { amount: number; ars: number; avgRate: number; count: number; diff: number };
+      bought: { amount: number; ars: number; avgRate: number; count: number; diff: number };
+    }>;
     list: Array<{
       date: string;
       side: "sell" | "buy";
-      usd: number;
+      currency: Currency;
+      amount: number;
       ars: number;
       rate: number;
       /** Cotización pactada y diferencia en pesos (redondeo/comisión), si hubo. */
@@ -193,7 +202,7 @@ export const getMonthSummary = async (
   uid: string,
   monthKey: string,
   filter: { categoryId?: string; accountId?: string } = {},
-  usdRate: number | null = null,
+  rates: FxRatesMap | null = null,
 ): Promise<MonthSummary> => {
   const [all, adj, accounts, categories] = await Promise.all([
     loadInstallmentsForMonth(uid, monthKey),
@@ -210,9 +219,10 @@ export const getMonthSummary = async (
   const byCurrency = {} as MonthSummary["byCurrency"];
   for (const c of CURRENCIES) {
     const b = computeMonthlyBalance(installments, monthKey, adj, c);
+    if (c !== "ARS" && b.income === 0 && b.expense === 0) continue;
     byCurrency[c] = { income: r2(b.income), expense: r2(b.expense), balance: r2(b.balance) };
   }
-  const toARS = makeToARS(usdRate);
+  const toARS = makeToARS(rates);
   const accName = new Map(accounts.map((a) => [a.id, a.name]));
   const catName = new Map(categories.map((c) => [c.id, c.name]));
   const toNamed = (m: Map<string, number>, names: Map<string, string>) =>
@@ -238,12 +248,22 @@ export const getMonthSummary = async (
     exchanges:
       ex && ex.ops.length > 0
         ? {
-            sold: ex.sold,
-            bought: ex.bought,
+            byCurrency: ex.byCurrency.map(({ currency, sold, bought }) => ({
+              currency,
+              sold: { amount: sold.amount, ars: sold.ars, avgRate: sold.avgRate, count: sold.count, diff: sold.diff },
+              bought: {
+                amount: bought.amount,
+                ars: bought.ars,
+                avgRate: bought.avgRate,
+                count: bought.count,
+                diff: bought.diff,
+              },
+            })),
             list: ex.ops.slice(0, 20).map((o) => ({
               date: ymd.format(o.date),
               side: o.side,
-              usd: o.usd,
+              currency: o.currency,
+              amount: o.amount,
               ars: o.ars,
               rate: o.rate,
               ...(o.diff ? { quotedRate: o.quotedRate ?? undefined, diff: o.diff } : {}),
@@ -255,7 +275,7 @@ export const getMonthSummary = async (
         : null,
     byCategoryARS: toNamed(sumByCategory(installments, monthKey, adj, toARS), catName),
     byAccountARS: toNamed(sumByAccount(installments, monthKey, adj, toARS), accName),
-    usdRateUsed: usdRate,
+    ratesUsed: rates,
     movements: installments.filter((i) => i.kind !== "transfer").length,
   };
 };
@@ -292,7 +312,7 @@ export const getBalances = async (
   ]);
   const active = accs.filter((a) => a.active);
   const balances = computeAccountBalances(active, installments);
-  const cardDebt: Money = { ARS: 0, USD: 0 };
+  const cardDebt: Money = zeroMoney();
   for (const a of active) {
     if (a.type !== "credit") continue;
     const b = balances.get(a.id)!;
@@ -314,7 +334,8 @@ export const getBalances = async (
 export interface CardStatement {
   accountName: string;
   month: string;
-  totals: Record<Currency, number>;
+  /** Las tarjetas liquidan en pesos y dólares. */
+  totals: { ARS: number; USD: number };
   dueDate: Date;
   items: Array<{
     description: string;
@@ -343,7 +364,7 @@ export const getCardStatement = async (
     const prev = m === 1 ? { y: y - 1, m: 12 } : { y, m: m - 1 };
     dueDate = (await getOrBuildCycle(uid, toServerAccount(account), prev.y, prev.m)).dueDate.toDate();
   }
-  const totals: Record<Currency, number> = { ARS: 0, USD: 0 };
+  const totals = zeroMoney();
   for (const i of installments) totals[currencyOf(i)] += i.kind === "income" ? -i.amount : i.amount;
   return {
     accountName: account.name,

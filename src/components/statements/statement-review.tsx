@@ -28,7 +28,7 @@ import {
   type ImportResult,
   type StatementAnalysis,
 } from "@/lib/domain/statement-import";
-import type { Currency } from "@/lib/domain/types";
+import { zeroMoney } from "@/lib/domain/types";
 
 const fmtDate = (ymd: string | null) => (ymd ? ymd.split("-").reverse().slice(0, 2).join("/") : "—");
 
@@ -88,7 +88,7 @@ export function StatementReview({
   );
 
   const totals = useMemo(() => {
-    const t: Record<Currency, number> = { ARS: 0, USD: 0 };
+    const t = zeroMoney();
     let count = 0;
     for (const r of rows) {
       if (!r.include || isPaymentLine(r)) continue;

@@ -15,14 +15,14 @@ import {
 } from "@/components/ui/select";
 import { useAccounts, useAllInstallments } from "@/hooks/use-data";
 import { useAuth } from "@/hooks/use-auth";
-import { useUsdRate } from "@/hooks/use-usd-rate";
+import { useFxRates } from "@/hooks/use-fx-rates";
 import { createTransactionWithInstallments } from "@/lib/domain/installments";
 import { sortAccounts, updateAccount } from "@/lib/domain/accounts";
 import { computeAccountBalances } from "@/lib/domain/balances";
 import { exchangeDiffOf } from "@/lib/domain/exchanges";
 import type { Account, Currency } from "@/lib/domain/types";
-import { accountCurrencies } from "@/lib/domain/types";
-import { formatAmountInput, formatMoney, parseAmount } from "@/lib/format";
+import { CURRENCY_META, FOREIGN_CURRENCIES, accountCurrencies } from "@/lib/domain/types";
+import { currencyLabel, currencySymbol, formatAmountInput, formatMoney, parseAmount } from "@/lib/format";
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
 const numberText = (n: number) =>
@@ -38,7 +38,9 @@ type Side = "sell" | "buy";
 const WHO_HINTS = ["Mercado Pago", "Banco", "Cueva", "Familiar", "Amigo"];
 
 /**
- * Cambio de moneda: vender o comprar dólares. Puede ser dentro de una misma
+ * Cambio de moneda: vender o comprar dólares (o euros, libras…, siempre contra
+ * pesos). Para otras monedas que no sean el dólar hace falta tener una cuenta
+ * en esa moneda. Puede ser dentro de una misma
  * cuenta (salen dólares y entran pesos en Mercado Pago) o entre cuentas
  * (le vendí dólares billete a un amigo y me pasó los pesos a Mercado Pago).
  * Se escribe la cotización o los pesos que recibió/pagó; el otro se calcula.
@@ -47,9 +49,10 @@ export function ExchangeForm({ onSubmitted }: { onSubmitted?: () => void }) {
   const { user } = useAuth();
   const { data: accounts } = useAccounts();
   const { data: allInstallments } = useAllInstallments();
-  const usdRate = useUsdRate();
+  const fx = useFxRates();
 
   const [side, setSide] = useState<Side>("sell");
+  const [foreignPick, setForeign] = useState<Currency>("USD");
   const [usdInput, setUsdInput] = useState("");
   const [rateInput, setRateInput] = useState("");
   const [arsInput, setArsInput] = useState("");
@@ -62,18 +65,25 @@ export function ExchangeForm({ onSubmitted }: { onSubmitted?: () => void }) {
   const [date, setDate] = useState(todayLocal);
   const [submitting, setSubmitting] = useState(false);
 
-  const fromCurrency: Currency = side === "sell" ? "USD" : "ARS";
-  const toCurrency: Currency = side === "sell" ? "ARS" : "USD";
-
   // Cuentas posibles: todas menos tarjetas. Las cobachas solo si ya tienen esa moneda
-  // (son de una sola moneda). A una cuenta común sin esa moneda se le agrega al guardar.
+  // (son de una sola moneda). A una cuenta común sin pesos o dólares se le agregan
+  // al guardar; las otras monedas (euros, libras…) necesitan una cuenta propia.
   const usable = useMemo(
     () => sortAccounts(accounts.filter((a) => a.active !== false && a.type !== "credit")),
     [accounts],
   );
-  const optionsFor = (c: Currency) =>
-    usable.filter((a) => a.type !== "reserve" || accountCurrencies(a).includes(c));
   const has = (a: Account | undefined, c: Currency) => !!a && accountCurrencies(a).includes(c);
+  const autoAdd = (c: Currency) => c === "ARS" || c === "USD";
+  const foreignOptions = FOREIGN_CURRENCIES.filter((c) => autoAdd(c) || usable.some((a) => has(a, c)));
+  const foreign: Currency = foreignOptions.includes(foreignPick) ? foreignPick : "USD";
+  const foreignWord = currencyLabel(foreign).toLowerCase();
+  const bcraRate = fx?.rates[foreign] ?? null;
+
+  const fromCurrency: Currency = side === "sell" ? foreign : "ARS";
+  const toCurrency: Currency = side === "sell" ? "ARS" : foreign;
+
+  const optionsFor = (c: Currency) =>
+    usable.filter((a) => (a.type !== "reserve" && autoAdd(c)) || has(a, c));
 
   const fromOptions = optionsFor(fromCurrency);
   const toOptions = optionsFor(toCurrency);
@@ -100,11 +110,11 @@ export function ExchangeForm({ onSubmitted }: { onSubmitted?: () => void }) {
   const usd = parseAmount(usdInput) || 0;
   const typedRate = parseAmount(rateInput) || 0;
   const typedArs = parseAmount(arsInput) || 0;
-  const quotedRate = typedRate || (arsTouched ? 0 : usdRate?.rate || 0);
+  const quotedRate = typedRate || (arsTouched ? 0 : bcraRate || 0);
   const ars = arsTouched ? r2(typedArs) : r2(usd * quotedRate);
   const rate = usd > 0 && ars > 0 ? r2(ars / usd) : quotedRate;
   const diff = typedRate > 0 && arsTouched && usd > 0 && ars > 0 ? exchangeDiffOf(side, usd, typedRate, ars) : 0;
-  const usingBcra = !typedRate && !arsTouched && !!usdRate;
+  const usingBcra = !typedRate && !arsTouched && !!bcraRate;
   const arsShown = arsTouched ? arsInput : usd > 0 && quotedRate > 0 ? numberText(ars) : "";
 
   const fromAmount = side === "sell" ? usd : ars;
@@ -115,7 +125,7 @@ export function ExchangeForm({ onSubmitted }: { onSubmitted?: () => void }) {
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user) return;
-    if (!(usd > 0)) return toast.error("Ingresá cuántos dólares");
+    if (!(usd > 0)) return toast.error(`Ingresá cuántos ${foreignWord}`);
     if (!(rate > 0) || !(ars > 0)) return toast.error("Falta la cotización o los pesos");
     if (!from || !to) return toast.error("Elegí las cuentas");
     setSubmitting(true);
@@ -134,7 +144,7 @@ export function ExchangeForm({ onSubmitted }: { onSubmitted?: () => void }) {
       for (const { acc, add } of additions.values()) {
         await updateAccount(user.uid, acc.id, { currencies: [...accountCurrencies(acc), ...add] });
       }
-      const label = side === "sell" ? `Venta de ${formatMoney(usd, "USD")}` : `Compra de ${formatMoney(usd, "USD")}`;
+      const label = side === "sell" ? `Venta de ${formatMoney(usd, foreign)}` : `Compra de ${formatMoney(usd, foreign)}`;
       await createTransactionWithInstallments(user.uid, from, {
         accountId: from.id,
         toAccountId: to.id,
@@ -152,7 +162,7 @@ export function ExchangeForm({ onSubmitted }: { onSubmitted?: () => void }) {
         transferType: "exchange",
       });
       toast.success(
-        `${side === "sell" ? "Vendiste" : "Compraste"} ${formatMoney(usd, "USD")} a ${formatMoney(rate, "ARS")}`,
+        `${side === "sell" ? "Vendiste" : "Compraste"} ${formatMoney(usd, foreign)} a ${formatMoney(rate, "ARS")}`,
         diff !== 0
           ? {
               description: `Diferencia registrada: ${diff > 0 ? "+" : "−"}${formatMoney(Math.abs(diff), "ARS")} ${diff > 0 ? "a favor" : "en contra"}`,
@@ -196,7 +206,7 @@ export function ExchangeForm({ onSubmitted }: { onSubmitted?: () => void }) {
               {!has(a, c) && (
                 <span className="text-muted-foreground">
                   {" "}
-                  · sin {c === "USD" ? "dólares" : "pesos"}
+                  · sin {currencyLabel(c).toLowerCase()}
                 </span>
               )}
             </SelectItem>
@@ -211,8 +221,8 @@ export function ExchangeForm({ onSubmitted }: { onSubmitted?: () => void }) {
       <div className="grid grid-cols-2 gap-1 rounded-xl bg-muted p-1">
         {(
           [
-            { value: "sell", label: "Vendí dólares" },
-            { value: "buy", label: "Compré dólares" },
+            { value: "sell", label: `Vendí ${foreignWord}` },
+            { value: "buy", label: `Compré ${foreignWord}` },
           ] as const
         ).map((opt) => (
           <button
@@ -234,13 +244,44 @@ export function ExchangeForm({ onSubmitted }: { onSubmitted?: () => void }) {
         ))}
       </div>
 
+      {foreignOptions.length > 1 ? (
+        <div className="flex flex-wrap gap-1.5">
+          {foreignOptions.map((c) => (
+            <button
+              key={c}
+              type="button"
+              aria-pressed={foreign === c}
+              onClick={() => {
+                setForeign(c);
+                setRateInput("");
+                setArsTouched(false);
+                setArsInput("");
+                setFromId("");
+                setToId("");
+              }}
+              className={`rounded-full border px-3 py-1 text-xs font-medium transition ${
+                foreign === c ? "border-transparent bg-brand text-brand-foreground" : "bg-background hover:bg-muted"
+              }`}
+            >
+              {currencySymbol(c)} {currencyLabel(c)}
+            </button>
+          ))}
+        </div>
+      ) : (
+        <p className="text-xs text-muted-foreground">
+          ¿Euros, libras, reales…? Creá una cuenta en esa moneda (en Cuentas) y vas a poder cambiarlos acá.
+        </p>
+      )}
+
       <div className="space-y-1">
-        <Label htmlFor="ex-usd">{side === "sell" ? "Dólares que vendiste" : "Dólares que compraste"}</Label>
+        <Label htmlFor="ex-usd">
+          {currencyLabel(foreign)} que {side === "sell" ? "vendiste" : "compraste"}
+        </Label>
         <Input
           id="ex-usd"
           inputMode="decimal"
           autoComplete="off"
-          placeholder="US$ 0"
+          placeholder={`${currencySymbol(foreign)} 0`}
           className="h-12 text-lg"
           value={usdInput}
           onChange={(e) => setUsdInput(e.target.value)}
@@ -256,7 +297,7 @@ export function ExchangeForm({ onSubmitted }: { onSubmitted?: () => void }) {
             inputMode="decimal"
             autoComplete="off"
             className="h-11"
-            placeholder={usdRate ? numberText(usdRate.rate) : "Ej: 1.480"}
+            placeholder={bcraRate ? numberText(bcraRate) : "Ej: 1.480"}
             value={rateInput}
             onChange={(e) => setRateInput(e.target.value)}
             onBlur={(e) => setRateInput(formatAmountInput(e.target.value))}
@@ -282,12 +323,12 @@ export function ExchangeForm({ onSubmitted }: { onSubmitted?: () => void }) {
       <div className="-mt-2 space-y-1 text-xs text-muted-foreground">
         {usingBcra ? (
           <p>
-            Usando el oficial BCRA ({numberText(usdRate!.rate)}). Escribí la cotización a la que
+            Usando el oficial BCRA ({numberText(bcraRate!)}). Escribí la cotización a la que
             cambiaste y, si te {side === "sell" ? "entró" : "cobraron"} otro monto, corregí los pesos.
           </p>
         ) : !arsTouched ? (
           <p>
-            Pesos = dólares × cotización. Si te {side === "sell" ? "entró" : "cobraron"} otro monto
+            Pesos = {foreignWord} × cotización. Si te {side === "sell" ? "entró" : "cobraron"} otro monto
             (redondeo, comisión), corregilo.
           </p>
         ) : !typedRate && rate > 0 ? (
@@ -316,7 +357,7 @@ export function ExchangeForm({ onSubmitted }: { onSubmitted?: () => void }) {
             Diferencia: {diff > 0 ? "+" : "−"}
             {formatMoney(Math.abs(diff), "ARS")} {diff > 0 ? "a favor" : "en contra"}
           </span>{" "}
-          contra {formatMoney(usd, "USD")} × {formatMoney(typedRate, "ARS")} ={" "}
+          contra {formatMoney(usd, foreign)} × {formatMoney(typedRate, "ARS")} ={" "}
           {formatMoney(r2(usd * typedRate), "ARS")}. Queda registrada en el cambio (cotización
           efectiva {formatMoney(rate, "ARS")}).
         </div>
@@ -324,7 +365,7 @@ export function ExchangeForm({ onSubmitted }: { onSubmitted?: () => void }) {
 
       <div className="space-y-3 rounded-xl border bg-muted/30 p-3">
         {accountSelect(
-          side === "sell" ? "Salen los dólares de" : "Salen los pesos de",
+          side === "sell" ? `Salen los ${foreignWord} de` : "Salen los pesos de",
           from,
           fromOptions,
           fromCurrency,
@@ -339,7 +380,7 @@ export function ExchangeForm({ onSubmitted }: { onSubmitted?: () => void }) {
           <ArrowDown className="size-4 text-muted-foreground" />
         </div>
         {accountSelect(
-          side === "sell" ? "Entran los pesos en" : "Entran los dólares en",
+          side === "sell" ? "Entran los pesos en" : `Entran los ${foreignWord} en`,
           to,
           toOptions,
           toCurrency,
@@ -348,8 +389,8 @@ export function ExchangeForm({ onSubmitted }: { onSubmitted?: () => void }) {
         {(missingFrom || missingTo) && (
           <p className="text-xs text-muted-foreground">
             {[
-              missingFrom && from ? `${from.name} no tiene ${fromCurrency === "USD" ? "dólares" : "pesos"}` : null,
-              missingTo && to ? `${to.name} no tiene ${toCurrency === "USD" ? "dólares" : "pesos"}` : null,
+              missingFrom && from ? `${from.name} no tiene ${currencyLabel(fromCurrency).toLowerCase()}` : null,
+              missingTo && to ? `${to.name} no tiene ${currencyLabel(toCurrency).toLowerCase()}` : null,
             ]
               .filter(Boolean)
               .join(" y ")}
@@ -395,7 +436,7 @@ export function ExchangeForm({ onSubmitted }: { onSubmitted?: () => void }) {
           <span className="font-semibold">{formatMoney(toAmount, toCurrency)}</span>
           {to && <span className="text-muted-foreground"> en {to.name}</span>}
           <div className="text-xs text-muted-foreground">
-            a {formatMoney(rate, "ARS")} por dólar
+            a {formatMoney(rate, "ARS")} por {CURRENCY_META[foreign].singular}
             {diff !== 0 && ` (pactado ${formatMoney(typedRate, "ARS")})`}
           </div>
         </div>

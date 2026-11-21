@@ -26,8 +26,8 @@ import {
 import { useAuth } from "@/hooks/use-auth";
 import { useAccounts } from "@/hooks/use-data";
 import { db } from "@/lib/firebase/client";
-import { parseAmount } from "@/lib/format";
-import type { Account, AccountType, Currency } from "@/lib/domain/types";
+import { currencyOptionLabel, currencySymbol, parseAmount } from "@/lib/format";
+import { CURRENCIES, type Account, type AccountType, type Currency } from "@/lib/domain/types";
 import { ACCOUNT_ICONS, defaultIconForType } from "@/components/account-icon";
 import { clearOtherMainAccounts, updateAccount } from "@/lib/domain/accounts";
 
@@ -66,11 +66,13 @@ export function AccountForm({
     account?.currencies?.length ? account.currencies : ["ARS"],
   );
   const [isMain, setIsMain] = useState<boolean>(account?.isMain ?? false);
-  const [openingARS, setOpeningARS] = useState(
-    account?.openingBalances?.ARS ? String(account.openingBalances.ARS) : "",
-  );
-  const [openingUSD, setOpeningUSD] = useState(
-    account?.openingBalances?.USD ? String(account.openingBalances.USD) : "",
+  // Saldo inicial por moneda (texto como lo escribe el usuario).
+  const [opening, setOpening] = useState<Partial<Record<Currency, string>>>(() =>
+    Object.fromEntries(
+      Object.entries(account?.openingBalances ?? {})
+        .filter(([, v]) => v)
+        .map(([c, v]) => [c, String(v)]),
+    ),
   );
   const [busy, setBusy] = useState(false);
 
@@ -89,16 +91,16 @@ export function AccountForm({
   /** Monedas, principal y saldo inicial (solo cuentas que no son tarjeta). */
   const moneyFields = (): Record<string, unknown> => {
     const effCurrencies: Currency[] = type === "reserve" ? [currencies[0]] : currencies;
-    const opening: Partial<Record<Currency, number>> = {};
-    const ars = parseAmount(openingARS) || 0;
-    const usd = parseAmount(openingUSD) || 0;
-    if (effCurrencies.includes("ARS") && ars) opening.ARS = ars;
-    if (effCurrencies.includes("USD") && usd) opening.USD = usd;
-    const hasOpening = Object.keys(opening).length > 0;
+    const balances: Partial<Record<Currency, number>> = {};
+    for (const c of effCurrencies) {
+      const v = parseAmount(opening[c] ?? "") || 0;
+      if (v) balances[c] = v;
+    }
+    const hasOpening = Object.keys(balances).length > 0;
     return {
       currencies: effCurrencies,
       isMain: type === "reserve" ? false : isMain,
-      openingBalances: hasOpening ? opening : null,
+      openingBalances: hasOpening ? balances : null,
       openingDate: hasOpening ? (account?.openingDate ?? Timestamp.now()) : null,
     };
   };
@@ -257,54 +259,43 @@ export function AccountForm({
         <div className="space-y-4 rounded-2xl border p-3">
           <div className="space-y-1.5">
             <Label>{isReserve ? "Moneda" : "Monedas"}</Label>
-            <div className="grid grid-cols-2 gap-1 rounded-xl bg-muted p-1">
-              {(["ARS", "USD"] as Currency[]).map((c) => (
+            <div className="grid grid-cols-2 gap-1 rounded-xl bg-muted p-1 sm:grid-cols-3">
+              {CURRENCIES.map((c) => (
                 <button
                   key={c}
                   type="button"
                   onClick={() => toggleCurrency(c)}
+                  aria-pressed={currencies.includes(c)}
                   className={`h-10 rounded-lg text-sm font-medium transition ${
                     currencies.includes(c) ? "bg-background shadow-sm" : "text-muted-foreground"
                   }`}
                 >
-                  {c === "ARS" ? "$ Pesos" : "US$ Dólares"}
+                  {currencyOptionLabel(c)}
                 </button>
               ))}
             </div>
             {!isReserve && (
               <p className="text-xs text-muted-foreground">
-                Un banco con caja de ahorro en pesos y en dólares lleva las dos.
+                Un banco con caja de ahorro en pesos y en dólares lleva las dos. Para comprar o vender
+                euros, libras, etc., necesitás una cuenta en esa moneda.
               </p>
             )}
           </div>
 
           <div className="grid grid-cols-2 gap-2">
-            {currencies.includes("ARS") && (
-              <div className="space-y-1.5">
-                <Label htmlFor="op-ars">Saldo actual $</Label>
+            {CURRENCIES.filter((c) => currencies.includes(c)).map((c) => (
+              <div key={c} className="space-y-1.5">
+                <Label htmlFor={`op-${c}`}>Saldo actual {currencySymbol(c)}</Label>
                 <Input
-                  id="op-ars"
+                  id={`op-${c}`}
                   inputMode="decimal"
                   className="h-11"
                   placeholder="0"
-                  value={openingARS}
-                  onChange={(e) => setOpeningARS(e.target.value)}
+                  value={opening[c] ?? ""}
+                  onChange={(e) => setOpening((prev) => ({ ...prev, [c]: e.target.value }))}
                 />
               </div>
-            )}
-            {currencies.includes("USD") && (
-              <div className="space-y-1.5">
-                <Label htmlFor="op-usd">Saldo actual US$</Label>
-                <Input
-                  id="op-usd"
-                  inputMode="decimal"
-                  className="h-11"
-                  placeholder="0"
-                  value={openingUSD}
-                  onChange={(e) => setOpeningUSD(e.target.value)}
-                />
-              </div>
-            )}
+            ))}
           </div>
 
           {!isReserve && (

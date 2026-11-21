@@ -1,3 +1,5 @@
+import { CURRENCY_META, type Currency } from "./domain/types";
+
 export const formatCurrency = (n: number): string =>
   new Intl.NumberFormat("es-AR", {
     style: "currency",
@@ -5,18 +7,37 @@ export const formatCurrency = (n: number): string =>
     maximumFractionDigits: 2,
   }).format(n);
 
-const usdFormatter = new Intl.NumberFormat("es-AR", {
+const foreignFormatter = new Intl.NumberFormat("es-AR", {
   minimumFractionDigits: 0,
   maximumFractionDigits: 2,
 });
 
-/** "$ 1.200,50" o "US$ 1.200,5" según la moneda. */
-export const formatMoney = (n: number, currency: "ARS" | "USD" = "ARS"): string =>
-  currency === "USD"
-    ? `${n < 0 ? "-" : ""}US$ ${usdFormatter.format(Math.abs(n))}`
-    : formatCurrency(n);
+/** "$ 1.200,50", "US$ 1.200,5", "€ 300" según la moneda. */
+export const formatMoney = (n: number, currency: Currency = "ARS"): string =>
+  currency === "ARS"
+    ? formatCurrency(n)
+    : `${n < 0 ? "-" : ""}${currencySymbol(currency)} ${foreignFormatter.format(Math.abs(n))}`;
 
-export const currencyLabel = (c: "ARS" | "USD") => (c === "USD" ? "Dólares" : "Pesos");
+const moneyFormatters = new Map<Currency, (n: number) => string>();
+/** Función estable (misma referencia siempre) que formatea en esa moneda, para AnimatedNumber. */
+export const moneyFormatter = (c: Currency): ((n: number) => string) => {
+  let f = moneyFormatters.get(c);
+  if (!f) {
+    f = (n: number) => formatMoney(n, c);
+    moneyFormatters.set(c, f);
+  }
+  return f;
+};
+
+/** "$", "US$", "€", "R$"… */
+export const currencySymbol = (c: Currency): string => CURRENCY_META[c]?.symbol ?? c;
+
+/** "Pesos", "Dólares", "Euros"… */
+export const currencyLabel = (c: Currency): string => CURRENCY_META[c]?.plural ?? c;
+
+/** "$ Pesos", "US$ Dólares", "€ Euros" (para selectores). */
+export const currencyOptionLabel = (c: Currency): string =>
+  `${currencySymbol(c)} ${currencyLabel(c)}`;
 
 const MONTHS = [
   "Enero",
@@ -50,7 +71,9 @@ export const formatShortDate = (d: Date): string =>
  */
 export const parseAmount = (raw: string | number | null | undefined): number => {
   if (typeof raw === "number") return raw;
-  let s = (raw ?? "").trim().replace(/US\$|u\$s|\$|\s/gi, "");
+  let s = (raw ?? "")
+    .trim()
+    .replace(/US\$|u\$s|R\$|CLP\$|\$U|\$|€|£|\b(?:ARS|USD|EUR|GBP|BRL|UYU|CLP)\b|\s/gi, "");
   if (!s) return NaN;
   const lastComma = s.lastIndexOf(",");
   const lastDot = s.lastIndexOf(".");
