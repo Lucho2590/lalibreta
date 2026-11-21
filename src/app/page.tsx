@@ -38,8 +38,11 @@ import { isPersonAccountId } from "@/lib/domain/people";
 import { TodayAgenda } from "@/components/dashboard/today-agenda";
 import { WeatherCard } from "@/components/dashboard/weather-card";
 import { Onboarding } from "@/components/dashboard/onboarding";
+import { AnimatedNumber } from "@/components/motion/animated-number";
 import { CategoryIcon } from "@/components/category-icon";
 import { AccountIcon, defaultIconForType } from "@/components/account-icon";
+
+const formatUSD = (n: number) => formatMoney(n, "USD");
 
 export default function Dashboard() {
   const { monthKey, year, month } = useMonth();
@@ -136,23 +139,25 @@ export default function Dashboard() {
                 Balance del mes
               </div>
               <div className="mt-2 text-4xl font-bold tabular-nums md:text-5xl">
-                {formatCurrency(headline)}
+                <AnimatedNumber value={headline} format={formatCurrency} />
               </div>
               {showProjected && (
                 <Link href="/compartidas" className="mt-1 inline-block rounded-full bg-white/15 px-3 py-1 text-xs font-medium hover:bg-white/25">
-                  Si te pagan lo que te deben: <span className="tabular-nums">{formatCurrency(projectedHeadline)}</span>
+                  Si te pagan lo que te deben:{" "}
+                  <AnimatedNumber className="tabular-nums" value={projectedHeadline} format={formatCurrency} />
                 </Link>
               )}
               {consolidated != null ? (
                 <div className="mt-1 text-sm tabular-nums opacity-90">
-                  {formatMoney(balance.balance, "ARS")} en pesos {balanceUSD.balance >= 0 ? "+" : "−"}{" "}
-                  {formatMoney(Math.abs(balanceUSD.balance), "USD")} en dólares
+                  <AnimatedNumber value={balance.balance} format={formatCurrency} /> en pesos{" "}
+                  {balanceUSD.balance >= 0 ? "+" : "−"}{" "}
+                  <AnimatedNumber value={Math.abs(balanceUSD.balance)} format={formatUSD} /> en dólares
                 </div>
               ) : (
                 hasUSD && (
                   <div className="mt-1 text-xl font-semibold tabular-nums opacity-95">
                     {balanceUSD.balance >= 0 ? "+ " : ""}
-                    {formatMoney(balanceUSD.balance, "USD")}
+                    <AnimatedNumber value={balanceUSD.balance} format={formatUSD} />
                   </div>
                 )
               )}
@@ -160,14 +165,14 @@ export default function Dashboard() {
                 <BalancePill
                   icon={<ArrowUpRight className="size-3.5" />}
                   label="Ingresos"
-                  value={formatCurrency(balance.income)}
-                  extra={hasUSD ? formatMoney(balanceUSD.income, "USD") : undefined}
+                  value={balance.income}
+                  extra={hasUSD ? balanceUSD.income : undefined}
                 />
                 <BalancePill
                   icon={<ArrowDownRight className="size-3.5" />}
                   label="Gastos"
-                  value={formatCurrency(balance.expense)}
-                  extra={hasUSD ? formatMoney(balanceUSD.expense, "USD") : undefined}
+                  value={balance.expense}
+                  extra={hasUSD ? balanceUSD.expense : undefined}
                 />
               </div>
               {consolidated != null && conversion && (
@@ -338,8 +343,8 @@ function BalancePill({
 }: {
   icon: React.ReactNode;
   label: string;
-  value: string;
-  extra?: string;
+  value: number;
+  extra?: number;
 }) {
   return (
     <div className="rounded-2xl bg-white/15 px-4 py-3 backdrop-blur">
@@ -347,8 +352,14 @@ function BalancePill({
         {icon}
         {label}
       </div>
-      <div className="mt-0.5 text-base font-semibold tabular-nums">{value}</div>
-      {extra && <div className="text-sm font-medium tabular-nums opacity-90">{extra}</div>}
+      <div className="mt-0.5 text-base font-semibold tabular-nums">
+        <AnimatedNumber value={value} format={formatCurrency} />
+      </div>
+      {extra != null && (
+        <div className="text-sm font-medium tabular-nums opacity-90">
+          <AnimatedNumber value={extra} format={formatUSD} />
+        </div>
+      )}
     </div>
   );
 }
