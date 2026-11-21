@@ -57,7 +57,15 @@ export default function FijosPage() {
     [categories],
   );
 
-  const [appliedSet, setAppliedSet] = useState<Set<string>>(new Set());
+  // Los fijos ya aplicados, con el mes al que corresponden: al cambiar de
+  // mes, hasta que llega la consulta del nuevo, no se muestra "Aplicado" ni
+  // "Aplicar" (si no, se veía un instante el estado del mes anterior).
+  const [applied, setApplied] = useState<{ key: string; ids: Set<string> } | null>(null);
+  const appliedKey = user ? `${user.uid}:${monthKey}` : "";
+  const appliedReady = applied?.key === appliedKey;
+  const appliedSet = appliedReady ? applied.ids : null;
+  // Se incrementa al aplicar todos, para volver a leer qué fijos están en el mes.
+  const [refresh, setRefresh] = useState(0);
   useEffect(() => {
     if (!user) return;
     let active = true;
@@ -73,12 +81,12 @@ export default function FijosPage() {
         const r = (d.data() as { recurringId?: string }).recurringId;
         if (r) ids.add(r);
       });
-      if (active) setAppliedSet(ids);
+      if (active) setApplied({ key: `${user.uid}:${monthKey}`, ids });
     })();
     return () => {
       active = false;
     };
-  }, [user, monthKey, recurring]);
+  }, [user, monthKey, recurring, refresh]);
 
   const applyOne = async (rec: RecurringExpense) => {
     if (!user) return;
@@ -91,7 +99,7 @@ export default function FijosPage() {
       const result = await applyRecurringToMonth(user.uid, rec, year, month, account);
       if (result === "created") {
         toast.success(`"${rec.name}" aplicado a ${formatMonth(year, month)}`);
-        setAppliedSet((s) => new Set(s).add(rec.id));
+        setApplied((prev) => (prev ? { ...prev, ids: new Set(prev.ids).add(rec.id) } : prev));
       } else {
         toast.info("Ya estaba aplicado");
       }
@@ -104,7 +112,7 @@ export default function FijosPage() {
   const applyAll = async () => {
     if (!user) return;
     try {
-      const { applied } = await applyAllRecurringToMonth(
+      const { applied: count } = await applyAllRecurringToMonth(
         user.uid,
         recurring.filter((r) => r.active),
         accounts,
@@ -112,10 +120,12 @@ export default function FijosPage() {
         month,
       );
       toast.success(
-        applied > 0
-          ? `${applied} ${applied === 1 ? "fijo aplicado" : "fijos aplicados"}`
+        count > 0
+          ? `${count} ${count === 1 ? "fijo aplicado" : "fijos aplicados"}`
           : "No había nada para aplicar",
       );
+      // Volver a leer qué fijos quedaron aplicados en el mes.
+      setRefresh((n) => n + 1);
     } catch (err) {
       toast.error("Error al aplicar");
       console.error(err);
@@ -149,7 +159,7 @@ export default function FijosPage() {
     const cat = categoryMap.get(rec.categoryId);
     const acc = accountMap.get(rec.accountId);
     const inRange = isInRange(rec, year, month);
-    const applied = appliedSet.has(rec.id);
+    const isApplied = appliedSet?.has(rec.id) ?? false;
     return (
       <Card key={rec.id} className="rounded-2xl">
         <CardContent className="flex flex-wrap items-center gap-3 py-3.5">
@@ -172,16 +182,19 @@ export default function FijosPage() {
           <div className="text-sm font-semibold tabular-nums">{formatMoney(rec.amount, currencyOf(rec))}</div>
 
           <div className="flex w-full items-center justify-end gap-1 sm:w-auto">
-            {rec.active && inRange && (
-              applied ? (
-                <span className="inline-flex items-center gap-1 rounded-full bg-success/10 px-2.5 py-1 text-[11px] font-medium text-success">
-                  <Check className="size-3" /> Aplicado
-                </span>
-              ) : (
-                <Button size="sm" variant="outline" onClick={() => applyOne(rec)}>
-                  Aplicar a {formatMonth(year, month).split(" ")[0]}
-                </Button>
-              )
+            {rec.active && inRange && appliedSet && (
+              // key: al cambiar de mes o de estado, entra con un fundido.
+              <span key={`${monthKey}-${isApplied}`} className="animate-in fade-in-0 duration-300 motion-reduce:animate-none">
+                {isApplied ? (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-success/10 px-2.5 py-1 text-[11px] font-medium text-success">
+                    <Check className="size-3" /> Aplicado
+                  </span>
+                ) : (
+                  <Button size="sm" variant="outline" onClick={() => applyOne(rec)}>
+                    Aplicar a {formatMonth(year, month).split(" ")[0]}
+                  </Button>
+                )}
+              </span>
             )}
             <Button size="icon" variant="ghost" onClick={() => setEditingRec(rec)} aria-label="Editar">
               <Pencil className="size-4" />

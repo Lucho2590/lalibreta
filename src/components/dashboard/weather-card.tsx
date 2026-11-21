@@ -3,15 +3,25 @@
 import Link from "next/link";
 import { ChevronRight, Droplets, MapPin } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
-import { useWeather } from "@/hooks/use-weather";
+import { useWeather, type WeatherData } from "@/hooks/use-weather";
+import { Reveal } from "@/components/motion/reveal";
 import { ALERT_STYLE } from "@/components/weather/alert-style";
 import { LEVEL_EMOJI, alertWindowText, placeText, weatherEmoji, weatherText } from "@/lib/domain/weather";
 import { cn } from "@/lib/utils";
 
-/** En el inicio: el clima de ahora donde estás y, si hay, la alerta del SMN. */
+/**
+ * En el inicio: el clima de ahora donde estás y, si hay, la alerta del SMN.
+ * El clima llega después que el resto del inicio (se consulta afuera), así
+ * que la tarjeta se despliega suave en vez de aparecer de golpe.
+ */
 export function WeatherCard() {
   const { data, loading } = useWeather();
-  if (loading || !data || data.optOut) return null;
+  const visible =
+    !loading && !!data && !data.optOut && (!data.location || !!data.forecast || data.alerts.length > 0);
+  return <Reveal show={visible}>{visible && data && <WeatherCardContent data={data} />}</Reveal>;
+}
+
+function WeatherCardContent({ data }: { data: WeatherData }) {
 
   if (!data.location) {
     return (
@@ -30,7 +40,6 @@ export function WeatherCard() {
   const f = data.forecast;
   const today = f?.daily[0];
   const alert = data.alerts[0];
-  if (!f && !alert) return null;
 
   return (
     <Link href="/clima" className="block">

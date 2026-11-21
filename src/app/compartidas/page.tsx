@@ -19,14 +19,20 @@ import { PendingInbox } from "@/components/people/pending-inbox";
 import { PersonTransferForm } from "@/components/people/person-transfer-form";
 import { ledgerTotal, ledgerTotals } from "@/lib/domain/debts";
 import { personBalanceText } from "@/components/people/balance-text";
+import { PersonBalanceText, PersonLaterText } from "@/components/people/person-balance";
 import type { Currency } from "@/lib/domain/types";
 import { formatMoney } from "@/lib/format";
+import { cn } from "@/lib/utils";
+import { AnimatedMoney } from "@/components/motion/animated-money";
+import { ENTER, enterDelay } from "@/components/motion/enter";
 
-const CURS: Currency[] = ["ARS", "USD"];
-const moneyLine = (m: Record<Currency, number>) =>
-  CURS.filter((c) => Math.abs(m[c]) > 0.009)
-    .map((c) => formatMoney(Math.abs(m[c]), c))
-    .join(" + ") || formatMoney(0, "ARS");
+/** Suma por moneda, redondeada a centavos. */
+const sumByCurrency = (xs: Array<{ c: Currency; v: number }>) => {
+  const out: Partial<Record<Currency, number>> = {};
+  for (const { c, v } of xs) out[c] = (out[c] ?? 0) + v;
+  for (const c of Object.keys(out) as Currency[]) out[c] = Math.round((out[c] ?? 0) * 100) / 100;
+  return out;
+};
 
 export default function CuentasConGentePage() {
   const { user } = useAuth();
@@ -120,9 +126,9 @@ export default function CuentasConGentePage() {
             </div>
             <div>
               <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Te deben · hasta {monthName}</div>
-              <div className="text-xl font-semibold tabular-nums text-success">{moneyLine(totals.owedToMe)}</div>
+              <div className="text-xl font-semibold tabular-nums text-success"><AnimatedMoney amounts={totals.owedToMe} /></div>
               {(totals.laterToMe.ARS > 0.009 || totals.laterToMe.USD > 0.009) && (
-                <div className="text-xs text-muted-foreground">+ {moneyLine(totals.laterToMe)} de cuotas que vienen</div>
+                <div className="text-xs text-muted-foreground">+ <AnimatedMoney amounts={totals.laterToMe} /> de cuotas que vienen</div>
               )}
             </div>
           </CardContent>
@@ -134,9 +140,9 @@ export default function CuentasConGentePage() {
             </div>
             <div>
               <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Le debés · hasta {monthName}</div>
-              <div className="text-xl font-semibold tabular-nums text-destructive">{moneyLine(totals.iOwe)}</div>
+              <div className="text-xl font-semibold tabular-nums text-destructive"><AnimatedMoney amounts={totals.iOwe} /></div>
               {(totals.laterIOwe.ARS > 0.009 || totals.laterIOwe.USD > 0.009) && (
-                <div className="text-xs text-muted-foreground">+ {moneyLine(totals.laterIOwe)} de cuotas que vienen</div>
+                <div className="text-xs text-muted-foreground">+ <AnimatedMoney amounts={totals.laterIOwe} /> de cuotas que vienen</div>
               )}
             </div>
           </CardContent>
@@ -161,13 +167,14 @@ export default function CuentasConGentePage() {
               </div>
             </div>
           )}
-          {people.map((l) => {
+          {people.map((l, i) => {
             const b = personBalanceText(l);
             return (
               <Link
                 key={l.ref}
+                style={enterDelay(i)}
                 href={`/compartidas/persona/${encodeURIComponent(l.ref)}`}
-                className="flex items-center gap-3 py-3 hover:opacity-80"
+                className={cn("flex items-center gap-3 py-3 hover:opacity-80", ENTER)}
               >
                 <Avatar className="size-10">
                   <AvatarFallback>{l.name[0]?.toUpperCase() ?? "?"}</AvatarFallback>
@@ -179,14 +186,18 @@ export default function CuentasConGentePage() {
                       <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">sin app</span>
                     )}
                   </div>
-                  {b.later && <div className="text-xs text-muted-foreground">+ {b.later}</div>}
+                  {b.later && (
+                    <div className="text-xs text-muted-foreground">
+                      + <PersonLaterText balance={b} />
+                    </div>
+                  )}
                 </div>
                 <span
                   className={`text-right text-sm font-semibold tabular-nums ${
                     b.tone === "success" ? "text-success" : b.tone === "destructive" ? "text-destructive" : "text-muted-foreground"
                   }`}
                 >
-                  {b.text}
+                  <PersonBalanceText balance={b} />
                 </span>
                 <ChevronRight className="size-4 text-muted-foreground" />
               </Link>
@@ -204,8 +215,13 @@ export default function CuentasConGentePage() {
             <p className="text-xs text-muted-foreground">Tu parte de gastos que pagó otra persona (en cuotas, la cuota del mes).</p>
           </CardHeader>
           <CardContent className="divide-y">
-            {iPayThisMonth.map(({ s, amount, cuota, cuotas, total, pending }) => (
-              <Link key={s.id} href={`/compartidas/gasto/${s.id}`} className="flex items-center gap-3 py-3 hover:opacity-80">
+            {iPayThisMonth.map(({ s, amount, cuota, cuotas, total, pending }, i) => (
+              <Link
+                key={s.id}
+                href={`/compartidas/gasto/${s.id}`}
+                className={cn("flex items-center gap-3 py-3 hover:opacity-80", ENTER)}
+                style={enterDelay(i)}
+              >
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-sm font-medium">{s.description}</div>
                   <div className="truncate text-xs text-muted-foreground">
@@ -215,7 +231,7 @@ export default function CuentasConGentePage() {
                   </div>
                 </div>
                 <span className="text-right text-sm font-semibold tabular-nums text-destructive">
-                  {formatMoney(amount, s.currency)}
+                  <AnimatedMoney amounts={{ [s.currency]: amount }} />
                 </span>
                 <ChevronRight className="size-4 text-muted-foreground" />
               </Link>
@@ -223,11 +239,7 @@ export default function CuentasConGentePage() {
             <div className="flex justify-between pt-2.5 text-sm font-semibold">
               <span>Total del mes</span>
               <span className="tabular-nums">
-                {(["ARS", "USD"] as const)
-                  .map((c) => ({ c, v: iPayThisMonth.filter((x) => x.s.currency === c).reduce((a, x) => a + x.amount, 0) }))
-                  .filter((x) => x.v > 0.009)
-                  .map((x) => formatMoney(Math.round(x.v * 100) / 100, x.c))
-                  .join(" + ")}
+                <AnimatedMoney amounts={sumByCurrency(iPayThisMonth.map((x) => ({ c: x.s.currency, v: x.amount })))} />
               </span>
             </div>
           </CardContent>
@@ -243,11 +255,16 @@ export default function CuentasConGentePage() {
             <p className="text-xs text-muted-foreground">Lo que le toca a la otra gente este mes (en cuotas, la cuota del mes).</p>
           </CardHeader>
           <CardContent className="divide-y">
-            {myThisMonth.map(({ s, others, cuota, cuotas }) => {
+            {myThisMonth.map(({ s, others, cuota, cuotas }, i) => {
               const pending = s.participants.filter((p) => p.status === "pending").length;
               const rejected = s.participants.filter((p) => p.status === "rejected").length;
               return (
-                <Link key={s.id} href={`/compartidas/gasto/${s.id}`} className="flex items-center gap-3 py-3 hover:opacity-80">
+                <Link
+                  key={s.id}
+                  href={`/compartidas/gasto/${s.id}`}
+                  className={cn("flex items-center gap-3 py-3 hover:opacity-80", ENTER)}
+                  style={enterDelay(i)}
+                >
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-sm font-medium">{s.description}</div>
                     <div className="truncate text-xs text-muted-foreground">
@@ -259,7 +276,7 @@ export default function CuentasConGentePage() {
                     </div>
                   </div>
                   <span className="text-right text-sm font-semibold tabular-nums">
-                    {formatMoney(others, s.currency)}
+                    <AnimatedMoney amounts={{ [s.currency]: others }} />
                     <span className="block text-[10px] font-normal text-muted-foreground">les toca</span>
                   </span>
                   <ChevronRight className="size-4 text-muted-foreground" />
@@ -269,11 +286,7 @@ export default function CuentasConGentePage() {
             <div className="flex justify-between pt-2.5 text-sm font-semibold">
               <span>Total que te toca cobrar este mes</span>
               <span className="tabular-nums text-success">
-                {(["ARS", "USD"] as const)
-                  .map((c) => ({ c, v: myThisMonth.filter((x) => x.s.currency === c).reduce((a, x) => a + x.others, 0) }))
-                  .filter((x) => x.v > 0.009)
-                  .map((x) => formatMoney(Math.round(x.v * 100) / 100, x.c))
-                  .join(" + ")}
+                <AnimatedMoney amounts={sumByCurrency(myThisMonth.map((x) => ({ c: x.s.currency, v: x.others })))} />
               </span>
             </div>
           </CardContent>

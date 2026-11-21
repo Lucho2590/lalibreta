@@ -19,6 +19,10 @@ import { formatMonth } from "@/lib/format";
 import { participantSchedule, transferSide, type PersonRef, type Split } from "@/lib/domain/people";
 import type { Currency } from "@/lib/domain/types";
 import { formatMoney } from "@/lib/format";
+import { cn } from "@/lib/utils";
+import { AnimatedMoney } from "@/components/motion/animated-money";
+import { ENTER, enterDelay } from "@/components/motion/enter";
+import { PersonBalanceText, PersonLaterText } from "@/components/people/person-balance";
 
 const ddmm = (ymd: string) => ymd.split("-").reverse().join("/");
 /** En cuotas: el monto de una cuota (si no, la parte entera). */
@@ -175,7 +179,7 @@ export default function PersonPage({ params }: { params: Promise<{ ref: string }
   const owedUSD = l ? ledgerNow(l, "USD").now : 0;
   const mainCur: Currency = Math.abs(owedUSD) > 0 && Math.abs(owedARS) < 0.01 ? "USD" : "ARS";
   const mainOwed = mainCur === "USD" ? owedUSD : owedARS;
-  const balance = l ? personBalanceText(l) : { text: "Están a mano", tone: "muted" as const, later: "" };
+  const balance = l ? personBalanceText(l) : null;
 
   const removeTransfer = async (id: string) => {
     if (!confirm("¿Borrar esta transferencia? Se borra para los dos y deja de contar para lo que se deben.")) return;
@@ -203,10 +207,17 @@ export default function PersonPage({ params }: { params: Promise<{ ref: string }
             <div className="text-xs opacity-80">{isApp ? "Usa La Libreta" : "Sin la app"}</div>
           </div>
         </div>
-        <div className="mt-5 text-2xl font-bold tabular-nums">{balance.text}</div>
+        <div className="mt-5 text-2xl font-bold tabular-nums">
+          {balance ? <PersonBalanceText balance={balance} /> : "Están a mano"}
+        </div>
         <div className="mt-1 text-sm opacity-90">
           Hasta {formatMonth(year, month)}
-          {balance.later ? ` · + ${balance.later}` : ""}
+          {balance?.later && (
+            <>
+              {" · + "}
+              <PersonLaterText balance={balance} />
+            </>
+          )}
         </div>
         <div className="mt-4 flex flex-wrap gap-2">
           <Button
@@ -244,8 +255,8 @@ export default function PersonPage({ params }: { params: Promise<{ ref: string }
           {!loading && rows.length === 0 && (
             <p className="py-4 text-center text-sm text-muted-foreground">Todavía no hay nada con {name}.</p>
           )}
-          {rows.map((r) => (
-            <div key={r.key} className="flex items-center gap-3 py-3">
+          {rows.map((r, i) => (
+            <div key={r.key} className={cn("flex items-center gap-3 py-3", ENTER)} style={enterDelay(i)}>
               <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-muted">
                 {r.kind === "split" ? <HandCoins className="size-4" /> : <ArrowLeftRight className="size-4" />}
               </span>
@@ -267,7 +278,7 @@ export default function PersonPage({ params }: { params: Promise<{ ref: string }
                 title={r.amount > 0 ? "Suma a lo que te debe" : "Baja lo que te debe / suma a lo que le debés"}
               >
                 {r.amount > 0 ? "+" : "−"}
-                {formatMoney(Math.abs(r.amount), r.currency)}
+                <AnimatedMoney amounts={{ [r.currency]: Math.abs(r.amount) }} />
               </span>
               {r.canDelete && (
                 <Button size="icon" variant="ghost" className="text-muted-foreground" aria-label="Borrar" onClick={() => removeTransfer(r.id)}>

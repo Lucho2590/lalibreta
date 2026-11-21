@@ -39,6 +39,8 @@ import { TodayAgenda } from "@/components/dashboard/today-agenda";
 import { WeatherCard } from "@/components/dashboard/weather-card";
 import { Onboarding } from "@/components/dashboard/onboarding";
 import { AnimatedNumber } from "@/components/motion/animated-number";
+import { ENTER, enterDelay } from "@/components/motion/enter";
+import { cn } from "@/lib/utils";
 import { CategoryIcon } from "@/components/category-icon";
 import { AccountIcon, defaultIconForType } from "@/components/account-icon";
 
@@ -46,8 +48,8 @@ const formatUSD = (n: number) => formatMoney(n, "USD");
 
 export default function Dashboard() {
   const { monthKey, year, month } = useMonth();
-  const { data: installments, loading } = useInstallmentsForMonth(monthKey);
-  const { data: categories } = useCategories();
+  const { data: installments, loading, stale } = useInstallmentsForMonth(monthKey);
+  const { data: categories, loading: categoriesLoading } = useCategories();
   const { data: accounts, loading: accountsLoading } = useAccounts();
   // Gastos repartidos: cuenta solo mi parte (y "si te pagan" lo que me deben los sin app).
   const adj = useSplitAdjustment();
@@ -84,12 +86,29 @@ export default function Dashboard() {
   );
   const available = useMemo(() => totalAvailable(activeAccounts, balances), [activeAccounts, balances]);
 
-  const sortedCategories = [...byCategory.entries()]
-    .map(([id, total]) => ({ cat: categories.find((c) => c.id === id), total }))
-    // Un reintegro de tarjeta con categoría de ingreso descuenta del total, pero
-    // no se muestra como fila (quedaría un "Otros ingresos" negativo).
-    .filter(({ cat, total }) => cat?.kind !== "income" && total > 0.009)
-    .sort((a, b) => b.total - a.total);
+  const sortedCategories = useMemo(() => {
+    // Hasta que cargan las categorías no se muestra nada (si no, todas las
+    // filas salían como "—").
+    if (categoriesLoading) return [];
+    const catById = new Map(categories.map((c) => [c.id, c]));
+    // Las que no están en sus categorías (borradas, o de una cuenta compartida
+    // de otra persona) van juntas en una sola fila.
+    let unknown = 0;
+    const rows: Array<{ id: string; cat: (typeof categories)[number] | undefined; total: number }> = [];
+    for (const [id, total] of byCategory) {
+      const cat = catById.get(id);
+      if (cat) rows.push({ id, cat, total });
+      else unknown += total;
+    }
+    if (unknown > 0.009) rows.push({ id: "__sin-categoria", cat: undefined, total: unknown });
+    return (
+      rows
+        // Un reintegro de tarjeta con categoría de ingreso descuenta del total, pero
+        // no se muestra como fila (quedaría un "Otros ingresos" negativo).
+        .filter(({ cat, total }) => cat?.kind !== "income" && total > 0.009)
+        .sort((a, b) => b.total - a.total)
+    );
+  }, [byCategory, categories, categoriesLoading]);
 
   const sortedAccounts = [...byAccount.entries()]
     .map(([id, total]) => ({ id, acc: accounts.find((a) => a.id === id), total }))
@@ -262,7 +281,8 @@ export default function Dashboard() {
           {/* Solo aparece si hubo cambios de dólares en el mes. */}
           <ExchangeSummaryCard installments={installments} maxItems={4} />
 
-          <section className="grid gap-4 md:grid-cols-2">
+          {/* Mientras llega el mes nuevo, lo del anterior queda atenuado. */}
+          <section className={cn("grid gap-4 transition-opacity duration-200 md:grid-cols-2", stale && "opacity-50")}>
             <Card className="rounded-3xl">
               <CardHeader className="pb-3">
                 <CardTitle className="text-sm font-semibold">Por categoría</CardTitle>
@@ -275,20 +295,20 @@ export default function Dashboard() {
                 {!loading && sortedCategories.length === 0 && (
                   <EmptyHint>Sin gastos en este mes.</EmptyHint>
                 )}
-                {sortedCategories.map(({ cat, total }) => (
-                  <div key={cat?.id ?? "x"} className="space-y-1.5">
+                {sortedCategories.map(({ id, cat, total }, i) => (
+                  <div key={id} className={cn("space-y-1.5", ENTER)} style={enterDelay(i)}>
                     <div className="flex items-center justify-between text-sm">
                       <div className="flex items-center gap-2">
                         <span className="flex size-7 items-center justify-center rounded-lg bg-muted text-foreground">
                           <CategoryIcon name={cat?.icon} className="size-3.5" />
                         </span>
-                        <span className="font-medium">{cat?.name ?? "—"}</span>
+                        <span className="font-medium">{cat?.name ?? "Sin categoría"}</span>
                       </div>
-                      <span className="tabular-nums">{formatCurrency(total)}</span>
+                      <AnimatedNumber className="tabular-nums" value={total} format={formatCurrency} />
                     </div>
                     <div className="h-1.5 overflow-hidden rounded-full bg-muted">
                       <div
-                        className="h-full rounded-full bg-brand-grad transition-all"
+                        className="h-full rounded-full bg-brand-grad transition-[width] duration-700 ease-out motion-reduce:transition-none"
                         style={{ width: max ? `${(total / max) * 100}%` : 0 }}
                       />
                     </div>
@@ -306,11 +326,15 @@ export default function Dashboard() {
               </CardHeader>
               <CardContent className="space-y-1">
                 {sortedAccounts.length === 0 && <EmptyHint>Sin movimientos.</EmptyHint>}
-                {sortedAccounts.map(({ id, acc, total }) => (
+                {sortedAccounts.map(({ id, acc, total }, i) => (
                   <Link
                     key={id}
                     href={acc ? `/cuentas/${acc.id}` : isPersonAccountId(id) ? "/compartidas" : "#"}
-                    className="flex items-center justify-between rounded-xl px-2 py-2.5 text-sm transition hover:bg-muted/60"
+                    className={cn(
+                      "flex items-center justify-between rounded-xl px-2 py-2.5 text-sm transition hover:bg-muted/60",
+                      ENTER,
+                    )}
+                    style={enterDelay(i)}
                   >
                     <div className="flex items-center gap-2.5">
                       <span className="flex size-7 items-center justify-center rounded-lg bg-muted text-foreground">
@@ -323,7 +347,7 @@ export default function Dashboard() {
                         {acc?.name ?? (isPersonAccountId(id) ? "Tu parte de gastos de otros" : "—")}
                       </span>
                     </div>
-                    <span className="tabular-nums">{formatCurrency(total)}</span>
+                    <AnimatedNumber className="tabular-nums" value={total} format={formatCurrency} />
                   </Link>
                 ))}
               </CardContent>

@@ -15,6 +15,7 @@ import { useMonth } from "@/hooks/use-month";
 import { CardCycleEditor } from "@/components/accounts/card-cycle-editor";
 import { ShareAccountSection } from "@/components/accounts/share-account-section";
 import { formatDate, formatMoney, formatMonth } from "@/lib/format";
+import { AnimatedAmount } from "@/components/motion/animated-money";
 import { TAX_CATEGORY, cardFloorMonth, nextMonthKey, summarizeCardMonth, type Money } from "@/lib/domain/card-summary";
 import type { AccountType, Currency } from "@/lib/domain/types";
 import { accountCurrencies, currencyOf, monthOf } from "@/lib/domain/types";
@@ -197,7 +198,9 @@ export default function AccountDetailPage({ params }: { params: Promise<{ id: st
             </div>
             <div className="text-3xl font-bold tabular-nums md:text-4xl">
               {totalCurrencies.map((c) => (
-                <div key={c}>{formatMoney(totals[c], c)}</div>
+                <div key={c}>
+                  <AnimatedAmount value={totals[c]} currency={c} />
+                </div>
               ))}
             </div>
             <div className="mt-1 text-xs opacity-80">
@@ -221,7 +224,7 @@ export default function AccountDetailPage({ params }: { params: Promise<{ id: st
                     </div>
                     {flowCurrencies.map((c) => (
                       <div key={c} className="font-semibold tabular-nums">
-                        {formatMoney(flow[c][dir], c)}
+                        <AnimatedAmount value={flow[c][dir]} currency={c} />
                       </div>
                     ))}
                     {transfersText(dir) && (
@@ -286,9 +289,11 @@ export default function AccountDetailPage({ params }: { params: Promise<{ id: st
                         ))
                       ) : (
                         <>
-                          {formatMoney(cardTotals.ARS, "ARS")}
+                          <AnimatedAmount value={cardTotals.ARS} currency="ARS" />
                           {cardTotals.USD !== 0 && (
-                            <span className="block text-xs">{formatMoney(cardTotals.USD, "USD")}</span>
+                            <span className="block text-xs">
+                              <AnimatedAmount value={cardTotals.USD} currency="USD" />
+                            </span>
                           )}
                         </>
                       )}
@@ -369,9 +374,13 @@ function HeroStat({
     <div className={`rounded-2xl px-4 py-3 backdrop-blur ${emphasis ? "bg-white/25 ring-1 ring-white/40" : "bg-white/15"}`}>
       <div className="text-[11px] uppercase tracking-wider opacity-80">{label}</div>
       <div className={`font-bold tabular-nums ${emphasis ? "text-2xl" : "text-xl"}`}>
-        {formatMoney(money.ARS, "ARS")}
+        <AnimatedAmount value={money.ARS} currency="ARS" />
       </div>
-      {money.USD !== 0 && <div className="text-sm font-semibold tabular-nums">{formatMoney(money.USD, "USD")}</div>}
+      {money.USD !== 0 && (
+        <div className="text-sm font-semibold tabular-nums">
+          <AnimatedAmount value={money.USD} currency="USD" />
+        </div>
+      )}
       {note && <div className="mt-1 text-xs opacity-80">{note}</div>}
     </div>
   );

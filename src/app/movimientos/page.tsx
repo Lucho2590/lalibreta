@@ -20,17 +20,24 @@ import { monthUsdConversion } from "@/lib/domain/exchanges";
 import { useUsdRate } from "@/hooks/use-usd-rate";
 import { useNewTransactionSheet } from "@/components/transactions/new-transaction-sheet";
 import { formatCurrency, formatDate, formatMoney, formatMonth } from "@/lib/format";
+import { cn } from "@/lib/utils";
+import { AnimatedNumber } from "@/components/motion/animated-number";
 import { isCardCredit, isRealIncome } from "@/lib/domain/types";
 import { TAX_CATEGORY, cardFloorMonth, summarizeCardMonth } from "@/lib/domain/card-summary";
 
 import { computeAccountFlow, computeMonthlyBalance, type AccountFlow } from "@/lib/domain/balance";
+
+const formatUSD = (n: number) => formatMoney(n, "USD");
 
 export default function MovimientosPage() {
   const params = useSearchParams();
   const accountFilter = params.get("account");
   const kindFilter = params.get("kind");
   const { monthKey, year, month } = useMonth();
-  const { data: installments, loading } = useInstallmentsForMonth(monthKey);
+  const { data: installments, loading, stale } = useInstallmentsForMonth(monthKey);
+  // De qué mes son los movimientos que se están mostrando (al cambiar de mes,
+  // hasta que llegan los nuevos, siguen siendo los del anterior).
+  const dataMonth = stale ? (installments[0]?.paymentMonth ?? "anterior") : monthKey;
   const { data: accounts } = useAccounts();
   const { data: categories } = useCategories();
   const { open } = useNewTransactionSheet();
@@ -147,6 +154,8 @@ export default function MovimientosPage() {
         </Button>
       </div>
 
+      {/* Mientras llega el mes nuevo, lo del anterior queda atenuado. */}
+      <div className={cn("transition-opacity duration-200", stale && "opacity-50")}>
       {cardSum ? (
         <div className="grid gap-3 md:grid-cols-3">
           <Stat
@@ -252,6 +261,7 @@ export default function MovimientosPage() {
           )}
         </div>
       )}
+      </div>
 
       <div className="flex flex-wrap items-center gap-2">
         <Tabs
@@ -290,19 +300,29 @@ export default function MovimientosPage() {
 
       {loading ? (
         <SkeletonList />
-      ) : filtered.length === 0 ? (
-        <Card className="rounded-3xl">
-          <CardContent className="py-12 text-center text-sm text-muted-foreground">
-            Sin movimientos en este mes.
-          </CardContent>
-        </Card>
       ) : (
-        <TransactionList
-          items={filtered}
-          perspectiveAccountId={isCardView ? undefined : (accountFilter ?? undefined)}
-          groupCards={!isCardView}
-          adjustment={adj}
-        />
+        // Al llegar los movimientos de otro mes (o al cambiar de filtro) la lista
+        // se vuelve a montar y las filas entran en cascada; mientras llega el mes
+        // nuevo, los del anterior quedan atenuados (sin saltos).
+        <div
+          key={`${dataMonth}|${kindFilter ?? "all"}|${accountFilter ?? ""}`}
+          className={cn("transition-opacity duration-200", stale && "opacity-50")}
+        >
+          {filtered.length === 0 ? (
+            <Card className="rounded-3xl">
+              <CardContent className="py-12 text-center text-sm text-muted-foreground">
+                Sin movimientos en este mes.
+              </CardContent>
+            </Card>
+          ) : (
+            <TransactionList
+              items={filtered}
+              perspectiveAccountId={isCardView ? undefined : (accountFilter ?? undefined)}
+              groupCards={!isCardView}
+              adjustment={adj}
+            />
+          )}
+        </div>
       )}
     </div>
   );
@@ -337,10 +357,12 @@ function Stat({
           {label}
         </div>
         <div className={`mt-1 text-xl font-semibold tabular-nums ${toneClass}`}>
-          {formatCurrency(value)}
+          <AnimatedNumber value={value} format={formatCurrency} />
         </div>
         {usd !== undefined && (
-          <div className={`text-sm font-medium tabular-nums ${toneClass}`}>{formatMoney(usd, "USD")}</div>
+          <div className={`text-sm font-medium tabular-nums ${toneClass}`}>
+            <AnimatedNumber value={usd} format={formatUSD} />
+          </div>
         )}
         {note && (
           <div className="mt-1.5 text-xs text-muted-foreground">{note}</div>
