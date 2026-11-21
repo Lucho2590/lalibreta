@@ -2,8 +2,14 @@
 
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
-import { doc, onSnapshot, setDoc, updateDoc, writeBatch } from "firebase/firestore";
+import { doc, onSnapshot, serverTimestamp, setDoc, updateDoc, writeBatch } from "firebase/firestore";
 import {
+  Check,
+  ListChecks,
+  Minus,
+  Settings2,
+  Trash2,
+  X,
   BellOff,
   BellRing,
   CalendarClock,
@@ -30,6 +36,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAuth } from "@/hooks/use-auth";
 import { useNotifications } from "@/hooks/use-data";
@@ -55,92 +62,288 @@ import {
 } from "@/lib/domain/notifications";
 
 export default function NotificacionesPage() {
+  const { data } = useNotifications();
+  const unread = data.filter((n) => !n.read).length;
+
+  return (
+    <div className="space-y-5">
+      <div>
+        <h1 className="text-2xl font-bold tracking-tight">Notificaciones</h1>
+        <p className="text-sm text-muted-foreground">
+          Vencimientos, fijos, el clima y lo que pasa en tus cuentas compartidas.
+        </p>
+      </div>
+
+      <Tabs defaultValue="avisos">
+        <TabsList className="grid w-full grid-cols-2 sm:w-96">
+          <TabsTrigger value="avisos">
+            <BellRing /> Avisos
+            {unread > 0 && (
+              <span className="rounded-full bg-brand px-1.5 py-px text-[10px] font-bold leading-4 text-white">
+                {unread > 99 ? "99+" : unread}
+              </span>
+            )}
+          </TabsTrigger>
+          <TabsTrigger value="config">
+            <Settings2 /> Configuración
+          </TabsTrigger>
+        </TabsList>
+        <TabsContent value="avisos" className="pt-4">
+          <InboxList />
+        </TabsContent>
+        <TabsContent value="config" className="space-y-4 pt-4">
+          <div className="grid gap-4 lg:grid-cols-2">
+            <DeviceCard />
+            <InstallCard />
+          </div>
+          <h2 className="pt-2 text-sm font-semibold text-muted-foreground">Qué querés que te avisemos</h2>
+          <PrefsCard />
+        </TabsContent>
+      </Tabs>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+
+/** Casilla de selección (es un dibujo: el click lo maneja la fila). */
+function CheckMark({ state }: { state: "on" | "off" | "some" }) {
+  return (
+    <span
+      aria-hidden
+      className={cn(
+        "flex size-5 shrink-0 items-center justify-center rounded-md border transition",
+        state === "off" ? "border-muted-foreground/40 bg-background" : "border-primary bg-primary text-primary-foreground",
+      )}
+    >
+      {state === "on" && <Check className="size-3.5" strokeWidth={3} />}
+      {state === "some" && <Minus className="size-3.5" strokeWidth={3} />}
+    </span>
+  );
+}
+
+function InboxList() {
   const { data, loading } = useNotifications();
   const { user } = useAuth();
   const router = useRouter();
-  const unread = data.filter((n) => !n.read);
+  const [selecting, setSelecting] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(() => new Set());
 
-  const markAllRead = async () => {
-    if (!user || unread.length === 0) return;
-    const batch = writeBatch(db);
-    for (const n of unread) batch.update(doc(db, `users/${user.uid}/notifications/${n.id}`), { read: true });
-    await batch.commit();
+  // Si un aviso seleccionado desaparece (se borró en otro dispositivo), sale de la selección.
+  const ids = new Set(data.map((n) => n.id));
+  const chosen = data.filter((n) => selected.has(n.id));
+  const unread = data.filter((n) => !n.read);
+  const allState = chosen.length === 0 ? "off" : chosen.length === data.length ? "on" : "some";
+
+  const notifRef = (id: string) => doc(db, `users/${user!.uid}/notifications/${id}`);
+  const dismissedRef = (id: string) => doc(db, `users/${user!.uid}/dismissedNotifications/${id}`);
+
+  const exitSelection = () => {
+    setSelecting(false);
+    setSelected(new Set());
   };
 
-  const open = async (n: AppNotification) => {
-    if (user && !n.read) {
-      void updateDoc(doc(db, `users/${user.uid}/notifications/${n.id}`), { read: true }).catch(() => {});
+  const toggle = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set([...prev].filter((x) => ids.has(x)));
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  const toggleAll = () => setSelected(allState === "on" ? new Set() : new Set(data.map((n) => n.id)));
+
+  const markRead = async (list: AppNotification[]) => {
+    const pending = list.filter((n) => !n.read);
+    if (!user || pending.length === 0) return;
+    const batch = writeBatch(db);
+    for (const n of pending) batch.update(notifRef(n.id), { read: true });
+    await batch.commit().catch(() => toast.error("No se pudo completar"));
+  };
+
+  /** Vuelve a dejar los avisos como estaban (botón "Deshacer"). */
+  const restore = async (list: AppNotification[]) => {
+    if (!user) return;
+    const batch = writeBatch(db);
+    for (const n of list) {
+      batch.set(notifRef(n.id), {
+        kind: n.kind,
+        title: n.title,
+        body: n.body,
+        url: n.url,
+        read: n.read,
+        createdAt: n.createdAt ?? serverTimestamp(),
+      });
+      batch.delete(dismissedRef(n.id));
     }
+    await batch.commit().catch(() => toast.error("No se pudieron recuperar"));
+  };
+
+  /**
+   * Borra los avisos. Queda una marca en dismissedNotifications para que los
+   * que no se repiten (un vencimiento, una alerta del clima) no vuelvan a llegar.
+   */
+  const remove = async (list: AppNotification[]) => {
+    if (!user || list.length === 0) return;
+    // Un batch admite 500 operaciones: 2 por aviso.
+    for (let i = 0; i < list.length; i += 200) {
+      const batch = writeBatch(db);
+      for (const n of list.slice(i, i + 200)) {
+        batch.delete(notifRef(n.id));
+        batch.set(dismissedRef(n.id), { deletedAt: serverTimestamp() });
+      }
+      try {
+        await batch.commit();
+      } catch {
+        toast.error("No se pudieron borrar");
+        return;
+      }
+    }
+    setSelected((prev) => new Set([...prev].filter((id) => !list.some((n) => n.id === id))));
+    toast(list.length === 1 ? "Aviso borrado" : `Borraste ${list.length} avisos`, {
+      action: { label: "Deshacer", onClick: () => void restore(list) },
+    });
+  };
+
+  const open = (n: AppNotification) => {
+    if (user && !n.read) void updateDoc(notifRef(n.id), { read: true }).catch(() => {});
     if (n.url && n.url !== "/notificaciones") router.push(n.url);
   };
 
+  if (loading) {
+    return (
+      <div className="flex justify-center py-10">
+        <Loader2 className="size-5 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  if (data.length === 0) {
+    return (
+      <Card className="rounded-3xl">
+        <CardContent className="flex flex-col items-center gap-2 py-12 text-center text-sm text-muted-foreground">
+          <Inbox className="size-8 opacity-40" />
+          No tenés avisos. Te vamos a avisar acá cuando se acerque un vencimiento, haya una alerta del clima o
+          alguien cargue algo en una cuenta tuya.
+        </CardContent>
+      </Card>
+    );
+  }
+
   return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Notificaciones</h1>
-          <p className="text-sm text-muted-foreground">
-            Vencimientos, fijos y lo que pasa en tus cuentas compartidas.
-          </p>
-        </div>
-        {unread.length > 0 && (
-          <Button variant="outline" className="rounded-xl" onClick={markAllRead}>
-            <CheckCheck className="mr-1.5 size-4" /> Marcar todas como leídas
-          </Button>
-        )}
-      </div>
-
-      <div className="grid gap-4 lg:grid-cols-2">
-        <DeviceCard />
-        <InstallCard />
-      </div>
-
-      <PrefsCard />
-
-      <section className="space-y-2">
-        <h2 className="text-sm font-semibold text-muted-foreground">Recientes</h2>
-        {loading ? (
-          <div className="flex justify-center py-10">
-            <Loader2 className="size-5 animate-spin text-muted-foreground" />
+    <div className="space-y-3">
+      {/* Barra de acciones */}
+      {selecting ? (
+        <div className="sticky top-16 z-10 flex flex-wrap items-center gap-2 rounded-2xl border bg-background/95 p-2 shadow-sm backdrop-blur md:top-[4.5rem]">
+          <button
+            type="button"
+            onClick={toggleAll}
+            className="flex items-center gap-2 rounded-xl px-2 py-1.5 text-sm font-medium hover:bg-muted"
+          >
+            <CheckMark state={allState} />
+            {chosen.length === 0 ? "Elegir todas" : `${chosen.length} elegida${chosen.length === 1 ? "" : "s"}`}
+          </button>
+          <div className="ml-auto flex items-center gap-1">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="rounded-xl"
+              disabled={!chosen.some((n) => !n.read)}
+              onClick={() => void markRead(chosen)}
+            >
+              <CheckCheck className="size-4" /> <span className="hidden sm:inline">Marcar leídas</span>
+            </Button>
+            <Button
+              variant="destructive"
+              size="sm"
+              className="rounded-xl"
+              disabled={chosen.length === 0}
+              onClick={() => void remove(chosen)}
+            >
+              <Trash2 className="size-4" /> Borrar{chosen.length > 0 && ` (${chosen.length})`}
+            </Button>
+            <Button variant="ghost" size="icon-sm" className="rounded-xl" onClick={exitSelection} aria-label="Cancelar">
+              <X className="size-4" />
+            </Button>
           </div>
-        ) : data.length === 0 ? (
-          <Card className="rounded-3xl">
-            <CardContent className="py-10 text-center text-sm text-muted-foreground">
-              Todavía no tenés avisos. Te vamos a avisar acá cuando se acerque un vencimiento o alguien
-              cargue algo en una cuenta tuya.
-            </CardContent>
-          </Card>
-        ) : (
-          <Card className="overflow-hidden rounded-3xl py-0">
-            <ul className="divide-y">
-              {data.map((n) => (
-                <li key={n.id}>
-                  <button
-                    type="button"
-                    onClick={() => open(n)}
-                    className={cn(
-                      "flex w-full items-start gap-3 px-4 py-3.5 text-left transition hover:bg-muted/50",
-                      !n.read && "bg-brand/[0.04]",
-                    )}
+        </div>
+      ) : (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-sm text-muted-foreground">
+            {unread.length > 0 ? `${unread.length} sin leer` : "Todo leído"}
+          </span>
+          <div className="ml-auto flex items-center gap-1">
+            {unread.length > 0 && (
+              <Button variant="ghost" size="sm" className="rounded-xl" onClick={() => void markRead(unread)}>
+                <CheckCheck className="size-4" /> Marcar todas como leídas
+              </Button>
+            )}
+            <Button variant="outline" size="sm" className="rounded-xl" onClick={() => setSelecting(true)}>
+              <ListChecks className="size-4" /> Seleccionar
+            </Button>
+          </div>
+        </div>
+      )}
+
+      <Card className="overflow-hidden rounded-3xl py-0">
+        <ul className="divide-y">
+          {data.map((n) => {
+            const isSelected = selected.has(n.id);
+            const content = (
+              <>
+                {selecting ? (
+                  <span className="flex size-9 shrink-0 items-center justify-center">
+                    <CheckMark state={isSelected ? "on" : "off"} />
+                  </span>
+                ) : (
+                  <KindIcon kind={n.kind} />
+                )}
+                <span className="min-w-0 flex-1">
+                  <span className={cn("block text-sm", !n.read ? "font-semibold" : "font-medium")}>{n.title}</span>
+                  <span className="block text-sm text-muted-foreground">{n.body}</span>
+                  <span className="mt-0.5 block text-xs text-muted-foreground">
+                    {n.createdAt ? timeAgo(n.createdAt.toDate()) : "recién"}
+                  </span>
+                </span>
+                {!n.read && <span className="mt-1.5 size-2 shrink-0 rounded-full bg-brand" />}
+              </>
+            );
+            return (
+              <li
+                key={n.id}
+                className={cn(
+                  "group relative flex items-start",
+                  !n.read && "bg-brand/[0.04]",
+                  isSelected && "bg-primary/[0.07]",
+                )}
+              >
+                <button
+                  type="button"
+                  onClick={() => (selecting ? toggle(n.id) : open(n))}
+                  aria-pressed={selecting ? isSelected : undefined}
+                  className={cn(
+                    "flex min-w-0 flex-1 items-start gap-3 py-3.5 pl-4 text-left transition hover:bg-muted/50",
+                    selecting ? "pr-4" : "pr-12",
+                  )}
+                >
+                  {content}
+                </button>
+                {!selecting && (
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label="Borrar aviso"
+                    onClick={() => void remove([n])}
+                    className="absolute top-2.5 right-2 rounded-lg text-muted-foreground hover:text-destructive md:opacity-0 md:group-hover:opacity-100 md:focus-visible:opacity-100"
                   >
-                    <KindIcon kind={n.kind} />
-                    <span className="min-w-0 flex-1">
-                      <span className={cn("block text-sm", !n.read ? "font-semibold" : "font-medium")}>
-                        {n.title}
-                      </span>
-                      <span className="block text-sm text-muted-foreground">{n.body}</span>
-                      <span className="mt-0.5 block text-xs text-muted-foreground">
-                        {n.createdAt ? timeAgo(n.createdAt.toDate()) : "recién"}
-                      </span>
-                    </span>
-                    {!n.read && <span className="mt-1.5 size-2 shrink-0 rounded-full bg-brand" />}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </Card>
-        )}
-      </section>
+                    <Trash2 className="size-4" />
+                  </Button>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      </Card>
     </div>
   );
 }

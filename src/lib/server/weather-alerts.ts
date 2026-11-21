@@ -1,7 +1,7 @@
 import "server-only";
 
 import { adminDb } from "./firebase-admin";
-import { notify } from "./notifications";
+import { dismissedCol, notify } from "./notifications";
 import { listUserLocations, syncSmnAlerts, tryGetActiveAlerts, tryGetForecast, type AlertsSyncResult } from "./weather";
 import { withDefaultPrefs, type NotificationPrefs } from "@/lib/domain/notifications";
 import {
@@ -76,10 +76,11 @@ const worstPerEvent = (alerts: WeatherAlert[]) => {
   return [...byKey.values()];
 };
 
-/** ¿Ya le avisamos este fenómeno ese día con un nivel igual o más grave? */
+/** ¿Ya le avisamos este fenómeno ese día con un nivel igual o más grave? (aunque lo haya borrado) */
 const alreadyWarned = async (uid: string, a: WeatherAlert) => {
   const col = adminDb().collection("users").doc(uid).collection("notifications");
-  const refs = LEVELS.slice(LEVELS.indexOf(a.level)).map((level) => col.doc(alertDedupeKey({ ...a, level })));
+  const keys = LEVELS.slice(LEVELS.indexOf(a.level)).map((level) => alertDedupeKey({ ...a, level }));
+  const refs = keys.flatMap((key) => [col.doc(key), dismissedCol(uid).doc(key)]);
   const snaps = await adminDb().getAll(...refs);
   return snaps.some((s) => s.exists);
 };
