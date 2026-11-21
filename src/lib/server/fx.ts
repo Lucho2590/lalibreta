@@ -1,5 +1,6 @@
 import "server-only";
 
+import { FOREIGN_CURRENCIES, CURRENCY_META, type Currency } from "@/lib/domain/types";
 import { todayYMD } from "./time";
 
 /**
@@ -144,6 +145,27 @@ export const getRate = async (code: string, date?: string): Promise<FxRate> => {
 
 /** Cotización oficial del dólar del último día hábil ≤ date (por defecto, hoy). */
 export const getUsdRate = (date?: string): Promise<FxRate> => getRate("USD", date);
+
+/**
+ * Pesos por unidad de las monedas que se usan en la app (EUR, GBP…), para
+ * pasar saldos y gastos a pesos. Si el BCRA falla, devuelve null.
+ */
+export const tryGetAppRates = async (
+  date?: string,
+): Promise<{ rates: Partial<Record<Currency, number>>; date: string } | null> => {
+  try {
+    const all = await getRates(date);
+    const rates: Partial<Record<Currency, number>> = {};
+    for (const c of FOREIGN_CURRENCIES) {
+      const q = all.rates.find((r) => r.code === CURRENCY_META[c].bcraCode);
+      if (q) rates[c] = q.rate;
+    }
+    return { rates, date: all.date };
+  } catch (err) {
+    console.warn("[fx] no se pudieron obtener las cotizaciones", err);
+    return null;
+  }
+};
 
 /** Igual que getUsdRate pero sin tirar error (para mostrar equivalentes). */
 export const tryGetUsdRate = async (date?: string): Promise<FxRate | null> => {

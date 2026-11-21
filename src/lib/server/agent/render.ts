@@ -1,6 +1,7 @@
 import "server-only";
 
-import { formatCurrency, formatMoney } from "@/lib/format";
+import { currencyLabel, currencySymbol, formatCurrency, formatMoney } from "@/lib/format";
+import { CURRENCIES, type Currency } from "@/lib/domain/types";
 import { dateFromYMD, formatShortDateAR } from "../time";
 import type { ReplyButton } from "../whatsapp/client";
 import {
@@ -18,8 +19,11 @@ import {
 } from "../whatsapp/types";
 
 const money = (n: number) => formatCurrency(n);
-const usd = (n: number) =>
-  `US$ ${new Intl.NumberFormat("es-AR", { maximumFractionDigits: 2 }).format(n)}`;
+const usd = (n: number) => formatMoney(n, "USD");
+/** "$ 1.000 + € 20" con las monedas distintas de cero. */
+const moneyParts = (m: Partial<Record<Currency, number>>) =>
+  CURRENCIES.filter((c) => m[c])
+    .map((c) => formatMoney(m[c] as number, c));
 const fecha = (ymd: string) => formatShortDateAR(dateFromYMD(ymd));
 
 const ACCOUNT_TYPE_LABEL: Record<string, string> = {
@@ -94,13 +98,11 @@ const accountLine = (a: AccountDraft["accounts"][number]) => {
   } else {
     const cs = a.currencies ?? ["ARS"];
     if (a.accountType === "reserve" && a.parentName) line += ` · dentro de ${a.parentName}`;
-    line += ` · ${cs.map((c) => (c === "USD" ? "US$" : "$")).join(" y ")}`;
+    line += ` · ${cs.map((c) => currencySymbol(c)).join(" y ")}`;
     if (a.isMain) line += " · ⭐ principal";
     const ob = a.openingBalances;
-    if (ob && (ob.ARS || ob.USD)) {
-      const parts = [ob.ARS ? formatMoney(ob.ARS, "ARS") : null, ob.USD ? formatMoney(ob.USD, "USD") : null].filter(Boolean);
-      line += `\n   saldo inicial: ${parts.join(" + ")}`;
-    }
+    const parts = ob ? moneyParts(ob) : [];
+    if (parts.length) line += `\n   saldo inicial: ${parts.join(" + ")}`;
   }
   return line;
 };
@@ -141,7 +143,7 @@ const renderStatement = (d: StatementDraft) => {
   // Consumos: compras, cuotas, suscripciones y reintegros (todo menos pagos y cargos).
   const consumos = d.lines.filter((l) => l.type !== "payment" && !CHARGE_TYPES.has(l.type));
   if (consumos.length > 0) {
-    const sum = (c: "ARS" | "USD") =>
+    const sum = (c: Currency) =>
       Math.round(consumos.filter((l) => l.currency === c).reduce((a, l) => a + l.amount, 0) * 100) / 100;
     const parts = [sum("ARS") ? money(sum("ARS")) : null, sum("USD") ? usd(sum("USD")) : null].filter(Boolean);
     const cuotas = consumos.filter((l) => l.installment).length;
@@ -181,11 +183,12 @@ const renderStatement = (d: StatementDraft) => {
 const fmtDate = (ymd: string) => fecha(ymd);
 
 const renderExchange = (d: ExchangeDraft) => {
-  const selling = d.fromCurrency === "USD";
+  const selling = d.fromCurrency !== "ARS";
+  const foreign = selling ? d.fromCurrency : d.toCurrency;
   const lines = [
-    selling ? "💱 *Venta de dólares*" : "💱 *Compra de dólares*",
+    `💱 *${selling ? "Venta" : "Compra"} de ${currencyLabel(foreign).toLowerCase()}*`,
     "",
-    `${selling ? "Vendés" : "Comprás"} *${formatMoney(selling ? d.fromAmount : d.toAmount, "USD")}*`,
+    `${selling ? "Vendés" : "Comprás"} *${formatMoney(selling ? d.fromAmount : d.toAmount, foreign)}*`,
     `${selling ? "Recibís" : "Pagás"} *${formatMoney(selling ? d.toAmount : d.fromAmount, "ARS")}*`,
     `Cotización: ${formatMoney(d.rate, "ARS")}${d.rateSource === "BCRA" ? ` _(oficial BCRA del ${fmtDate(d.rateDate ?? d.date)}; si cambiaste a otro valor, decímelo)_` : ""}`,
     d.fromAccountId === d.toAccountId
@@ -234,7 +237,7 @@ const renderTransfer = (d: TransferDraft) => {
     `De: ${d.fromAccountName} → A: ${d.toAccountName}`,
     `Fecha: ${fmtDate(d.date)}`,
     ...(d.addCurrencyToDestination
-      ? [`_${d.toAccountName} no tenía ${d.currency === "USD" ? "dólares" : "pesos"}: se los agrego._`]
+      ? [`_${d.toAccountName} no tenía ${currencyLabel(d.currency).toLowerCase()}: se los agrego._`]
       : []),
     "",
     "Te quedaría:",
@@ -277,9 +280,9 @@ const renderBatch = (d: BatchDraft) => {
   }
   if (n > BATCH_SHOWN) out.push(`• … y ${n - BATCH_SHOWN} más`);
 
-  const total = (c: "ARS" | "USD") =>
+  const total = (c: Currency) =>
     Math.round(d.lines.filter((l) => l.currency === c).reduce((a, l) => a + (l.kind === "income" ? -l.amount : l.amount), 0) * 100) / 100;
-  const parts = [total("ARS") ? formatMoney(total("ARS"), "ARS") : null, total("USD") ? formatMoney(total("USD"), "USD") : null].filter(Boolean);
+  const parts = moneyParts(Object.fromEntries(CURRENCIES.map((c) => [c, total(c)])));
   out.push("", `Total: *${parts.join(" + ") || formatMoney(0, "ARS")}*`);
 
   const byCat = new Map<string, number>();

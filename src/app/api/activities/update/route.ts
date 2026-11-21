@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { UnauthorizedError, getAuthedUser, unauthorizedResponse } from "@/lib/server/auth";
 import { ActivityError, updateActivityAdmin } from "@/lib/server/activities";
+import { CURRENCIES } from "@/lib/domain/types";
 
 export const runtime = "nodejs";
 
@@ -14,7 +15,7 @@ const schema = z.object({
     location: z.string().max(120).nullish(),
     notes: z.string().max(500).nullish(),
     estimatedAmount: z.number().positive().max(1_000_000_000).nullish(),
-    currency: z.enum(["ARS", "USD"]).nullish(),
+    currency: z.enum(CURRENCIES).nullish(),
   }),
   invitees: z
     .array(

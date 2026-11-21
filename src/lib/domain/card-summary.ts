@@ -1,5 +1,5 @@
 import type { Currency, Installment } from "./types";
-import { currencyOf, isCardCredit, monthOf } from "./types";
+import { CARD_CURRENCIES, CURRENCIES, currencyOf, isCardCredit, monthOf, zeroMoney } from "./types";
 
 /**
  * Resumen de una tarjeta para un MES DE PAGO (el mes en que vence el
@@ -9,9 +9,10 @@ import { currencyOf, isCardCredit, monthOf } from "./types";
  */
 
 export type Money = Record<Currency, number>;
-const zero = (): Money => ({ ARS: 0, USD: 0 });
+const zero = (): Money => zeroMoney();
 const round2 = (n: number) => Math.round(n * 100) / 100;
-const roundAll = (m: Money): Money => ({ ARS: round2(m.ARS), USD: round2(m.USD) });
+const roundAll = (m: Money): Money =>
+  Object.fromEntries(CURRENCIES.map((c) => [c, round2(m[c])])) as Money;
 
 export interface CardMonthSummary {
   /** Consumos, cuotas, impuestos y cargos (monto completo, como lo cobra el banco). */
@@ -115,11 +116,12 @@ export const summarizeCardMonth = (
       count += 1;
     }
   }
-  const total: Money = { ARS: s.expenses.ARS - s.credits.ARS, USD: s.expenses.USD - s.credits.USD };
+  const total = zero();
+  for (const c of CURRENCIES) total[c] = s.expenses[c] - s.credits[c];
   // Reparto de pagos: lo pagado cubre primero los resúmenes anteriores con deuda.
   // Antes de floorMonth, todo se da por pagado.
   const beforeFloor = !!floorMonth && monthKey < floorMonth;
-  for (const c of ["ARS", "USD"] as const) {
+  for (const c of CARD_CURRENCIES) {
     if (beforeFloor) {
       s.paid[c] = Math.max(0, total[c]);
       continue;
@@ -129,10 +131,8 @@ export const summarizeCardMonth = (
     const available = Math.max(0, payments[c] - earlier);
     s.paid[c] = Math.min(available, Math.max(0, total[c]));
   }
-  const pending: Money = {
-    ARS: Math.max(0, total.ARS - s.paid.ARS),
-    USD: Math.max(0, total.USD - s.paid.USD),
-  };
+  const pending = zero();
+  for (const c of CURRENCIES) pending[c] = Math.max(0, total[c] - s.paid[c]);
   return {
     expenses: roundAll(s.expenses),
     credits: roundAll(s.credits),

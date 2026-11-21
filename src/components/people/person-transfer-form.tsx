@@ -18,8 +18,8 @@ import { apiPost, errorText } from "@/lib/api";
 import { sortAccounts } from "@/lib/domain/accounts";
 import type { PersonRef } from "@/lib/domain/people";
 import type { Currency } from "@/lib/domain/types";
-import { accountCurrencies } from "@/lib/domain/types";
-import { formatAmountInput, formatMoney, parseAmount } from "@/lib/format";
+import { accountCurrencies, userCurrencies } from "@/lib/domain/types";
+import { currencySymbol, formatAmountInput, formatMoney, parseAmount } from "@/lib/format";
 
 export type PersonDirection = "out" | "in" | "loan";
 
@@ -165,15 +165,15 @@ export function PersonTransferForm({
             onBlur={(e) => setAmountInput(formatAmountInput(e.target.value))}
           />
         </div>
-        <div className="inline-flex h-12 rounded-lg bg-muted p-1">
-          {(["ARS", "USD"] as const).map((c) => (
+        <div className="inline-flex min-h-12 flex-wrap rounded-lg bg-muted p-1">
+          {userCurrencies(usable).map((c) => (
             <button
               key={c}
               type="button"
               onClick={() => setCurrency(c)}
               className={`rounded-md px-3 text-xs font-medium ${currency === c ? "bg-background shadow-sm" : "text-muted-foreground"}`}
             >
-              {c === "ARS" ? "$" : "US$"}
+              {currencySymbol(c)}
             </button>
           ))}
         </div>

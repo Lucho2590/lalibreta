@@ -25,7 +25,7 @@ import { transactionsCollectionPath, updateTransaction } from "@/lib/domain/inst
 import type { Currency, Installment, Transaction } from "@/lib/domain/types";
 import { accountCurrencies } from "@/lib/domain/types";
 import type { SplitTxInfo } from "@/lib/domain/debts";
-import { formatAmountInput, formatMoney, parseAmount } from "@/lib/format";
+import { currencyOptionLabel, formatAmountInput, formatMoney, parseAmount } from "@/lib/format";
 
 const ymdLocal = (d: Date) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -145,7 +145,7 @@ export function EditTransactionSheet({
                 onBlur={(e) => setAmountInput(formatAmountInput(e.target.value))}
               />
               {currencies.length > 1 && (
-                <div className="mt-1.5 inline-flex rounded-lg bg-muted p-0.5">
+                <div className="mt-1.5 inline-flex flex-wrap rounded-lg bg-muted p-0.5">
                   {currencies.map((c) => (
                     <button
                       key={c}
@@ -153,7 +153,7 @@ export function EditTransactionSheet({
                       onClick={() => setCurrency(c)}
                       className={`h-8 rounded-md px-3 text-xs font-medium transition ${effCurrency === c ? "bg-background shadow-sm" : "text-muted-foreground"}`}
                     >
-                      {c === "ARS" ? "$ Pesos" : "US$ Dólares"}
+                      {currencyOptionLabel(c)}
                     </button>
                   ))}
                 </div>

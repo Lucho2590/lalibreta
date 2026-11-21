@@ -17,7 +17,7 @@ import { ledgerNow } from "@/lib/domain/debts";
 import { useMonth } from "@/hooks/use-month";
 import { formatMonth } from "@/lib/format";
 import { participantSchedule, transferSide, type PersonRef, type Split } from "@/lib/domain/people";
-import type { Currency } from "@/lib/domain/types";
+import { CURRENCIES, type Currency } from "@/lib/domain/types";
 import { formatMoney } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { AnimatedMoney } from "@/components/motion/animated-money";
@@ -175,10 +175,11 @@ export default function PersonPage({ params }: { params: Promise<{ ref: string }
   }, [ledger, splits, transfers, me, ref, monthKey]);
 
   // "Me pagó" / "Le pagué" se precargan con lo de ahora (no con las cuotas que vienen).
-  const owedARS = l ? ledgerNow(l, "ARS").now : 0;
-  const owedUSD = l ? ledgerNow(l, "USD").now : 0;
-  const mainCur: Currency = Math.abs(owedUSD) > 0 && Math.abs(owedARS) < 0.01 ? "USD" : "ARS";
-  const mainOwed = mainCur === "USD" ? owedUSD : owedARS;
+  // Pesos, salvo que solo haya deuda en otra moneda.
+  const owedBy = CURRENCIES.map((c) => ({ c, v: l ? ledgerNow(l, c).now : 0 }));
+  const mainCur: Currency =
+    Math.abs(owedBy[0].v) >= 0.01 ? "ARS" : (owedBy.find((x) => Math.abs(x.v) > 0)?.c ?? "ARS");
+  const mainOwed = owedBy.find((x) => x.c === mainCur)?.v ?? 0;
   const balance = l ? personBalanceText(l) : null;
 
   const removeTransfer = async (id: string) => {

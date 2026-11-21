@@ -16,18 +16,26 @@ import {
 } from "@/hooks/use-data";
 import { TransactionList } from "@/components/transactions/transaction-list";
 import { ExchangeSummaryCard } from "@/components/transactions/exchange-summary-card";
-import { monthUsdConversion } from "@/lib/domain/exchanges";
-import { useUsdRate } from "@/hooks/use-usd-rate";
+import { monthRates } from "@/lib/domain/exchanges";
+import { useFxRates } from "@/hooks/use-fx-rates";
 import { useNewTransactionSheet } from "@/components/transactions/new-transaction-sheet";
-import { formatCurrency, formatDate, formatMoney, formatMonth } from "@/lib/format";
+import { currencySymbol, formatCurrency, formatDate, formatMoney, formatMonth, moneyFormatter } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { AnimatedNumber } from "@/components/motion/animated-number";
-import { isCardCredit, isRealIncome } from "@/lib/domain/types";
+import { CURRENCIES, FOREIGN_CURRENCIES, isCardCredit, isRealIncome, type Currency } from "@/lib/domain/types";
 import { TAX_CATEGORY, cardFloorMonth, summarizeCardMonth } from "@/lib/domain/card-summary";
 
 import { computeAccountFlow, computeMonthlyBalance, type AccountFlow } from "@/lib/domain/balance";
 
-const formatUSD = (n: number) => formatMoney(n, "USD");
+type MoneyMap = Partial<Record<Currency, number>>;
+
+/** "$ 1.000 + US$ 20" con las monedas distintas de cero. */
+const moneyText = (m: MoneyMap) =>
+  CURRENCIES.filter((c) => m[c])
+    .map((c) => formatMoney(m[c] as number, c))
+    .join(" + ");
+
+const anyNonZero = (m: MoneyMap) => CURRENCIES.some((c) => m[c]);
 
 export default function MovimientosPage() {
   const params = useSearchParams();
@@ -87,13 +95,23 @@ export default function MovimientosPage() {
     window.history.replaceState(null, "", search ? `?${search}` : window.location.pathname);
   };
 
-  const balanceUSD = computeMonthlyBalance(statBase, monthKey, adj, "USD");
-  const hasUSD = balanceUSD.income !== 0 || balanceUSD.expense !== 0;
+  const foreign = useMemo(
+    () =>
+      FOREIGN_CURRENCIES.map((c) => ({ c, b: computeMonthlyBalance(statBase, monthKey, adj, c) })).filter(
+        ({ b }) => b.income !== 0 || b.expense !== 0,
+      ),
+    [statBase, monthKey, adj],
+  );
+  const foreignMap = (pick: (b: (typeof foreign)[number]["b"]) => number): MoneyMap | undefined =>
+    foreign.length ? Object.fromEntries(foreign.map(({ c, b }) => [c, pick(b)])) : undefined;
   // Balance "todo en pesos" (igual que el Inicio): quien cobra en dólares y los
   // vende tiene ingresos en pesos = 0 y el balance solo-pesos da siempre negativo.
-  const usdRate = useUsdRate();
-  const conversion = useMemo(() => monthUsdConversion(installments, usdRate?.rate), [installments, usdRate]);
-  const consolidated = hasUSD && conversion ? balance.balance + balanceUSD.balance * conversion.rate : null;
+  const fx = useFxRates();
+  const conversion = useMemo(() => monthRates(installments, fx?.rates), [installments, fx]);
+  const consolidated =
+    foreign.length > 0 && foreign.every(({ c }) => conversion[c])
+      ? balance.balance + foreign.reduce((s, { c, b }) => s + b.balance * (conversion[c]?.rate ?? 0), 0)
+      : null;
 
   // Mirando UNA cuenta (no tarjeta), las transferencias y cambios sí cuentan:
   // lo que te pasaste desde otra cuenta entró a esta. En la vista general no,
@@ -101,16 +119,17 @@ export default function MovimientosPage() {
   const flow = useMemo(() => {
     if (!accountFilter || isCardView) return null;
     const ids = new Set([accountFilter]);
-    return {
-      ARS: computeAccountFlow(installments, monthKey, ids, "ARS"),
-      USD: computeAccountFlow(installments, monthKey, ids, "USD"),
-    };
+    return Object.fromEntries(
+      CURRENCIES.map((c) => [c, computeAccountFlow(installments, monthKey, ids, c)]),
+    ) as Record<Currency, AccountFlow>;
   }, [accountFilter, isCardView, installments, monthKey]);
-  const flowHasUSD = !!flow && (flow.USD.in !== 0 || flow.USD.out !== 0);
+  const flowForeign = flow ? FOREIGN_CURRENCIES.filter((c) => flow[c].in !== 0 || flow[c].out !== 0) : [];
+  const flowMap = (pick: (f: AccountFlow) => number): MoneyMap | undefined =>
+    flow && flowForeign.length ? Object.fromEntries(flowForeign.map((c) => [c, pick(flow[c])])) : undefined;
   const transfersNote = (dir: "in" | "out") => {
     if (!flow) return undefined;
     const pick = (f: AccountFlow) => (dir === "in" ? f.transfersIn : f.transfersOut);
-    const parts = moneyText({ ARS: pick(flow.ARS), USD: pick(flow.USD) });
+    const parts = moneyText(Object.fromEntries(CURRENCIES.map((c) => [c, pick(flow[c])])));
     if (!parts) return undefined;
     return dir === "in"
       ? `incluye ${parts} que pasaste desde otras cuentas`
@@ -134,10 +153,6 @@ export default function MovimientosPage() {
     [isCardView, accountFilter, filterAccount, allInstallments, monthKey, taxCategoryIds],
   );
   const cardHasUSD = !!cardSum && (cardSum.expenses.USD !== 0 || cardSum.credits.USD !== 0);
-  const moneyText = (m: { ARS: number; USD: number }) =>
-    [m.ARS ? formatMoney(m.ARS, "ARS") : null, m.USD ? formatMoney(m.USD, "USD") : null]
-      .filter(Boolean)
-      .join(" + ");
 
   return (
     <div className="space-y-6">
@@ -161,9 +176,9 @@ export default function MovimientosPage() {
           <Stat
             label="Gastos"
             value={cardSum.expenses.ARS}
-            usd={cardHasUSD ? cardSum.expenses.USD : undefined}
+            extra={cardHasUSD ? { USD: cardSum.expenses.USD } : undefined}
             note={
-              cardSum.taxes.ARS || cardSum.taxes.USD
+              anyNonZero(cardSum.taxes)
                 ? `de impuestos y comisiones: ${moneyText(cardSum.taxes)}`
                 : undefined
             }
@@ -172,10 +187,10 @@ export default function MovimientosPage() {
           <Stat
             label="Reintegros"
             value={cardSum.credits.ARS}
-            usd={cardHasUSD ? cardSum.credits.USD : undefined}
-            tone={cardSum.credits.ARS > 0 || cardSum.credits.USD > 0 ? "success" : undefined}
+            extra={cardHasUSD ? { USD: cardSum.credits.USD } : undefined}
+            tone={CURRENCIES.some((c) => cardSum.credits[c] > 0) ? "success" : undefined}
             note={
-              cardSum.credits.ARS === 0 && cardSum.credits.USD === 0
+              !anyNonZero(cardSum.credits)
                 ? "sin reintegros este mes"
                 : "saldo a favor: se descuenta del total"
             }
@@ -184,14 +199,14 @@ export default function MovimientosPage() {
           <Stat
             label="Total a pagar"
             value={cardSum.total.ARS}
-            usd={cardHasUSD ? cardSum.total.USD : undefined}
+            extra={cardHasUSD ? { USD: cardSum.total.USD } : undefined}
             note={[
               cardSum.dueDate ? `vence el ${formatDate(cardSum.dueDate)}` : null,
-              cardSum.projected.ARS || cardSum.projected.USD
+              anyNonZero(cardSum.projected)
                 ? `incluye ${moneyText(cardSum.projected)} estimado de suscripciones`
                 : null,
-              cardSum.paid.ARS || cardSum.paid.USD
-                ? cardSum.pending.ARS || cardSum.pending.USD
+              anyNonZero(cardSum.paid)
+                ? anyNonZero(cardSum.pending)
                   ? `pagaste ${moneyText(cardSum.paid)}`
                   : "✓ pagado"
                 : null,
@@ -207,7 +222,7 @@ export default function MovimientosPage() {
           <Stat
             label="Entradas"
             value={flow.ARS.in}
-            usd={flowHasUSD ? flow.USD.in : undefined}
+            extra={flowMap((f) => f.in)}
             tone="success"
             note={transfersNote("in")}
             icon={<ArrowUpRight className="size-4" />}
@@ -215,15 +230,15 @@ export default function MovimientosPage() {
           <Stat
             label="Salidas"
             value={flow.ARS.out}
-            usd={flowHasUSD ? flow.USD.out : undefined}
+            extra={flowMap((f) => f.out)}
             note={transfersNote("out")}
             icon={<ArrowDownRight className="size-4" />}
           />
           <Stat
             label="Neto del mes"
             value={flow.ARS.net}
-            usd={flowHasUSD ? flow.USD.net : undefined}
-            tone={flow.ARS.net >= 0 && flow.USD.net >= 0 ? "success" : "destructive"}
+            extra={flowMap((f) => f.net)}
+            tone={CURRENCIES.every((c) => flow[c].net >= 0) ? "success" : "destructive"}
             icon={<Wallet className="size-4" />}
           />
         </div>
@@ -232,29 +247,33 @@ export default function MovimientosPage() {
           <Stat
             label="Ingresos"
             value={balance.income}
-            usd={hasUSD ? balanceUSD.income : undefined}
+            extra={foreignMap((b) => b.income)}
             tone="success"
             icon={<ArrowUpRight className="size-4" />}
           />
           <Stat
             label="Gastos"
             value={balance.expense}
-            usd={hasUSD ? balanceUSD.expense : undefined}
+            extra={foreignMap((b) => b.expense)}
             icon={<ArrowDownRight className="size-4" />}
           />
-          {consolidated != null && conversion ? (
+          {consolidated != null ? (
             <Stat
               label="Balance"
               value={consolidated}
               tone={consolidated >= 0 ? "success" : "destructive"}
-              note={`Todo en pesos: ${formatMoney(balance.balance, "ARS")} ${balanceUSD.balance >= 0 ? "+" : "−"} ${formatMoney(Math.abs(balanceUSD.balance), "USD")}, con el dólar a ${formatMoney(conversion.rate, "ARS")} (${conversion.label}).`}
+              note={`Todo en pesos: ${formatMoney(balance.balance, "ARS")}${foreign
+                .map(({ c, b }) => ` ${b.balance >= 0 ? "+" : "−"} ${formatMoney(Math.abs(b.balance), c)}`)
+                .join("")}, con ${foreign
+                .map(({ c }) => `${currencySymbol(c)} 1 = ${formatMoney(conversion[c]?.rate ?? 0, "ARS")} (${conversion[c]?.label})`)
+                .join(", ")}.`}
               icon={<Wallet className="size-4" />}
             />
           ) : (
             <Stat
               label="Balance"
               value={balance.balance}
-              usd={hasUSD ? balanceUSD.balance : undefined}
+              extra={foreignMap((b) => b.balance)}
               tone={balance.balance >= 0 ? "success" : "destructive"}
               icon={<Wallet className="size-4" />}
             />
@@ -289,7 +308,7 @@ export default function MovimientosPage() {
         )}
       </div>
 
-      {/* Cambios de dólares: resumen del mes (cuánto vendió/compró y a qué promedio). */}
+      {/* Cambios de moneda: resumen del mes (cuánto vendió/compró y a qué promedio). */}
       {!loading && !isCardView && (kindFilter === "exchange" || kindFilter === "transfer") && (
         <ExchangeSummaryCard
           installments={exchangeLegs}
@@ -331,7 +350,7 @@ export default function MovimientosPage() {
 function Stat({
   label,
   value,
-  usd,
+  extra,
   tone,
   icon,
   note,
@@ -339,7 +358,8 @@ function Stat({
 }: {
   label: string;
   value: number;
-  usd?: number;
+  /** Lo mismo en otras monedas (dólares, euros…). */
+  extra?: MoneyMap;
   tone?: "success" | "destructive";
   icon?: React.ReactNode;
   /** Línea chica debajo (ej. impuestos, vencimiento). */
@@ -359,11 +379,11 @@ function Stat({
         <div className={`mt-1 text-xl font-semibold tabular-nums ${toneClass}`}>
           <AnimatedNumber value={value} format={formatCurrency} />
         </div>
-        {usd !== undefined && (
-          <div className={`text-sm font-medium tabular-nums ${toneClass}`}>
-            <AnimatedNumber value={usd} format={formatUSD} />
+        {Object.entries(extra ?? {}).map(([c, v]) => (
+          <div key={c} className={`text-sm font-medium tabular-nums ${toneClass}`}>
+            <AnimatedNumber value={v ?? 0} format={moneyFormatter(c as Currency)} />
           </div>
-        )}
+        ))}
         {note && (
           <div className="mt-1.5 text-xs text-muted-foreground">{note}</div>
         )}

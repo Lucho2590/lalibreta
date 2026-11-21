@@ -11,7 +11,7 @@ import { formatMoney, formatShortDate } from "@/lib/format";
 import { useNewTransactionSheet } from "./new-transaction-sheet";
 
 /**
- * Cambios de moneda del mes: cuántos dólares vendió/compró, cuántos pesos
+ * Cambios de moneda del mes: cuántos dólares (euros, etc.) vendió/compró, cuántos pesos
  * recibió/pagó y a qué cotización promedio, más el detalle de cada cambio.
  * No se muestra si no hubo cambios (salvo `showEmpty`).
  */
@@ -36,13 +36,14 @@ export function ExchangeSummaryCard({
 
   const shown = summary.ops.slice(0, maxItems);
   const more = summary.ops.length - shown.length;
+  const onlyUSD = summary.byCurrency.every((x) => x.currency === "USD");
 
   return (
     <Card className="rounded-3xl">
       <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
         <CardTitle className="flex items-center gap-1.5 text-sm font-semibold">
           <Coins className="size-4" />
-          Cambios de dólares del mes
+          {onlyUSD ? "Cambios de dólares del mes" : "Cambios de moneda del mes"}
         </CardTitle>
         <button
           type="button"
@@ -56,13 +57,15 @@ export function ExchangeSummaryCard({
       <CardContent className="space-y-3 pt-1">
         {summary.ops.length === 0 ? (
           <p className="py-2 text-xs text-muted-foreground">
-            No registraste cambios este mes. Cuando vendas o compres dólares (en el banco, en Mercado
-            Pago o con alguien), cargalo acá y vas a ver a cuánto cambiaste en promedio.
+            No registraste cambios este mes. Cuando vendas o compres dólares u otra moneda (en el
+            banco, en Mercado Pago o con alguien), cargalo acá y vas a ver a cuánto cambiaste en promedio.
           </p>
         ) : (
           <div className="grid gap-2 sm:grid-cols-2">
-            {summary.sold.count > 0 && <SideTile title="Vendiste" side={summary.sold} sell />}
-            {summary.bought.count > 0 && <SideTile title="Compraste" side={summary.bought} />}
+            {summary.byCurrency.flatMap((x) => [
+              x.sold.count > 0 && <SideTile key={`${x.currency}-sell`} title="Vendiste" side={x.sold} sell />,
+              x.bought.count > 0 && <SideTile key={`${x.currency}-buy`} title="Compraste" side={x.bought} />,
+            ])}
           </div>
         )}
 
@@ -81,9 +84,9 @@ export function ExchangeSummaryCard({
                   </div>
                   <div className="shrink-0 text-right tabular-nums">
                     <div className="flex items-center justify-end gap-1 font-medium">
-                      {formatMoney(o.side === "sell" ? o.usd : o.ars, o.side === "sell" ? "USD" : "ARS")}
+                      {o.side === "sell" ? formatMoney(o.amount, o.currency) : formatMoney(o.ars, "ARS")}
                       <ArrowRight className="size-3 text-muted-foreground" />
-                      {formatMoney(o.side === "sell" ? o.ars : o.usd, o.side === "sell" ? "ARS" : "USD")}
+                      {o.side === "sell" ? formatMoney(o.ars, "ARS") : formatMoney(o.amount, o.currency)}
                     </div>
                     <div className="text-xs text-muted-foreground">
                       a {formatMoney(o.rate, "ARS")}
@@ -118,7 +121,7 @@ function SideTile({ title, side, sell }: { title: string; side: ExchangeSide; se
         {title} · {side.count} {side.count === 1 ? "vez" : "veces"}
       </div>
       <div className="mt-0.5 text-base font-semibold tabular-nums">
-        {formatMoney(side.usd, "USD")}
+        {formatMoney(side.amount, side.currency)}
       </div>
       <div className="text-sm tabular-nums text-muted-foreground">
         {sell ? "recibiste" : "pagaste"} {formatMoney(side.ars, "ARS")}

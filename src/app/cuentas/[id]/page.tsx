@@ -18,7 +18,7 @@ import { formatDate, formatMoney, formatMonth } from "@/lib/format";
 import { AnimatedAmount } from "@/components/motion/animated-money";
 import { TAX_CATEGORY, cardFloorMonth, nextMonthKey, summarizeCardMonth, type Money } from "@/lib/domain/card-summary";
 import type { AccountType, Currency } from "@/lib/domain/types";
-import { accountCurrencies, currencyOf, monthOf } from "@/lib/domain/types";
+import { CARD_CURRENCIES, CURRENCIES, accountCurrencies, currencyOf, monthOf, zeroMoney } from "@/lib/domain/types";
 import { computeAccountBalances } from "@/lib/domain/balances";
 import { computeAccountFlow } from "@/lib/domain/balance";
 
@@ -64,32 +64,28 @@ export default function AccountDetailPage({ params }: { params: Promise<{ id: st
     (i) => childIds.has(i.accountId) && monthOf(i) === monthKey,
   );
   // El total muestra solamente gastos (los ingresos y transferencias se ven aparte).
-  const totals: Record<Currency, number> = { ARS: 0, USD: 0 };
+  const totals = zeroMoney();
   for (const i of monthly) {
     if (i.kind === "expense") totals[currencyOf(i)] += effectiveAmount(i);
   }
-  const totalCurrencies = (["ARS", "USD"] as Currency[]).filter(
+  const totalCurrencies = CURRENCIES.filter(
     (c) => c === "ARS" || totals[c] !== 0,
   );
   // Saldo de hoy (cuentas) o lo que se debe (tarjetas).
-  const balance = computeAccountBalances([account], installments).get(account.id)?.amounts ?? {
-    ARS: 0,
-    USD: 0,
-  };
+  const balance = computeAccountBalances([account], installments).get(account.id)?.amounts ?? zeroMoney();
   const balanceCurrencies: Currency[] =
     account.type === "credit"
-      ? (["ARS", "USD"] as Currency[]).filter((c) => c === "ARS" || balance[c] !== 0)
+      ? CARD_CURRENCIES.filter((c) => c === "ARS" || balance[c] !== 0)
       : accountCurrencies(account);
 
   // Entradas y salidas del mes (cuenta + sus cobachas), contando transferencias y
   // cambios: lo que se pasó desde otra cuenta entró a esta. Los consumos de las
   // tarjetas asociadas no: salen cuando se paga la tarjeta.
   const flowIds = new Set([account.id, ...children.filter((c) => c.type === "reserve").map((c) => c.id)]);
-  const flow = {
-    ARS: computeAccountFlow(installments, monthKey, flowIds, "ARS"),
-    USD: computeAccountFlow(installments, monthKey, flowIds, "USD"),
-  };
-  const flowCurrencies = (["ARS", "USD"] as Currency[]).filter(
+  const flow = Object.fromEntries(
+    CURRENCIES.map((c) => [c, computeAccountFlow(installments, monthKey, flowIds, c)]),
+  ) as Record<Currency, ReturnType<typeof computeAccountFlow>>;
+  const flowCurrencies = CURRENCIES.filter(
     (c) => flow[c].in !== 0 || flow[c].out !== 0,
   );
   /** "US$ 420 desde otras cuentas" (la parte de transferencias de lo que entró/salió). */
@@ -254,7 +250,7 @@ export default function AccountDetailPage({ params }: { params: Promise<{ id: st
                 const childBal = isReserveChild
                   ? computeAccountBalances([card], installments).get(card.id)?.amounts
                   : undefined;
-                const cardTotals: Record<Currency, number> = { ARS: 0, USD: 0 };
+                const cardTotals = zeroMoney();
                 for (const i of installments) {
                   if (i.accountId === card.id && monthOf(i) === monthKey && i.kind === "expense") {
                     cardTotals[currencyOf(i)] += effectiveAmount(i);
@@ -355,8 +351,8 @@ export default function AccountDetailPage({ params }: { params: Promise<{ id: st
 }
 
 const moneyText = (m: Money) =>
-  [m.ARS ? formatMoney(m.ARS, "ARS") : null, m.USD ? formatMoney(m.USD, "USD") : null]
-    .filter(Boolean)
+  CURRENCIES.filter((c) => m[c])
+    .map((c) => formatMoney(m[c], c))
     .join(" + ") || formatMoney(0, "ARS");
 
 function HeroStat({

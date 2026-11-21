@@ -20,7 +20,7 @@ import { useAccounts, useCategories } from "@/hooks/use-data";
 import { useAuth } from "@/hooks/use-auth";
 import { createTransactionWithInstallments } from "@/lib/domain/installments";
 import { computeFirstBillingMonth } from "@/lib/domain/cycles";
-import { formatAmountInput, formatMonth, parseAmount } from "@/lib/format";
+import { currencyOptionLabel, formatAmountInput, formatMonth, parseAmount } from "@/lib/format";
 import type { Currency, TransactionKind } from "@/lib/domain/types";
 import { accountCurrencies } from "@/lib/domain/types";
 import { ExchangeForm } from "./exchange-form";
@@ -501,7 +501,7 @@ function CurrencyToggle({
   onChange: (c: Currency) => void;
 }) {
   return (
-    <div className="mt-1.5 inline-flex rounded-lg bg-muted p-0.5">
+    <div className="mt-1.5 inline-flex flex-wrap rounded-lg bg-muted p-0.5">
       {options.map((c) => (
         <button
           key={c}
@@ -511,7 +511,7 @@ function CurrencyToggle({
             value === c ? "bg-background shadow-sm" : "text-muted-foreground"
           }`}
         >
-          {c === "ARS" ? "$ Pesos" : "US$ Dólares"}
+          {currencyOptionLabel(c)}
         </button>
       ))}
     </div>

@@ -13,8 +13,9 @@ import {
   type Activity,
   type Invitee,
 } from "@/lib/domain/activities";
-import type { Currency } from "@/lib/domain/types";
-import { parseAmount } from "@/lib/format";
+import { userCurrencies, type Currency } from "@/lib/domain/types";
+import { useAccounts } from "@/hooks/use-data";
+import { currencyOptionLabel, parseAmount } from "@/lib/format";
 import { ParticipantsPicker } from "./participants-picker";
 
 /** Nueva actividad o edición de una mía. */
@@ -35,6 +36,8 @@ export function ActivityForm({
   const [notes, setNotes] = useState(activity?.notes ?? "");
   const [amount, setAmount] = useState(activity?.estimatedAmount ? String(activity.estimatedAmount).replace(".", ",") : "");
   const [currency, setCurrency] = useState<Currency>(activity?.currency ?? "ARS");
+  const { data: accounts } = useAccounts();
+  const currencyChoices = [...new Set([...userCurrencies(accounts), currency])];
   const [people, setPeople] = useState<Invitee[]>(
     activity?.participants
       .filter((p) => p.status !== "owner")
@@ -154,8 +157,8 @@ export function ActivityForm({
           value={amount}
           onChange={(e) => setAmount(e.target.value)}
         />
-        <div className="mt-1.5 inline-flex rounded-lg bg-muted p-0.5">
-          {(["ARS", "USD"] as const).map((c) => (
+        <div className="mt-1.5 inline-flex flex-wrap rounded-lg bg-muted p-0.5">
+          {currencyChoices.map((c) => (
             <button
               key={c}
               type="button"
@@ -164,7 +167,7 @@ export function ActivityForm({
                 currency === c ? "bg-background shadow-sm" : "text-muted-foreground"
               }`}
             >
-              {c === "ARS" ? "$ Pesos" : "US$ Dólares"}
+              {currencyOptionLabel(c)}
             </button>
           ))}
         </div>

@@ -20,7 +20,7 @@ import {
   useApprovalsAsGrantee,
 } from "@/hooks/use-data";
 import { apiFetch } from "@/lib/api";
-import type { AccountShare, PendingApproval } from "@/lib/domain/types";
+import { CURRENCIES, type AccountShare, type Currency, type PendingApproval } from "@/lib/domain/types";
 import { formatCurrency, formatDate, formatMoney, parseAmount } from "@/lib/format";
 import type { SharedMovementsResponse } from "@/lib/domain/shared-movements";
 
@@ -228,8 +228,8 @@ const monthTitle = (key: string) => {
   const t = new Date(y, m - 1, 1).toLocaleDateString("es-AR", { month: "long", year: "numeric" });
   return t[0].toUpperCase() + t.slice(1);
 };
-const moneyLine = (m: Record<"ARS" | "USD", number>) => {
-  const parts = (["ARS", "USD"] as const).filter((c) => Math.abs(m[c]) >= 0.01).map((c) => formatMoney(m[c], c));
+const moneyLine = (m: Partial<Record<Currency, number>>) => {
+  const parts = CURRENCIES.filter((c) => Math.abs(m[c] ?? 0) >= 0.01).map((c) => formatMoney(m[c] ?? 0, c));
   return parts.length ? parts.join(" + ") : formatMoney(0, "ARS");
 };
 

@@ -6,6 +6,7 @@ import { createTransactionAdmin } from "./transactions-admin";
 import { applySplitRules } from "./split-rules";
 import { loadAccounts, loadCategories, toServerAccount } from "./queries-admin";
 import { dateFromYMD } from "./time";
+import { zeroMoney, type Currency } from "@/lib/domain/types";
 import type { BatchDraft, BatchDraftLine } from "./whatsapp/types";
 
 /**
@@ -86,7 +87,7 @@ export interface BatchSaveResult {
   created: number;
   /** Renglones que no se pudieron cargar (cuenta o categoría borrada). */
   failed: string[];
-  totals: { ARS: number; USD: number };
+  totals: Record<Currency, number>;
   /** Tarjetas usadas que todavía no tienen días de cierre/vencimiento. */
   cardsPendingDates: string[];
   /** Gastos que se dividieron solos ("dividir siempre"). */
@@ -99,7 +100,7 @@ export const saveBatchAdmin = async (uid: string, draft: BatchDraft): Promise<Ba
   const accById = new Map(accounts.filter((a) => a.active).map((a) => [a.id, a]));
   const catById = new Map(categories.map((c) => [c.id, c]));
 
-  const result: BatchSaveResult = { created: 0, failed: [], totals: { ARS: 0, USD: 0 }, cardsPendingDates: [], splitApplied: [] };
+  const result: BatchSaveResult = { created: 0, failed: [], totals: zeroMoney(), cardsPendingDates: [], splitApplied: [] };
   const ids: string[] = [];
   const pending = new Set<string>();
   for (const line of draft.lines) {

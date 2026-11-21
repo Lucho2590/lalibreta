@@ -8,7 +8,7 @@ import { getOrBuildCycle } from "./transactions-admin";
 import { dateFromYMD, todayYMD } from "./time";
 import { cardFloorMonth, summarizeCardMonth, TAX_CATEGORY } from "@/lib/domain/card-summary";
 import { withDefaultPrefs, type NotificationPrefs } from "@/lib/domain/notifications";
-import type { Currency, Installment, RecurringExpense } from "@/lib/domain/types";
+import { CURRENCIES, type Currency, type Installment, type RecurringExpense } from "@/lib/domain/types";
 import { formatMoney } from "@/lib/format";
 import { computePeopleLedger } from "@/lib/domain/debts";
 import { loadSplitsFor } from "./splits";
@@ -33,8 +33,7 @@ const addDaysYMD = (ymd: string, days: number) =>
 const ymdOf = (d: Date) => todayYMD(d);
 
 const moneyText = (m: Record<Currency, number>) =>
-  (["ARS", "USD"] as const)
-    .filter((c) => m[c] >= 0.01)
+  CURRENCIES.filter((c) => m[c] >= 0.01)
     .map((c) => formatMoney(m[c], c))
     .join(" + ");
 
@@ -198,7 +197,7 @@ const peopleReminders = async (uid: string, prefs: NotificationPrefs, today: str
     const owing = [...ledger.values()].filter(
       (l) =>
         !l.isApp &&
-        (["ARS", "USD"] as const).some((c) => l.due[c] >= 0.01) &&
+        CURRENCIES.some((c) => l.due[c] >= 0.01) &&
         // Lo más viejo que debe tiene al menos 3 días.
         l.entries.some((e) => e.amount > 0 && !e.future && daysBetween(e.date, today) >= 3),
     );
@@ -206,12 +205,13 @@ const peopleReminders = async (uid: string, prefs: NotificationPrefs, today: str
       const every = Math.max(1, prefs.debtsEveryDays || 7);
       const list = owing.map((l) => `${l.name} te debe ${moneyText(l.due)}`);
       const first = owing[0];
+      const firstCur = CURRENCIES.find((c) => first.due[c] >= 0.01) ?? "ARS";
       const r = await notify(uid, {
         kind: "debt-reminder",
         title: owing.length === 1 ? `Acordate de cobrarle a ${first.name}` : "Gente que te debe plata",
         body: `${list.join(" · ")}.`,
         url: "/compartidas",
-        whatsappText: `💸 Para cobrar: ${list.join(" · ")}. ¿Ya te pagó? Decime, por ejemplo, "${first.name.split(" ")[0]} me pagó ${formatMoney(first.due.ARS >= 0.01 ? first.due.ARS : first.due.USD, first.due.ARS >= 0.01 ? "ARS" : "USD")} a MP".`,
+        whatsappText: `💸 Para cobrar: ${list.join(" · ")}. ¿Ya te pagó? Decime, por ejemplo, "${first.name.split(" ")[0]} me pagó ${formatMoney(first.due[firstCur], firstCur)} a MP".`,
         dedupeKey: `debts-${Math.floor(dayIndex / every)}`,
       });
       if (r.stored) sent += 1;

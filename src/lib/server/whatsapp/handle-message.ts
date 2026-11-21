@@ -22,6 +22,7 @@ import { draftButtons, pendingDatesText, renderDraft } from "../agent/render";
 import { transcribeAudio } from "../agent/openai";
 import { extractPdfText } from "../agent/pdf-text";
 import { formatMoney } from "@/lib/format";
+import { CURRENCIES } from "@/lib/domain/types";
 import { AsyncLocalStorage } from "node:async_hooks";
 import {
   downloadMedia,
@@ -650,10 +651,7 @@ const confirmBatch = async (waId: string, uid: string, draft: BatchDraft) => {
     await sendText(waId, "No pude cargar ninguno: las cuentas o categorías ya no existen. Mandámelo de nuevo.");
     return;
   }
-  const parts = [
-    r.totals.ARS ? formatMoney(r.totals.ARS, "ARS") : null,
-    r.totals.USD ? formatMoney(r.totals.USD, "USD") : null,
-  ].filter(Boolean);
+  const parts = CURRENCIES.filter((c) => r.totals[c]).map((c) => formatMoney(r.totals[c], c));
   const lines = [
     `✅ Cargué ${r.created === 1 ? "1 movimiento" : `${r.created} movimientos`}${parts.length ? ` (${parts.join(" + ")})` : ""}.`,
   ];
@@ -814,7 +812,7 @@ const confirmExchange = async (waId: string, uid: string, d: ExchangeDraft) => {
     await sendText(waId, "No pude registrarlo porque una de las cuentas ya no existe.");
     return;
   }
-  const selling = d.fromCurrency === "USD";
+  const selling = d.fromCurrency !== "ARS";
   await createTransferAdmin({
     ownerUid: uid,
     fromAccountId: from.id,
@@ -828,8 +826,8 @@ const confirmExchange = async (waId: string, uid: string, d: ExchangeDraft) => {
     date: dateFromYMD(d.date),
     description:
       (selling
-        ? `Venta de ${formatMoney(d.fromAmount, "USD")}`
-        : `Compra de ${formatMoney(d.toAmount, "USD")}`) + (d.withWhom ? ` · ${d.withWhom}` : ""),
+        ? `Venta de ${formatMoney(d.fromAmount, d.fromCurrency)}`
+        : `Compra de ${formatMoney(d.toAmount, d.toCurrency)}`) + (d.withWhom ? ` · ${d.withWhom}` : ""),
     transferType: "exchange",
   });
   const bal = await getBalances(uid);

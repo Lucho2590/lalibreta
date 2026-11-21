@@ -1,4 +1,4 @@
-import type { Currency } from "./types";
+import { CURRENCIES, zeroMoney, type Currency } from "./types";
 import {
   participantSchedule,
   transferSide,
@@ -15,7 +15,7 @@ import {
  */
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
-const zero = (): Record<Currency, number> => ({ ARS: 0, USD: 0 });
+const zero = (): Record<Currency, number> => zeroMoney();
 
 export interface LedgerEntry {
   kind: "split" | "transfer";
@@ -159,7 +159,7 @@ export const ledgerTotals = (ledger: Iterable<PersonLedger>) => {
   const laterToMe = zero();
   const laterIOwe = zero();
   for (const l of ledger) {
-    for (const c of ["ARS", "USD"] as const) {
+    for (const c of CURRENCIES) {
       const { now, later } = ledgerNow(l, c);
       if (now > 0.009) owedToMe[c] = round2(owedToMe[c] + now);
       else if (now < -0.009) iOwe[c] = round2(iOwe[c] - now);

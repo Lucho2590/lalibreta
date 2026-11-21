@@ -21,7 +21,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { addOfflineContact } from "@/lib/domain/contacts";
 import { computeShares, contactRef, type PersonRef, type SplitMode } from "@/lib/domain/people";
 import type { Currency } from "@/lib/domain/types";
-import { formatMoney, parseAmount } from "@/lib/format";
+import { currencySymbol, formatMoney, parseAmount } from "@/lib/format";
 
 export interface SplitPerson {
   ref: PersonRef;
@@ -202,7 +202,7 @@ export function SplitSection({
                     }
                     className={`h-7 rounded px-2 text-xs font-medium ${p.shareType === t ? "bg-background shadow-sm" : "text-muted-foreground"}`}
                   >
-                    {t === "percent" ? "%" : `${currency === "USD" ? "US$" : "$"}${k > 1 ? "/cuota" : ""}`}
+                    {t === "percent" ? "%" : `${currencySymbol(currency)}${k > 1 ? "/cuota" : ""}`}
                   </button>
                 ))}
               </div>

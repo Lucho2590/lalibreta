@@ -26,7 +26,7 @@ import {
 import { useAuth } from "@/hooks/use-auth";
 import { useAccounts, useCategories } from "@/hooks/use-data";
 import { db } from "@/lib/firebase/client";
-import { parseAmount } from "@/lib/format";
+import { currencyOptionLabel, parseAmount } from "@/lib/format";
 import { accountCurrencies, type Currency } from "@/lib/domain/types";
 import { recurringCollectionPath } from "@/lib/domain/recurring";
 import { monthKey, type RecurringExpense, type Transaction, type TransactionKind } from "@/lib/domain/types";
@@ -239,7 +239,7 @@ export function RecurringForm({
           onChange={(e) => setAmount(e.target.value)}
         />
         {currencyOptions.length > 1 && (
-          <div className="mt-1.5 inline-flex rounded-lg bg-muted p-0.5">
+          <div className="mt-1.5 inline-flex flex-wrap rounded-lg bg-muted p-0.5">
             {currencyOptions.map((c) => (
               <button
                 key={c}
@@ -249,7 +249,7 @@ export function RecurringForm({
                   effCurrency === c ? "bg-background shadow-sm" : "text-muted-foreground"
                 }`}
               >
-                {c === "ARS" ? "$ Pesos" : "US$ Dólares"}
+                {currencyOptionLabel(c)}
               </button>
             ))}
           </div>
