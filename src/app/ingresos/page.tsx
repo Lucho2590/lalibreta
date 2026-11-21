@@ -16,12 +16,19 @@ import { useInstallmentsForMonth } from "@/hooks/use-data";
 import { TransactionForm } from "@/components/transactions/transaction-form";
 import { TransactionList } from "@/components/transactions/transaction-list";
 import { formatCurrency, formatMoney, formatMonth } from "@/lib/format";
+import { cn } from "@/lib/utils";
+import { AnimatedNumber } from "@/components/motion/animated-number";
 import { currencyOf, isRealIncome } from "@/lib/domain/types";
+
+const formatUSD = (n: number) => formatMoney(n, "USD");
 
 export default function IngresosPage() {
   const [open, setOpen] = useState(false);
   const { monthKey, year, month } = useMonth();
-  const { data: installments, loading } = useInstallmentsForMonth(monthKey);
+  const { data: installments, loading, stale } = useInstallmentsForMonth(monthKey);
+  // De qué mes son los ingresos que se ven (al cambiar de mes, hasta que
+  // llegan los nuevos, siguen siendo los del anterior).
+  const dataMonth = stale ? (installments[0]?.paymentMonth ?? "anterior") : monthKey;
   // Los reintegros de tarjeta no son ingresos (son saldo a favor de la tarjeta).
   const incomes = installments.filter(isRealIncome);
   const total = incomes.filter((i) => currencyOf(i) === "ARS").reduce((s, i) => s + i.amount, 0);
@@ -54,7 +61,7 @@ export default function IngresosPage() {
         </Sheet>
       </div>
 
-      <Card className="rounded-3xl">
+      <Card className={cn("rounded-3xl transition-opacity duration-200", stale && "opacity-50")}>
         <CardContent className="flex items-center gap-4 py-5">
           <div className="flex size-11 items-center justify-center rounded-2xl bg-success/10 text-success">
             <ArrowUpRight className="size-5" />
@@ -64,11 +71,11 @@ export default function IngresosPage() {
               Total ingresos
             </div>
             <div className="text-3xl font-bold tabular-nums text-success">
-              {formatCurrency(total)}
+              <AnimatedNumber value={total} format={formatCurrency} />
             </div>
             {totalUSD > 0 && (
               <div className="text-xl font-semibold tabular-nums text-success">
-                + {formatMoney(totalUSD, "USD")}
+                + <AnimatedNumber value={totalUSD} format={formatUSD} />
               </div>
             )}
           </div>
@@ -77,14 +84,20 @@ export default function IngresosPage() {
 
       {loading ? (
         <p className="text-sm text-muted-foreground">Cargando…</p>
-      ) : incomes.length === 0 ? (
-        <Card className="rounded-3xl">
-          <CardContent className="py-12 text-center text-sm text-muted-foreground">
-            Sin ingresos cargados en este mes.
-          </CardContent>
-        </Card>
       ) : (
-        <TransactionList items={incomes} />
+        // Al llegar los de otro mes la lista se vuelve a montar y las filas
+        // entran en cascada; mientras tanto, los del anterior quedan atenuados.
+        <div key={dataMonth} className={cn("transition-opacity duration-200", stale && "opacity-50")}>
+          {incomes.length === 0 ? (
+            <Card className="rounded-3xl">
+              <CardContent className="py-12 text-center text-sm text-muted-foreground">
+                Sin ingresos cargados en este mes.
+              </CardContent>
+            </Card>
+          ) : (
+            <TransactionList items={incomes} />
+          )}
+        </div>
       )}
     </div>
   );
