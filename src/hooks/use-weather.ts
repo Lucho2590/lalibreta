@@ -14,14 +14,23 @@ export type WeatherData = Omit<WeatherReport, "location"> & {
 
 const TTL_MS = 10 * 60 * 1000;
 let cached: { at: number; promise: Promise<WeatherData | null> } | null = null;
+/** Lo último que llegó: al volver al inicio se muestra enseguida (sin esperar ni animar). */
+let lastValue: { at: number; data: WeatherData } | null = null;
+
+const freshValue = () => (lastValue && Date.now() - lastValue.at < TTL_MS ? lastValue.data : null);
 
 const fetchWeather = (force = false) => {
   if (!force && cached && Date.now() - cached.at < TTL_MS) return cached.promise;
-  const promise = apiJson<WeatherData>("/api/weather").catch((err) => {
-    console.warn("[clima] no se pudo obtener", err);
-    cached = null;
-    return null;
-  });
+  const promise = apiJson<WeatherData>("/api/weather")
+    .then((data) => {
+      lastValue = { at: Date.now(), data };
+      return data;
+    })
+    .catch((err) => {
+      console.warn("[clima] no se pudo obtener", err);
+      cached = null;
+      return null;
+    });
   cached = { at: Date.now(), promise };
   return promise;
 };
@@ -29,8 +38,8 @@ const fetchWeather = (force = false) => {
 /** Clima y alertas en la ubicación guardada. `data.location` null = no activó la ubicación. */
 export function useWeather() {
   const { user } = useAuth();
-  const [data, setData] = useState<WeatherData | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [data, setData] = useState<WeatherData | null>(freshValue);
+  const [loading, setLoading] = useState(() => freshValue() === null);
 
   const load = useCallback((force: boolean) => {
     void fetchWeather(force).then((d) => {
