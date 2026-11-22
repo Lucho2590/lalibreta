@@ -1,4 +1,5 @@
 import type { Currency } from "@/lib/domain/types";
+import type { CreateVaquitaInput, ExpenseInput, PaymentInput } from "../vaquitas";
 
 /** Subconjunto del payload del webhook de WhatsApp Cloud API que usamos. */
 
@@ -339,8 +340,25 @@ export interface BatchDraft {
   createdAt: number;
 }
 
+/** Vaquita: crear una, cargarle un gasto o registrar un pago para saldar. */
+export interface VaquitaDraft {
+  type: "vaquita";
+  id: string;
+  op: "create" | "expense" | "payment";
+  vaquitaName: string;
+  /** Lo que se manda al server al confirmar (según op). */
+  create?: CreateVaquitaInput;
+  expense?: ExpenseInput;
+  payment?: PaymentInput;
+  /** Resumen ya armado para mostrar (título y renglones). */
+  title: string;
+  lines: string[];
+  createdAt: number;
+}
+
 export type Draft =
   | TransactionDraft
+  | VaquitaDraft
   | BatchDraft
   | AccountDraft
   | StatementDraft

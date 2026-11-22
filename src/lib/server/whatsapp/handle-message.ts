@@ -50,6 +50,8 @@ import { ensureOfflineContact, loadPeopleContext } from "../people";
 import { createSplit } from "../splits";
 import { applySplitRules, createSplitRule } from "../split-rules";
 import { createPersonTransfer } from "../person-transfers";
+import { createVaquita, loadVaquita, savePayment, saveExpense } from "../vaquitas";
+import { myUnitNet } from "@/lib/domain/vaquitas";
 import { PeopleError } from "../connections";
 import { loadSession, saveSession, takeDraft } from "./sessions";
 import {
@@ -62,6 +64,7 @@ import {
   type RecurringDraft,
   type TransferDraft,
   type PersonTransferDraft,
+  type VaquitaDraft,
   type StatementDraft,
   type TransactionDraft,
   type WaIncomingMessage,
@@ -532,6 +535,9 @@ const resolveDraft = async (
     case "person-transfer":
       await confirmPersonTransfer(waId, uid, draft as PersonTransferDraft);
       return;
+    case "vaquita":
+      await confirmVaquita(waId, uid, draft as VaquitaDraft);
+      return;
     default:
       await confirmTransaction(waId, uid, draft as TransactionDraft);
   }
@@ -665,6 +671,53 @@ const confirmPersonTransfer = async (waId: string, uid: string, d: PersonTransfe
     );
   } catch (err) {
     await sendText(waId, `No pude registrarlo: ${err instanceof PeopleError ? err.message : "error"}.`);
+  }
+};
+
+const confirmVaquita = async (waId: string, uid: string, d: VaquitaDraft) => {
+  try {
+    if (d.op === "create" && d.create) {
+      const r = await createVaquita({ uid }, d.create);
+      await sendText(waId, `✅ Armé la vaquita *${d.create.name}*. Ya pueden cargar gastos (acá o en la app: ${appUrl()}/vaquitas/${r.id}).`);
+      return;
+    }
+    if (d.op === "expense" && d.expense) {
+      await saveExpense({ uid }, d.expense);
+      const e = d.expense;
+      await sendText(
+        waId,
+        `✅ Anotado en *${d.vaquitaName}*: ${e.description} por *${formatMoney(e.amount, e.currency)}*.${await vaquitaStatusText(uid, e.vaquitaId)}`,
+      );
+      return;
+    }
+    if (d.op === "payment" && d.payment) {
+      await savePayment({ uid }, d.payment);
+      await sendText(
+        waId,
+        `✅ Pago anotado en *${d.vaquitaName}* (*${formatMoney(d.payment.amount, d.payment.currency)}*).${await vaquitaStatusText(uid, d.payment.vaquitaId)}`,
+      );
+      return;
+    }
+    await sendText(waId, "No pude entender ese borrador. Mandámelo de nuevo.");
+  } catch (err) {
+    await sendText(waId, `No pude guardarlo: ${err instanceof PeopleError ? err.message : "error"}.`);
+  }
+};
+
+/** "Tu familia recibe $ X" con el saldo actualizado de la vaquita. */
+const vaquitaStatusText = async (uid: string, vaquitaId: string): Promise<string> => {
+  try {
+    const v = await loadVaquita(vaquitaId);
+    const net = myUnitNet(v, uid);
+    const me = v.members.find((m) => m.uid === uid);
+    const who = me?.familyId && v.families.some((f) => f.id === me.familyId) ? "Tu familia" : "Vos";
+    const fam = who === "Tu familia";
+    if (Math.abs(net) < 0.01) return `\n⚖️ ${who} ${fam ? "está" : "estás"} a mano.`;
+    return net > 0
+      ? `\n⚖️ ${who} ${fam ? "tiene" : "tenés"} que recibir ${formatMoney(net, v.currency)}.`
+      : `\n⚖️ ${who} ${fam ? "debe" : "debés"} ${formatMoney(-net, v.currency)}.`;
+  } catch {
+    return "";
   }
 };
 
