@@ -36,7 +36,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { href: "/agenda", label: "Agenda", icon: CalendarDays },
   { href: "/listas", label: "Listas", icon: ListChecks },
   { href: "/clima", label: "Clima", icon: CloudSun },
-  { href: "/resumenes", label: "Importar resumen", icon: FileText, note: "desde la compu" },
+  { href: "/resumenes", label: "Importar resumen", icon: FileText },
   { href: "/fijos", label: "Fijos", icon: Repeat },
   { href: "/ingresos", label: "Ingresos", icon: Wallet },
   { href: "/compartidas", label: "Cuentas con gente", icon: Handshake },

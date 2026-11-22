@@ -17,7 +17,8 @@ export type NovedadIcon =
   | "clima"
   | "reloj"
   | "editar"
-  | "gente";
+  | "gente"
+  | "resumen";
 
 export interface Novedad {
   id: string;
@@ -35,6 +36,16 @@ export interface Novedad {
 
 /** De la más nueva a la más vieja. */
 export const NOVEDADES: Novedad[] = [
+  {
+    id: "resumen-celu",
+    // Un día después de las de hoy: quien ya las vio también ve esta.
+    date: "2026-11-23",
+    icon: "resumen",
+    title: "Importar resúmenes desde el celu",
+    body: "Subí el PDF o una foto del resumen de la tarjeta desde el celular: la app lee los consumos, les ponés categoría y no duplica lo que ya tenías. Si se lo mandás a tu agente por WhatsApp, reconoce la tarjeta por los últimos 4 números y aprende las categorías igual que la app.",
+    href: "/resumenes",
+    cta: "Importar un resumen",
+  },
   {
     id: "agregar-contacto",
     date: "2026-11-22",

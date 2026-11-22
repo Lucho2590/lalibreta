@@ -3,12 +3,13 @@
 import Link from "next/link";
 import { useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { CheckCircle2, FileText, Loader2, Monitor, Upload } from "lucide-react";
+import { CheckCircle2, FileText, Loader2, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { buttonVariants } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { StatementReview } from "@/components/statements/statement-review";
 import { apiFetch } from "@/lib/api";
+import { compressImageForUpload } from "@/lib/image-compress";
 import { cn } from "@/lib/utils";
 import type { ImportResult, StatementAnalysis } from "@/lib/domain/statement-import";
 
@@ -35,16 +36,7 @@ export default function ResumenesPage() {
         </p>
       </div>
 
-      {/* Es una pantalla pensada para la compu (la tabla no entra en el celular). */}
-      <Card className="rounded-3xl md:hidden">
-        <CardContent className="flex items-center gap-3 py-6 text-sm">
-          <Monitor className="size-5 shrink-0 text-muted-foreground" />
-          Esta función se usa desde la compu. Desde el celular podés mandarle el PDF a tu agente por
-          WhatsApp.
-        </CardContent>
-      </Card>
-
-      <div className="hidden md:block">
+      <div>
         {step.kind === "upload" && (
           <UploadZone
             onFile={async (file) => {
@@ -103,7 +95,7 @@ export default function ResumenesPage() {
                   ? ` Proyecté ${step.result.projected} ${step.result.projected === 1 ? "suscripción" : "suscripciones"} al próximo resumen (como estimado).`
                   : ""}
               </p>
-              <div className="mt-2 flex gap-2">
+              <div className="mt-2 flex flex-wrap justify-center gap-2">
                 <Link
                   href={`/cuentas/${step.result.accountId}`}
                   className={cn(buttonVariants(), "rounded-xl bg-brand-grad text-white hover:opacity-95")}
@@ -130,14 +122,18 @@ function UploadZone({ onFile }: { onFile: (f: File) => void }) {
   const input = useRef<HTMLInputElement>(null);
   const [over, setOver] = useState(false);
 
-  const pick = (file: File | undefined) => {
-    if (!file) return;
-    if (file.type !== "application/pdf" && !file.type.startsWith("image/")) {
+  const pick = async (picked: File | undefined) => {
+    if (!picked) return;
+    if (picked.type !== "application/pdf" && !picked.type.startsWith("image/")) {
       toast.error("Subí un PDF o una imagen del resumen");
       return;
     }
+    // Las fotos del celu suelen pasar el límite: las achicamos antes de subirlas.
+    const file = await compressImageForUpload(picked);
     if (file.size > MAX_BYTES) {
-      toast.error("El archivo pesa más de 4 MB");
+      toast.error(
+        file.type === "application/pdf" ? "El PDF pesa más de 4 MB" : "La foto pesa demasiado, probá con una captura",
+      );
       return;
     }
     onFile(file);
@@ -155,25 +151,28 @@ function UploadZone({ onFile }: { onFile: (f: File) => void }) {
       onDrop={(e) => {
         e.preventDefault();
         setOver(false);
-        pick(e.dataTransfer.files[0]);
+        void pick(e.dataTransfer.files[0]);
       }}
       className={cn(
-        "flex w-full flex-col items-center gap-3 rounded-3xl border-2 border-dashed px-6 py-16 text-center transition",
+        "flex w-full flex-col items-center gap-3 rounded-3xl border-2 border-dashed px-6 py-12 text-center transition md:py-16",
         over ? "border-brand bg-brand/5" : "border-border hover:bg-muted/40",
       )}
     >
       <span className="flex size-14 items-center justify-center rounded-2xl bg-muted">
         {over ? <Upload className="size-6" /> : <FileText className="size-6" />}
       </span>
-      <span className="font-medium">Arrastrá el PDF o la foto del resumen, o hacé clic para elegirlo</span>
-      <span className="text-sm text-muted-foreground">PDF o imagen · hasta 4 MB · sin contraseña</span>
+      <span className="font-medium md:hidden">Tocá para elegir el PDF, una foto o una captura del resumen</span>
+      <span className="hidden font-medium md:inline">
+        Arrastrá el PDF o la foto del resumen, o hacé clic para elegirlo
+      </span>
+      <span className="text-sm text-muted-foreground">PDF (hasta 4 MB, sin contraseña) o foto</span>
       <input
         ref={input}
         type="file"
         accept="application/pdf,image/*"
         className="hidden"
         onChange={(e) => {
-          pick(e.target.files?.[0]);
+          void pick(e.target.files?.[0]);
           e.target.value = "";
         }}
       />

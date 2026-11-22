@@ -309,12 +309,12 @@ export default function AccountDetailPage({ params }: { params: Promise<{ id: st
         {account.type === "credit" && <CardCycleEditor account={account} />}
 
         {account.type === "credit" && (
-          <Card className="hidden rounded-3xl md:block">
+          <Card className="rounded-3xl">
             <CardContent className="py-4">
               <div className="text-sm font-semibold">Importar resumen</div>
               <p className="mt-1 text-xs text-muted-foreground">
-                Subí el PDF del resumen: carga los consumos con su categoría y no duplica lo que ya
-                tenías.
+                Subí el PDF o una foto del resumen: carga los consumos con su categoría y no duplica lo
+                que ya tenías.
               </p>
               <Button
                 variant="outline"

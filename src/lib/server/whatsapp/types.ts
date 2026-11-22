@@ -206,6 +206,11 @@ export interface StatementDraft {
   nextClosingDate: string | null;
   nextDueDate: string | null;
   last4: string | null;
+  /**
+   * Cómo se eligió la tarjeta: "last4" = termina igual que el resumen;
+   * "user" = la dijo el usuario (se respeta aunque la terminación no coincida).
+   */
+  matchedBy?: "last4" | "user" | null;
   totalARS: number;
   totalUSD: number;
   minimumPayment: number | null;
