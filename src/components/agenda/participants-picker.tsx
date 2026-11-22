@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { contactDisplayName } from "@/lib/domain/contact-info";
 import { Plus, X } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -122,13 +123,13 @@ export function ParticipantsPicker({
           <SelectTrigger className="h-10 w-full">
             <SelectValue
               placeholder="Sumar de mis contactos"
-              items={available.map((c) => ({ value: c.id, label: c.displayName || c.email || "Contacto" }))}
+              items={available.map((c) => ({ value: c.id, label: contactDisplayName(c) }))}
             />
           </SelectTrigger>
           <SelectContent>
             {available.map((c) => (
               <SelectItem key={c.id} value={c.id}>
-                {c.displayName || c.email}
+                {contactDisplayName(c)}
               </SelectItem>
             ))}
           </SelectContent>

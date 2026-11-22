@@ -373,7 +373,9 @@ export const runVaquitaTool = async (ctx: VaquitaToolContext, name: string, args
     const members: Array<MemberInput & { label: string; key: string }> = [];
     for (const raw of p.people) {
       if (ME_WORDS.has(norm(raw))) continue;
-      const r = pickByName(ctx.people, raw, (x) => x.name);
+      // Primero por apodo exacto ("mi señora", "el Colo"), después por nombre.
+      const byNick = ctx.people.filter((x) => x.nicknames.some((nn) => norm(nn) === norm(raw)));
+      const r = byNick.length === 1 ? { hit: byNick[0] } : pickByName(ctx.people, raw, (x) => x.name);
       if ("many" in r) return { error: `"${raw}" coincide con ${r.many.map((x) => x.name).join(", ")}. Preguntale cuál.` };
       const key = norm(raw);
       if ("hit" in r) {

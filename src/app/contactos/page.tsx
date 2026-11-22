@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { Check, Plus, Send, Trash2, UserPlus, Users, X } from "lucide-react";
+import { Check, Pencil, Plus, Send, Trash2, UserPlus, Users, X } from "lucide-react";
 import { toast } from "sonner";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -18,12 +18,34 @@ import {
 import { useAuth } from "@/hooks/use-auth";
 import { useConnections, useContacts } from "@/hooks/use-data";
 import { ContactForm } from "@/components/contacts/contact-form";
+import { EditContactSheet, type EditContactTarget } from "@/components/contacts/edit-contact-sheet";
 import { apiPost, errorText } from "@/lib/api";
 import { deleteContact } from "@/lib/domain/contacts";
+import { contactDisplayName, formatPayAlias } from "@/lib/domain/contact-info";
 import { otherUid, profileName, type Connection } from "@/lib/domain/people";
 import type { Contact } from "@/lib/domain/types";
 
 const initial = (s: string | null | undefined) => (s?.trim()?.[0] ?? "?").toUpperCase();
+
+/** "Orne, mi señora · alias orne.mp": lo que cargué en su ficha. */
+const infoLine = (c: Contact | undefined): string | null => {
+  if (!c) return null;
+  const parts = [
+    c.nicknames?.length ? c.nicknames.join(", ") : null,
+    c.payAliases?.length
+      ? `${c.payAliases.length > 1 ? "alias: " : "alias "}${c.payAliases.map(formatPayAlias).join(", ")}`
+      : null,
+  ].filter(Boolean);
+  return parts.length ? parts.join(" · ") : null;
+};
+
+function EditButton({ onClick }: { onClick: () => void }) {
+  return (
+    <Button size="icon" variant="ghost" className="text-muted-foreground" aria-label="Editar ficha" onClick={onClick}>
+      <Pencil className="size-4" />
+    </Button>
+  );
+}
 
 function PersonRow({
   name,
@@ -67,14 +89,20 @@ export default function ContactsPage() {
   const [sending, setSending] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState<EditContactTarget | null>(null);
 
   const me = user?.uid ?? "";
   const incoming = connections.filter((c) => c.status === "pending" && c.addresseeUid === me);
   const outgoing = connections.filter((c) => c.status === "pending" && c.requesterUid === me);
   const connected = connections
     .filter((c) => c.status === "accepted")
-    .sort((a, b) => profileName(a.profiles[otherUid(a, me)]).localeCompare(profileName(b.profiles[otherUid(b, me)]), "es"));
+    .sort((a, b) => connName(a).localeCompare(connName(b), "es"));
   const offline = contacts.filter((c) => !c.linkedUid && c.kind !== "app");
+  const contactByUid = new Map(contacts.filter((c) => c.linkedUid).map((c) => [c.linkedUid as string, c]));
+  const connName = (c: Connection) => {
+    const uid = otherUid(c, me);
+    return contactByUid.get(uid)?.customName?.trim() || profileName(c.profiles[uid]);
+  };
 
   const send = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -105,7 +133,7 @@ export default function ContactsPage() {
   };
 
   const removeOffline = async (c: Contact) => {
-    if (!user || !confirm(`¿Borrar a ${c.displayName ?? c.email}? Lo que ya anotaste con esa persona queda en el historial.`)) return;
+    if (!user || !confirm(`¿Borrar a ${contactDisplayName(c)}? Lo que ya anotaste con esa persona queda en el historial.`)) return;
     try {
       await deleteContact(user.uid, c.id);
       toast.success("Contacto borrado");
@@ -119,7 +147,8 @@ export default function ContactsPage() {
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Contactos</h1>
         <p className="text-sm text-muted-foreground">
-          Conectate con la gente con la que compartís gastos
+          La gente con la que compartís gastos. Cargales apodos y alias: el agente los encuentra por cómo los
+          nombrás y te pasa el alias cuando querés transferirles.
         </p>
       </div>
 
@@ -196,8 +225,31 @@ export default function ContactsPage() {
           {connected.map((c) => {
             const uid = otherUid(c, me);
             const p = c.profiles[uid];
+            const mine = contactByUid.get(uid);
             return (
-              <PersonRow key={c.id} name={profileName(p)} sub={p?.email} photo={p?.photoURL} href={`/compartidas/persona/u:${uid}`}>
+              <PersonRow
+                key={c.id}
+                name={connName(c)}
+                sub={infoLine(mine) ?? p?.email}
+                photo={p?.photoURL}
+                href={`/compartidas/persona/u:${uid}`}
+              >
+                <EditButton
+                  onClick={() =>
+                    setEditing(
+                      mine
+                        ? { contactId: mine.id }
+                        : {
+                            appUser: {
+                              uid,
+                              email: p?.email ?? "",
+                              displayName: p?.displayName ?? null,
+                              photoURL: p?.photoURL ?? null,
+                            },
+                          },
+                    )
+                  }
+                />
                 <Button
                   size="sm"
                   variant="ghost"
@@ -249,12 +301,12 @@ export default function ContactsPage() {
             <SheetTrigger render={<Button size="sm" variant="outline" />}>
               <Plus className="mr-1 size-4" /> Agregar
             </SheetTrigger>
-            <SheetContent side="bottom" className="sheet-md-modal p-0">
+            <SheetContent side="bottom" className="sheet-md-modal max-h-[92vh] overflow-y-auto p-0">
               <SheetHeader className="px-5 pt-5">
                 <SheetTitle>Persona sin la app</SheetTitle>
               </SheetHeader>
               <div className="px-5 pb-6 pt-3">
-                <ContactForm onCreated={() => setOpen(false)} />
+                <ContactForm onSaved={() => setOpen(false)} />
               </div>
             </SheetContent>
           </Sheet>
@@ -267,10 +319,11 @@ export default function ContactsPage() {
           {offline.map((c) => (
             <PersonRow
               key={c.id}
-              name={c.displayName || c.email || "Contacto"}
-              sub={[c.phone, c.email].filter(Boolean).join(" · ") || null}
+              name={contactDisplayName(c)}
+              sub={infoLine(c) ?? ([c.phone, c.email].filter(Boolean).join(" · ") || null)}
               href={`/compartidas/persona/c:${c.id}`}
             >
+              <EditButton onClick={() => setEditing({ contactId: c.id })} />
               <Button size="icon" variant="ghost" aria-label="Borrar" onClick={() => removeOffline(c)}>
                 <Trash2 className="size-4" />
               </Button>
@@ -278,6 +331,8 @@ export default function ContactsPage() {
           ))}
         </CardContent>
       </Card>
+
+      <EditContactSheet target={editing} onClose={() => setEditing(null)} />
     </div>
   );
 }

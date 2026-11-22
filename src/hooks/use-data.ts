@@ -44,6 +44,7 @@ import {
 } from "@/lib/domain/installments";
 import { recurringCollectionPath } from "@/lib/domain/recurring";
 import { contactsCollectionPath } from "@/lib/domain/contacts";
+import { contactDisplayName, type PayAlias } from "@/lib/domain/contact-info";
 import {
   activitiesCollectionPath,
   compareActivities,
@@ -179,6 +180,10 @@ export interface PersonOption {
   /** Usa la app (conexión aceptada) o es un contacto sin app. */
   isApp: boolean;
   email: string | null;
+  /** Su doc en users/{yo}/contacts (los conectados viejos pueden no tenerlo). */
+  contactId: string | null;
+  nicknames: string[];
+  payAliases: PayAlias[];
 }
 
 /** Con quién puedo repartir / transferir: conexiones aceptadas + contactos sin app. */
@@ -189,15 +194,33 @@ export function usePeople() {
   const people = useMemo<PersonOption[]>(() => {
     if (!user) return [];
     const out: PersonOption[] = [];
+    const byUid = new Map(contacts.filter((c) => c.linkedUid).map((c) => [c.linkedUid as string, c]));
     for (const c of connections) {
       if (c.status !== "accepted") continue;
       const uid = otherUid(c, user.uid);
       const p = c.profiles?.[uid];
-      out.push({ ref: userRef(uid), name: profileName(p), isApp: true, email: p?.email ?? null });
+      const mine = byUid.get(uid);
+      out.push({
+        ref: userRef(uid),
+        name: mine?.customName?.trim() || profileName(p),
+        isApp: true,
+        email: p?.email ?? null,
+        contactId: mine?.id ?? null,
+        nicknames: mine?.nicknames ?? [],
+        payAliases: mine?.payAliases ?? [],
+      });
     }
     for (const c of contacts) {
       if (c.linkedUid || c.kind === "app") continue;
-      out.push({ ref: contactRef(c.id), name: c.displayName || c.email || "Contacto", isApp: false, email: c.email ?? null });
+      out.push({
+        ref: contactRef(c.id),
+        name: contactDisplayName(c),
+        isApp: false,
+        email: c.email ?? null,
+        contactId: c.id,
+        nicknames: c.nicknames ?? [],
+        payAliases: c.payAliases ?? [],
+      });
     }
     return out.sort((a, b) => a.name.localeCompare(b.name, "es"));
   }, [user, connections, contacts]);
