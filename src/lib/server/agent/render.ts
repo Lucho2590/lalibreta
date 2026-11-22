@@ -68,6 +68,12 @@ const renderTransaction = (d: TransactionDraft) => {
     lines.push(`• Vos: ${formatMoney(Math.round((d.amount - others) * 100) / 100, cur)}`);
     if (d.split.always) lines.push(`🔁 Y de ahora en más, «${d.description}» se divide siempre así.`);
   }
+  if (d.listItem) {
+    lines.push(
+      "",
+      `📝 Va al ítem *${d.listItem.itemTitle}* de ${d.listItem.listTitle}${d.listItem.itemId ? " (lo tacho)" : " (lo agrego a la lista)"}`,
+    );
+  }
   lines.push("", "¿Lo guardo?");
   return lines.join("\n");
 };

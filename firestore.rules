@@ -66,6 +66,63 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    // Listas (y grupos de listas, anidados). Cada nodo guarda su acceso
+    // EFECTIVO (dueño + lo compartido en él y en sus ancestros) en memberUids /
+    // memberEmails (ven) y editorUids / editorEmails (editan). Compartir y
+    // dejar de compartir pasa por /api/lists/* (Admin SDK), que recalcula el
+    // acceso de todo el subárbol. Desde el cliente: crear (en la raíz, siendo
+    // el dueño; adentro de otro nodo, copiando el acceso del padre), editar el
+    // contenido y borrar, siempre siendo editor.
+    match /lists/{id} {
+      function myEmail() {
+        return request.auth.token.get('email', null) is string ? request.auth.token.email.lower() : '';
+      }
+      function isMemberOf(d) {
+        return request.auth.uid in d.memberUids || myEmail() in d.memberEmails;
+      }
+      function isEditorOf(d) {
+        return request.auth.uid in d.editorUids || myEmail() in d.editorEmails;
+      }
+      function sameAccess(a, b) {
+        return a.ownerUid == b.ownerUid
+          && a.members == b.members
+          && a.memberUids == b.memberUids
+          && a.memberEmails == b.memberEmails
+          && a.editorUids == b.editorUids
+          && a.editorEmails == b.editorEmails;
+      }
+
+      allow read: if request.auth != null && isMemberOf(resource.data);
+
+      allow create: if request.auth != null
+        && request.resource.data.kind in ['group', 'list']
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.shares.size() == 0
+        && (
+          (request.resource.data.parentId == null
+            && request.resource.data.ownerUid == request.auth.uid
+            && request.resource.data.memberUids == [request.auth.uid]
+            && request.resource.data.editorUids == [request.auth.uid]
+            && request.resource.data.memberEmails == request.resource.data.editorEmails
+            && (request.resource.data.memberEmails.size() == 0
+                || request.resource.data.memberEmails == [myEmail()])
+            && request.resource.data.members.size() == 1)
+          ||
+          (request.resource.data.parentId is string
+            && exists(/databases/$(database)/documents/lists/$(request.resource.data.parentId))
+            && isEditorOf(get(/databases/$(database)/documents/lists/$(request.resource.data.parentId)).data)
+            && sameAccess(request.resource.data,
+                 get(/databases/$(database)/documents/lists/$(request.resource.data.parentId)).data))
+        );
+
+      allow update: if request.auth != null
+        && isEditorOf(resource.data)
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['title', 'emoji', 'notes', 'dueDate', 'budget', 'currency', 'order', 'items', 'updatedAt']);
+
+      allow delete: if request.auth != null && isEditorOf(resource.data);
+    }
+
     // Compartir cuentas (extensión). Lectura para owner y grantee.
     // Toda mutación pasa por route handlers con Admin SDK.
     match /accountShares/{id} {

@@ -734,6 +734,7 @@ const KIND_ICON: Record<NotificationKind, React.ComponentType<{ className?: stri
   "agenda-response": CalendarDays,
   "agenda-changed": CalendarDays,
   "agenda-cancelled": CalendarX,
+  "list-shared": ListChecks,
   "connection-request": UserPlus,
   "connection-response": Users,
   "split-request": HandCoins,

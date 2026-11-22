@@ -23,6 +23,9 @@ import { PROPOSE_BATCH_TOOL, proposeBatch } from "./batch-tool";
 import { AGENDA_TOOLS, AGENDA_TOOL_NAMES, runAgendaTool } from "./agenda-tool";
 import { WEATHER_TOOLS, WEATHER_TOOL_NAMES, runWeatherTool } from "./weather-tool";
 import { WATCH_TOOLS, WATCH_TOOL_NAMES, runWatchTool } from "./watch-tool";
+import { LISTS_TOOLS, LISTS_TOOL_NAMES, resolveItems, resolveNode, runListsTool } from "./lists-tool";
+import { loadActor, loadTreeFor } from "../lists";
+import { canEdit, myRole, nodePath } from "@/lib/domain/list-model";
 import type { AgentPending, AgentPerson } from "../people";
 import { ensureOfflineContact, loadPeopleContext } from "../people";
 import { createSplitRule, deleteSplitRule, loadSplitRules } from "../split-rules";
@@ -159,6 +162,17 @@ export const TOOL_DEFINITIONS: ChatCompletionFunctionTool[] = [
               always: { type: "boolean", description: 'true si pide dividir SIEMPRE así este gasto ("todos los meses", "siempre")' },
             },
             required: ["people"],
+            additionalProperties: false,
+          },
+          listItem: {
+            type: "object",
+            description:
+              'Solo gastos: si lo que pagó es un ítem de una de sus listas ("pagué 5000 la yerba de la lista del super", "compré la torta del cumple"). Al guardarlo queda vinculado al ítem, lo tacha y suma al gasto de la lista. Si el ítem no existe, se agrega.',
+            properties: {
+              list: { type: "string", description: "id o nombre de la lista (de get_lists)" },
+              item: { type: "string", description: "id o nombre del ítem" },
+            },
+            required: ["list", "item"],
             additionalProperties: false,
           },
         },
@@ -802,6 +816,7 @@ export const TOOL_DEFINITIONS: ChatCompletionFunctionTool[] = [
   ...AGENDA_TOOLS,
   ...WEATHER_TOOLS,
   ...WATCH_TOOLS,
+  ...LISTS_TOOLS,
 ];
 
 // ---------- Schemas ----------
@@ -843,6 +858,7 @@ const proposeSchema = z.object({
       always: z.boolean().optional(),
     })
     .optional(),
+  listItem: z.object({ list: z.string().trim().min(1), item: z.string().trim().min(1) }).optional(),
 });
 
 const accountItemSchema = z.object({
@@ -1098,7 +1114,7 @@ const BUILT_MESSAGE =
 
 // ---------- propose_transaction ----------
 
-const proposeTransaction = (ctx: ToolContext, raw: unknown): ToolResult => {
+const proposeTransaction = async (ctx: ToolContext, raw: unknown): Promise<ToolResult> => {
   const parsed = proposeSchema.safeParse(raw);
   if (!parsed.success) return issues(parsed.error);
   const args = parsed.data;
@@ -1174,6 +1190,29 @@ const proposeTransaction = (ctx: ToolContext, raw: unknown): ToolResult => {
     split = { mode: args.split.mode ?? "installments", people, always: !!args.split.always };
   }
 
+  // Ítem de una lista: se vincula al confirmar (si no existe, se agrega en ese momento).
+  let listItem: TransactionDraft["listItem"] = null;
+  if (args.listItem) {
+    if (args.kind !== "expense") return { error: "Solo los gastos se vinculan a un ítem de una lista." };
+    const me = await loadActor(ctx.uid);
+    const tree = await loadTreeFor(me);
+    const r = resolveNode(tree, args.listItem.list, "list");
+    if ("error" in r) return r;
+    if (r.node.kind !== "list") return { error: `"${r.node.title}" es un grupo: decime en qué lista está el ítem.` };
+    if (!canEdit(myRole(r.node, me))) {
+      return { error: `"${r.node.title}" se la compartieron solo para ver: el gasto se puede cargar, pero no vincularlo a la lista.` };
+    }
+    const found = resolveItems(r.node, [args.listItem.item]);
+    if (found.ambiguous.length) return { error: `Hay más de un ítem así: ${found.ambiguous.join("; ")}. Preguntale cuál.` };
+    const item = found.items[0];
+    listItem = {
+      listId: r.node.id,
+      itemId: item?.id ?? null,
+      listTitle: nodePath(tree.byId, r.node),
+      itemTitle: item?.title ?? args.listItem.item,
+    };
+  }
+
   const isCreditExpense = account.type === "credit" && args.kind === "expense";
   const draft: TransactionDraft = {
     type: "transaction",
@@ -1196,6 +1235,7 @@ const proposeTransaction = (ctx: ToolContext, raw: unknown): ToolResult => {
     cardClosedAtPurchase: isCreditExpense ? (args.cardClosedAtPurchase ?? false) : false,
     cardDatesPending: isCreditExpense && (!account.defaultClosingDay || !account.defaultDueDay),
     split,
+    listItem,
     createdAt: Date.now(),
   };
   ctx.proposedDraft = draft;
@@ -1914,6 +1954,7 @@ export const executeTool = async (
   if (AGENDA_TOOL_NAMES.has(name)) return runAgendaTool(ctx.uid, name, args);
   if (WEATHER_TOOL_NAMES.has(name)) return runWeatherTool(ctx.uid, name, args);
   if (WATCH_TOOL_NAMES.has(name)) return runWatchTool(ctx.uid, name, args);
+  if (LISTS_TOOL_NAMES.has(name)) return runListsTool(ctx.uid, name, args);
 
   switch (name) {
     case "propose_transaction":

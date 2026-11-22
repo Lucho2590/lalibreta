@@ -204,3 +204,41 @@ export const renderActivityNoticeEmail = (p: ActivityNoticeEmailParams) => {
   const text = [p.heading, "", ...p.lines, "", `Abrí: ${url}`].join("\n");
   return { subject: p.subject, html, text };
 };
+
+export interface ListShareEmailParams {
+  ownerName: string;
+  ownerEmail: string;
+  title: string;
+  kind: "group" | "list";
+  role: "view" | "edit";
+  appUrl: string;
+}
+
+/** Le compartieron una lista (o un grupo de listas) a alguien que todavía no tiene cuenta. */
+export const renderListShareEmail = (p: ListShareEmailParams) => {
+  const url = `${p.appUrl}/login?from=${encodeURIComponent("/listas")}`;
+  const what = p.kind === "group" ? "un grupo de listas" : "una lista";
+  const can = p.role === "edit" ? "verla, tildar cosas y cargar lo que gastes" : "verla";
+  const subject = `${p.ownerName} te compartió: ${p.title}`;
+  const html = card(`
+    <h2 style="margin: 0 0 12px; font-size: 20px;">Te compartieron ${what}</h2>
+    <p style="margin: 0 0 16px; font-size: 14px; line-height: 1.5; color: #52525b;">
+      <strong>${escapeHtml(p.ownerName)}</strong> (${escapeHtml(p.ownerEmail)}) te compartió ${what}.
+    </p>
+    <div style="background: #f4f4f5; border-radius: 16px; padding: 16px; margin-bottom: 20px;">
+      <div style="font-size: 20px; font-weight: 700;">📝 ${escapeHtml(p.title)}</div>
+      <div style="font-size: 14px; color: #52525b; margin-top: 6px;">${p.role === "edit" ? "Podés editarla" : "Podés verla"}</div>
+    </div>
+    <p style="margin: 0 0 16px; font-size: 14px; color: #52525b;">
+      Creá tu cuenta en La Libreta con este mail para ${can}.
+    </p>
+    ${button(url, "Abrir la lista")}
+  `);
+  const text = [
+    `${p.ownerName} (${p.ownerEmail}) te compartió ${what}: ${p.title}.`,
+    ``,
+    `Creá tu cuenta en La Libreta con este mail para ${can}.`,
+    `Abrí: ${url}`,
+  ].join("\n");
+  return { subject, html, text };
+};

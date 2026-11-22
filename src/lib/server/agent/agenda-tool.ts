@@ -160,7 +160,7 @@ const norm = (s: string) =>
     .replace(/[̀-ͯ]/g, "")
     .trim();
 
-const loadMe = async (uid: string) => {
+export const loadMe = async (uid: string) => {
   const d = (await adminDb().collection("users").doc(uid).get()).data() ?? {};
   return {
     uid,
@@ -171,7 +171,7 @@ const loadMe = async (uid: string) => {
 };
 
 /** Resuelve "Orne", "juan@x.com"… contra los contactos del usuario. */
-const resolvePeople = async (
+export const resolvePeople = async (
   uid: string,
   people: string[],
 ): Promise<{ ok: Invitee[] } | { error: string }> => {
