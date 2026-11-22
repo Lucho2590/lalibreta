@@ -119,9 +119,10 @@ export function SortableNav({
 }
 
 /**
- * Props para hacer arrastrable un ítem entero del menú (normalmente el <Link>).
- * Incluye lo necesario para que soltar no navegue y para que el celu no
- * muestre el menú de "abrir link" al mantener apretado.
+ * Props para hacer arrastrable un ítem entero del menú (un <Link> o un botón).
+ * Incluye lo necesario para que soltar no navegue. Ojo: en iOS, si el ítem es
+ * un <a href>, mantener apretado abre la vista previa del link y no arrastra;
+ * en touch conviene que sea un botón (ver bottom-nav).
  */
 export function useSortableNavItem(id: string) {
   const justDragged = useContext(JustDraggedContext);
@@ -129,7 +130,7 @@ export function useSortableNavItem(id: string) {
     id,
     transition: { duration: 220, easing: EASING },
   });
-  // Sin role="button": el ítem sigue siendo un link.
+  // Sin role/tabIndex de dnd-kit: el ítem define los suyos.
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const { role, tabIndex, ...a11y } = attributes;
 
@@ -148,7 +149,7 @@ export function useSortableNavItem(id: string) {
         }
       },
       onContextMenu: (e: React.MouseEvent) => {
-        // Android abre el menú del link al mantener apretado.
+        // Android abre un menú contextual al mantener apretado.
         if (e.nativeEvent instanceof PointerEvent && e.nativeEvent.pointerType !== "mouse") e.preventDefault();
       },
     },

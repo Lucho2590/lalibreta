@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { LayoutGrid, LogOut, Plus } from "lucide-react";
 import { rectSortingStrategy } from "@dnd-kit/sortable";
 import { cn } from "@/lib/utils";
@@ -182,6 +182,11 @@ function EdgeBlur({ side, visible }: { side: "top" | "bottom"; visible: boolean 
   );
 }
 
+/**
+ * Ícono de la grilla "Más". Es un botón que navega (no un <a href>): en el
+ * iPhone, mantener apretado un link abre la vista previa de Safari ("Abrir",
+ * "Agregar a lecturas"…) y le gana al arrastre. Sin href no hay vista previa.
+ */
 function SortableMoreLink({
   item,
   active,
@@ -191,19 +196,27 @@ function SortableMoreLink({
   active: boolean;
   onNavigate: () => void;
 }) {
+  const router = useRouter();
   const { itemProps, isDragging } = useSortableNavItem(item.href);
+  // Lo que hacía <Link>: dejar la página precargada para que abra al toque.
+  useEffect(() => router.prefetch(item.href), [router, item.href]);
   return (
-    <Link
-      href={item.href}
+    <button
+      type="button"
+      role="link"
+      aria-current={active ? "page" : undefined}
       {...itemProps}
-      onClick={onNavigate}
+      onClick={() => {
+        onNavigate();
+        router.push(item.href);
+      }}
       className={cn(
-        "block rounded-2xl outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        "block w-full touch-manipulation select-none rounded-2xl outline-none [-webkit-tap-highlight-color:transparent] [-webkit-touch-callout:none] focus-visible:ring-2 focus-visible:ring-ring",
         isDragging && "opacity-35",
       )}
     >
       <MoreTile item={item} active={active} />
-    </Link>
+    </button>
   );
 }
 
