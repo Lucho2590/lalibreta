@@ -32,6 +32,12 @@ export interface WaIncomingMessage {
   };
   button?: { payload: string; text: string };
   location?: { latitude: number; longitude: number; name?: string; address?: string };
+  /** Contactos compartidos (📎 → Contacto): uno o varios. */
+  contacts?: Array<{
+    name?: { formatted_name?: string; first_name?: string; last_name?: string };
+    phones?: Array<{ phone?: string; wa_id?: string; type?: string }>;
+    emails?: Array<{ email?: string; type?: string }>;
+  }>;
 }
 
 export interface WaContact {

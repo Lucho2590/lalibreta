@@ -47,6 +47,16 @@ export const NOVEDADES: Novedad[] = [
     cta: "Importar un resumen",
   },
   {
+    id: "agregar-contacto",
+    date: "2026-11-22",
+    icon: "gente",
+    title: "Sumá a tu gente a La Libreta",
+    body: "En Contactos escribí el WhatsApp o el email de alguien, o buscá en tu agenda, y te decimos al toque quién ya usa La Libreta: a esos les mandás la solicitud con un toque; al resto lo invitás por WhatsApp o le llega un mail tuyo. También podés compartirle contactos a tu agente por WhatsApp (📎 → Contacto).",
+    whatsapp: "agregá a 11 5555-1234",
+    href: "/contactos",
+    cta: "Agregar un contacto",
+  },
+  {
     id: "vaquitas",
     date: "2026-11-22",
     icon: "vaquitas",

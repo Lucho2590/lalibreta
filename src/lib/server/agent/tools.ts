@@ -1002,7 +1002,7 @@ const resolveAgentPerson = (ctx: ToolContext, person?: string, newName?: string)
   if (person) {
     // A veces el modelo manda el nombre o el apodo en vez del ref.
     const p = ctx.people.find((x) => x.ref === person) ?? personByName(ctx, person);
-    if (!p) return { error: `"${person}" no está en Personas. Si usa la app, que se conecten desde Contactos; si no, usá newName.` };
+    if (!p) return { error: `"${person}" no está en Personas. Si usa la app, pedile su email o su WhatsApp y conectalos (contact_info connect); si no, usá newName.` };
     return { ref: p.ref as PersonRef | null, name: p.name, isApp: p.isApp, newName: null as string | null };
   }
   if (newName) {
