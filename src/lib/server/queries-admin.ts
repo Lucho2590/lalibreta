@@ -17,6 +17,7 @@ import {
 } from "@/lib/domain/balances";
 import { buildSplitAdjustment } from "@/lib/domain/debts";
 import { isPersonAccountId, type PersonTransfer, type Split } from "@/lib/domain/people";
+import { isVaquitaAccountId } from "@/lib/domain/vaquitas";
 import { summarizeExchanges } from "@/lib/domain/exchanges";
 import type {
   AccountType,
@@ -228,7 +229,13 @@ export const getMonthSummary = async (
   const toNamed = (m: Map<string, number>, names: Map<string, string>) =>
     [...m.entries()]
       .map(([id, total]) => ({
-        name: names.get(id) ?? (isPersonAccountId(id) ? "Tu parte de gastos que pagó otra persona" : "Sin nombre"),
+        name:
+          names.get(id) ??
+          (isPersonAccountId(id)
+            ? "Tu parte de gastos que pagó otra persona"
+            : isVaquitaAccountId(id)
+              ? "Tu parte de gastos de una vaquita (pagó otro)"
+              : "Sin nombre"),
         total: r2(total),
       }))
       .sort((a, b) => b.total - a.total);
@@ -453,7 +460,11 @@ export const listRecentTransactions = async (
       installments: Number(t.installments ?? 1),
       accountName:
         accName.get(t.accountId as string) ??
-        (isPersonAccountId(t.accountId as string) ? "(pagó otra persona)" : "—"),
+        (isPersonAccountId(t.accountId as string)
+          ? "(pagó otra persona)"
+          : isVaquitaAccountId(t.accountId as string)
+            ? "(vaquita: pagó otro)"
+            : "—"),
       categoryName: catName.get(t.categoryId as string) ?? "—",
       ...(t.kind === "transfer"
         ? {

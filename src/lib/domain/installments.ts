@@ -51,7 +51,21 @@ export interface CreateTransactionInput {
   projected?: boolean;
   /** Si lo cargó otra persona (cuenta compartida): se mantiene al editarlo. */
   createdByName?: string;
+  /** Gasto de una vaquita: se mantiene al rehacer las cuotas (qué parte es mía). */
+  vaquita?: Pick<Transaction, "vaquitaId" | "vaquitaExpenseId" | "shareFactor">;
 }
+
+/** Campos de vaquita de una transacción (para copiarlos a sus cuotas). */
+export const vaquitaFieldsOf = (
+  tx: Partial<Pick<Transaction, "vaquitaId" | "vaquitaExpenseId" | "shareFactor">>,
+): CreateTransactionInput["vaquita"] =>
+  tx.vaquitaId
+    ? {
+        vaquitaId: tx.vaquitaId,
+        ...(tx.vaquitaExpenseId ? { vaquitaExpenseId: tx.vaquitaExpenseId } : {}),
+        ...(tx.shareFactor != null ? { shareFactor: tx.shareFactor } : {}),
+      }
+    : undefined;
 
 export const createTransactionWithInstallments = async (
   uid: string,
@@ -222,6 +236,7 @@ export const createTransactionWithInstallments = async (
       ...(input.recurringId ? { recurringId: input.recurringId } : {}),
       ...(input.projected ? { projected: true } : {}),
       ...(input.createdByName ? { createdByName: input.createdByName } : {}),
+      ...(input.vaquita ?? {}),
       // Plata que "entra" a una tarjeta = saldo a favor, no ingreso.
       ...(followsCardCycle && input.kind === "income" ? { cardCredit: true } : {}),
     };
@@ -291,6 +306,7 @@ export const regenerateFutureInstallmentsForAccount = async (
           cardClosedAtPurchase: tx.cardClosedAtPurchase ?? false,
           currency: tx.currency,
           ...(tx.recurringId ? { recurringId: tx.recurringId } : {}),
+          vaquita: vaquitaFieldsOf(tx),
         });
         continue;
       }

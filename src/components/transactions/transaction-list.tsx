@@ -3,7 +3,8 @@
 import { useMemo, useState } from "react";
 import { ENTER, enterDelay } from "@/components/motion/enter";
 import Link from "next/link";
-import { ArrowLeftRight, ChevronDown, CreditCard, MoreVertical, Pencil, Trash2, Users } from "lucide-react";
+import { ArrowLeftRight, ChevronDown, CreditCard, MoreVertical, Pencil, PiggyBank, Trash2, Users } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -22,10 +23,12 @@ import type { Installment } from "@/lib/domain/types";
 import { formatMoney, formatShortDate } from "@/lib/format";
 import { CURRENCIES, currencyOf, zeroMoney } from "@/lib/domain/types";
 import { CategoryIcon } from "@/components/category-icon";
-import type { SharedAdjustment } from "@/lib/domain/balance";
+import { myShareFactor, type SharedAdjustment } from "@/lib/domain/balance";
+import { vaquitaIdFromAccountId } from "@/lib/domain/vaquitas";
+import { useVaquitas } from "@/hooks/use-vaquitas";
 import { otherUid, personRefFromAccountId, profileName } from "@/lib/domain/people";
 import { apiPost, errorText } from "@/lib/api";
-import { isPersonAccountId } from "@/lib/domain/people";
+import { isVirtualAccountId } from "@/lib/domain/people";
 import { SplitExistingSheet } from "@/components/people/split-existing";
 import { EditTransactionSheet } from "./edit-transaction-sheet";
 
@@ -49,8 +52,11 @@ export function TransactionList({
   groupCards = true,
 }: Props) {
   const { user } = useAuth();
+  const router = useRouter();
   const { data: accounts } = useAccounts();
   const { data: categories } = useCategories();
+  const { data: vaquitas } = useVaquitas();
+  const vaquitaName = useMemo(() => new Map(vaquitas.map((v) => [v.id, v.name])), [vaquitas]);
 
   const accountMap = useMemo(() => new Map(accounts.map((a) => [a.id, a])), [accounts]);
   const categoryMap = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories]);
@@ -66,10 +72,12 @@ export function TransactionList({
     }
     for (const c of contacts) names.set(`c:${c.id}`, c.displayName || c.email || "Contacto");
     return (accountId: string | null | undefined) => {
+      const vid = vaquitaIdFromAccountId(accountId);
+      if (vid) return `la vaquita ${vaquitaName.get(vid) ?? ""}`.trim();
       const ref = personRefFromAccountId(accountId);
       return ref ? (names.get(ref) ?? "una persona") : null;
     };
-  }, [connections, contacts, user]);
+  }, [connections, contacts, user, vaquitaName]);
   const [open, setOpen] = useState<Set<string>>(new Set());
   // Gasto ya cargado que se va a dividir con otras personas.
   const [splitting, setSplitting] = useState<Installment | null>(null);
@@ -85,6 +93,14 @@ export function TransactionList({
 
   const remove = async (it: Installment) => {
     if (!user) return;
+    // Lo generó una vaquita: se edita y se borra desde ahí (para todos).
+    if (it.vaquitaId) {
+      const name = vaquitaName.get(it.vaquitaId);
+      if (confirm(`Es de la vaquita${name ? ` «${name}»` : ""}: se edita y se borra desde ahí. ¿Ir a la vaquita?`)) {
+        router.push(`/vaquitas/${it.vaquitaId}`);
+      }
+      return;
+    }
     const split = it.kind === "expense" ? adjustment?.byTxId.get(it.transactionId)?.split : undefined;
     try {
       // Gasto mío repartido: se cancela el reparto (y se les avisa).
@@ -201,14 +217,17 @@ export function TransactionList({
 
       // Gasto mío repartido: muestro mi parte (y el total tachado).
       const splitInfo = it.kind === "expense" ? adjustment?.byTxId.get(it.transactionId) : undefined;
-      const displayAmount = splitInfo ? Math.round(it.amount * splitInfo.factor * 100) / 100 : it.amount;
-      const showDiff = !!splitInfo && Math.abs(displayAmount - it.amount) >= 0.01;
+      // Mi parte: la de un reparto y/o la de una vaquita (lo pagué yo pero era de varios).
+      const factor = it.kind === "expense" ? myShareFactor(it, adjustment) : 1;
+      const displayAmount = factor < 1 ? Math.round(it.amount * factor * 100) / 100 : it.amount;
+      const showDiff = factor < 1 && Math.abs(displayAmount - it.amount) >= 0.01;
+      const isVaquitaPart = !!vaquitaIdFromAccountId(it.accountId);
 
       const title =
         it.description || (isTransfer ? transferLabel : cat?.name || "Movimiento");
       const subtitle = isTransfer
         ? `${fromName === toName ? (fromName ?? "—") : `${fromName ?? "—"} → ${toName ?? "—"}`}${!isCardPayment && exchangeRate ? ` · a ${formatMoney(Math.round(exchangeRate * 100) / 100, "ARS")}` : ""} · ${formatShortDate(it.billingDate.toDate())}`
-        : `${cat?.name ?? "—"} · ${person ? `Pagó ${person} (le debés tu parte)` : (acc?.name ?? "—")} · ${formatShortDate(it.billingDate.toDate())}`;
+        : `${cat?.name ?? "—"} · ${isVaquitaPart ? "Tu parte (pagó otro)" : person ? `Pagó ${person} (le debés tu parte)` : (acc?.name ?? "—")} · ${formatShortDate(it.billingDate.toDate())}`;
       const amountText = flowSign
         ? `${flowSign}${formatMoney(it.amount, cur)}`
         : isTransfer
@@ -221,10 +240,15 @@ export function TransactionList({
 
       // Editar un gasto o ingreso mío (no transferencias ni mi parte de un gasto ajeno).
       const canEdit =
-        (it.kind === "expense" || it.kind === "income") && !it.splitId && !isPersonAccountId(it.accountId);
+        (it.kind === "expense" || it.kind === "income") && !it.splitId && !it.vaquitaId && !isVirtualAccountId(it.accountId);
       // Dividir un gasto mío ya cargado (no repartido todavía).
       const canSplit =
-        !!adjustment && it.kind === "expense" && !splitInfo && !it.splitId && !isPersonAccountId(it.accountId);
+        !!adjustment &&
+        it.kind === "expense" &&
+        !splitInfo &&
+        !it.splitId &&
+        !it.vaquitaId &&
+        !isVirtualAccountId(it.accountId);
 
       const pill = "whitespace-nowrap rounded-full px-2 py-0.5 text-[10px] font-medium";
       const badges = [
@@ -327,6 +351,15 @@ export function TransactionList({
                     : splitInfo.rejectedCount > 0
                       ? ` · ${splitInfo.rejectedCount} no aceptó`
                       : ""}
+                </Link>
+              )}
+              {it.vaquitaId && (
+                <Link
+                  href={`/vaquitas/${it.vaquitaId}`}
+                  className="mt-1.5 inline-flex items-center gap-1 rounded-full bg-brand/10 px-2 py-0.5 text-[10px] font-medium text-brand hover:bg-brand/20"
+                >
+                  <PiggyBank className="size-3" />
+                  Vaquita{vaquitaName.get(it.vaquitaId) ? `: ${vaquitaName.get(it.vaquitaId)}` : ""}
                 </Link>
               )}
               {it.splitId && (

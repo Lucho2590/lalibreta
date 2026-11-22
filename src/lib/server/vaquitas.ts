@@ -1,0 +1,779 @@
+import "server-only";
+
+import { randomBytes } from "node:crypto";
+import { FieldValue, Timestamp } from "firebase-admin/firestore";
+import { adminDb } from "./firebase-admin";
+import { notify } from "./notifications";
+import { PeopleError, areConnected, loadProfile } from "./connections";
+import { tryGetAppRates } from "./fx";
+import { dateFromYMD, isYMD, todayYMD } from "./time";
+import { createTransactionAdmin, type ServerAccount } from "./transactions-admin";
+import { parsePersonRef, profileName, type PersonRef } from "@/lib/domain/people";
+import { accountCurrencies, isCurrency, type AccountType, type Currency } from "@/lib/domain/types";
+import {
+  checkPaidBy,
+  computeExpenseBooks,
+  computeShares,
+  crossRate,
+  firstName,
+  summarizeVaquita,
+  vaquitaAccountId,
+  type Vaquita,
+  type VaquitaExpense,
+  type VaquitaFamily,
+  type VaquitaLeg,
+  type VaquitaMember,
+  type VaquitaPayment,
+  type VaquitaSplitMode,
+} from "@/lib/domain/vaquitas";
+import { currencyLabel, formatMoney } from "@/lib/format";
+
+/**
+ * Vaquitas (ver lib/domain/vaquitas.ts). Todo se escribe acá con Admin SDK:
+ * los integrantes con la app ven y editan todo, y cada gasto se refleja en
+ * las cuentas de cada uno (su gasto real si pagó, o su parte contra la
+ * "cuenta" de la vaquita).
+ */
+
+const db = () => adminDb();
+const col = () => db().collection("vaquitas");
+const expensesCol = (vid: string) => col().doc(vid).collection("expenses");
+const paymentsCol = (vid: string) => col().doc(vid).collection("payments");
+const round2 = (n: number) => Math.round(n * 100) / 100;
+const newId = (prefix: string) => `${prefix}${randomBytes(5).toString("hex")}`;
+
+/** Ids de los asientos en las cuentas de cada usuario. */
+const realTxId = (eid: string) => `vq_${eid}`;
+const partTxId = (eid: string) => `vqp_${eid}`;
+const paymentTxId = (pid: string) => `vqpay_${pid}`;
+
+const toVaquita = (snap: FirebaseFirestore.DocumentSnapshot): Vaquita => ({ id: snap.id, ...snap.data() }) as Vaquita;
+
+export const loadVaquita = async (id: string): Promise<Vaquita> => {
+  if (!id || typeof id !== "string") throw new PeopleError("Falta la vaquita");
+  const snap = await col().doc(id).get();
+  if (!snap.exists) throw new PeopleError("Esa vaquita no existe", 404);
+  return toVaquita(snap);
+};
+
+const loadMember = async (uid: string, id: string): Promise<Vaquita> => {
+  const v = await loadVaquita(id);
+  if (!v.uids.includes(uid)) throw new PeopleError("No participás de esta vaquita", 403);
+  return v;
+};
+
+const memberOf = (v: Vaquita, uid: string) => v.members.find((m) => m.uid === uid) ?? null;
+const indexUids = (members: VaquitaMember[]) => [...new Set(members.map((m) => m.uid).filter((u): u is string => !!u))];
+
+const cleanName = (s: unknown, max = 60) => String(s ?? "").trim().replace(/\s+/g, " ").slice(0, max);
+
+// === Categoría de cada uno ===
+
+/** Categoría de gastos para la vaquita: "Viajes" si hay, si no "Salidas", si no la primera. */
+const guessCategory = async (uid: string): Promise<string> => {
+  const snap = await db().collection(`users/${uid}/categories`).where("kind", "==", "expense").get();
+  const cats = snap.docs.map((d) => ({ id: d.id, name: String(d.data().name ?? "") }));
+  const find = (re: RegExp) => cats.find((c) => re.test(c.name.toLowerCase()));
+  return (
+    find(/viaj|vacac|turism/)?.id ??
+    find(/salida/)?.id ??
+    cats.sort((a, b) => a.name.localeCompare(b.name, "es"))[0]?.id ??
+    ""
+  );
+};
+
+const checkCategory = async (uid: string, categoryId: string) => {
+  const c = (await db().doc(`users/${uid}/categories/${categoryId}`).get()).data();
+  if (!c || c.kind !== "expense") throw new PeopleError("Esa categoría no existe");
+};
+
+// === Cotizaciones ===
+
+/**
+ * Unidades de la moneda de la vaquita por 1 de `from`. Si viene una
+ * cotización a mano (> 0) se usa esa; si no, la oficial del día.
+ */
+const resolveRate = async (from: Currency, to: Currency, date: string, manual?: number | null) => {
+  if (from === to) return 1;
+  if (manual && manual > 0 && Number.isFinite(manual)) return Math.round(manual * 1e6) / 1e6;
+  const fx = await tryGetAppRates(date);
+  const r = crossRate(from, to, fx?.rates);
+  if (!r) {
+    throw new PeopleError(
+      `No conseguí la cotización de ${currencyLabel(from).toLowerCase()} a ${currencyLabel(to).toLowerCase()}. Ponela a mano.`,
+    );
+  }
+  return r;
+};
+
+// === Integrantes ===
+
+export interface MemberInput {
+  /** Alguien de la app (u:) o un contacto (c:). */
+  ref?: PersonRef;
+  /** Alguien sin la app, solo con el nombre. */
+  name?: string;
+  /** Id de familia (de las que vienen en la misma llamada o ya existentes). */
+  familyId?: string | null;
+}
+
+/** Arma un integrante nuevo (valida que sea una conexión o un contacto mío). */
+const buildMember = async (me: string, input: MemberInput, existing: VaquitaMember[]): Promise<VaquitaMember> => {
+  const familyId = input.familyId ?? null;
+  if (input.ref) {
+    const parsed = parsePersonRef(input.ref);
+    if (!parsed) throw new PeopleError("Persona inválida");
+    if (parsed.type === "user") {
+      if (existing.some((m) => m.uid === parsed.uid)) throw new PeopleError("Esa persona ya está en la vaquita");
+      if (parsed.uid !== me && !(await areConnected(me, parsed.uid))) {
+        throw new PeopleError("Solo podés sumar gente con la que estás conectado");
+      }
+      const p = await loadProfile(parsed.uid);
+      return { id: newId("m_"), name: profileName(p), uid: parsed.uid, email: p.email || null, familyId };
+    }
+    const c = (await db().doc(`users/${me}/contacts/${parsed.contactId}`).get()).data();
+    if (!c) throw new PeopleError("Ese contacto no existe");
+    const linked = (c.linkedUid as string | null | undefined) ?? null;
+    if (linked) return buildMember(me, { ref: `u:${linked}`, familyId }, existing);
+    return {
+      id: newId("m_"),
+      name: cleanName(c.displayName || c.email || "Contacto"),
+      uid: null,
+      email: (c.email as string | null | undefined) ?? null,
+      familyId,
+    };
+  }
+  const name = cleanName(input.name);
+  if (!name) throw new PeopleError("Poné el nombre");
+  return { id: newId("m_"), name, uid: null, email: null, familyId };
+};
+
+const inviteNotice = async (v: Pick<Vaquita, "id" | "name">, uid: string, byName: string) => {
+  await notify(uid, {
+    kind: "vaquita-invite",
+    title: `${firstName(byName)} te sumó a una vaquita`,
+    body: `«${v.name}»: ahí ven y cargan los gastos entre todos.`,
+    url: `/vaquitas/${v.id}`,
+    whatsappText: `🐮 *${firstName(byName)}* te sumó a la vaquita *${v.name}*. Entrá a La Libreta para ver y cargar los gastos.`,
+  });
+};
+
+export interface CreateVaquitaInput {
+  name: string;
+  currency: Currency;
+  members: MemberInput[];
+  families?: Array<{ id: string; name: string }>;
+  /** Mi familia (id de `families`), si estoy en una. */
+  myFamilyId?: string | null;
+}
+
+export const createVaquita = async (user: { uid: string }, input: CreateVaquitaInput): Promise<{ id: string }> => {
+  const name = cleanName(input.name);
+  if (!name) throw new PeopleError("Ponele un nombre");
+  if (!isCurrency(input.currency)) throw new PeopleError("Moneda inválida");
+  const families: VaquitaFamily[] = (input.families ?? [])
+    .map((f) => ({ id: String(f.id || newId("f_")), name: cleanName(f.name, 40) }))
+    .filter((f) => f.name);
+  const famIds = new Set(families.map((f) => f.id));
+  const fam = (id: string | null | undefined) => (id && famIds.has(id) ? id : null);
+
+  const meProfile = await loadProfile(user.uid);
+  const myName = profileName(meProfile);
+  const members: VaquitaMember[] = [
+    { id: newId("m_"), name: myName, uid: user.uid, email: meProfile.email || null, familyId: fam(input.myFamilyId) },
+  ];
+  for (const m of input.members ?? []) {
+    members.push(await buildMember(user.uid, { ...m, familyId: fam(m.familyId) }, members));
+  }
+  if (members.length < 2) throw new PeopleError("Sumá al menos a otra persona");
+
+  const uids = indexUids(members);
+  const categoryByUid: Record<string, string> = {};
+  for (const uid of uids) categoryByUid[uid] = await guessCategory(uid);
+
+  const ref = col().doc();
+  await ref.set({
+    name,
+    currency: input.currency,
+    createdByUid: user.uid,
+    members,
+    families: families.filter((f) => members.some((m) => m.familyId === f.id)),
+    uids,
+    categoryByUid,
+    status: "open",
+    createdAt: FieldValue.serverTimestamp(),
+    updatedAt: FieldValue.serverTimestamp(),
+  });
+  for (const uid of uids) if (uid !== user.uid) await inviteNotice({ id: ref.id, name }, uid, myName);
+  return { id: ref.id };
+};
+
+export interface UpdateVaquitaInput {
+  id: string;
+  name?: string;
+  currency?: Currency;
+  status?: "open" | "closed";
+  /** Mi categoría para los gastos de esta vaquita. */
+  categoryId?: string;
+}
+
+export const updateVaquita = async (user: { uid: string }, input: UpdateVaquitaInput): Promise<void> => {
+  const v = await loadMember(user.uid, input.id);
+  const patch: Record<string, unknown> = { updatedAt: FieldValue.serverTimestamp() };
+  let resync = false;
+  if (input.name !== undefined) {
+    const name = cleanName(input.name);
+    if (!name) throw new PeopleError("Ponele un nombre");
+    patch.name = name;
+  }
+  if (input.currency !== undefined && input.currency !== v.currency) {
+    if (!isCurrency(input.currency)) throw new PeopleError("Moneda inválida");
+    const [e, p] = await Promise.all([expensesCol(v.id).limit(1).get(), paymentsCol(v.id).limit(1).get()]);
+    if (!e.empty || !p.empty) throw new PeopleError("La moneda se puede cambiar solo antes de cargar gastos");
+    patch.currency = input.currency;
+  }
+  if (input.status !== undefined) {
+    if (input.status !== "open" && input.status !== "closed") throw new PeopleError("Estado inválido");
+    patch.status = input.status;
+    patch.closedAt = input.status === "closed" ? FieldValue.serverTimestamp() : null;
+  }
+  if (input.categoryId !== undefined) {
+    await checkCategory(user.uid, input.categoryId);
+    patch[`categoryByUid.${user.uid}`] = input.categoryId;
+    resync = true;
+  }
+  await col().doc(v.id).update(patch);
+  if (resync) await resyncAllBooks(v.id, [user.uid]);
+};
+
+/** Sumar gente. */
+export const addMembers = async (
+  user: { uid: string },
+  input: { id: string; members: MemberInput[] },
+): Promise<void> => {
+  const v = await loadMember(user.uid, input.id);
+  const famIds = new Set(v.families.map((f) => f.id));
+  const members = [...v.members];
+  const added: VaquitaMember[] = [];
+  for (const m of input.members ?? []) {
+    const nm = await buildMember(user.uid, { ...m, familyId: m.familyId && famIds.has(m.familyId) ? m.familyId : null }, members);
+    members.push(nm);
+    added.push(nm);
+  }
+  if (!added.length) return;
+  const uids = indexUids(members);
+  const patch: Record<string, unknown> = { members, uids, updatedAt: FieldValue.serverTimestamp() };
+  for (const m of added) {
+    if (m.uid && !v.categoryByUid?.[m.uid]) patch[`categoryByUid.${m.uid}`] = await guessCategory(m.uid);
+  }
+  await col().doc(v.id).update(patch);
+  const myName = profileName(await loadProfile(user.uid));
+  for (const m of added) if (m.uid && m.uid !== user.uid) await inviteNotice(v, m.uid, myName);
+  // Si entra a una familia, cambia a los gastos de quién va cada cosa.
+  if (added.some((m) => m.familyId)) await resyncAllBooks(v.id);
+  await refreshSummary(v.id);
+};
+
+/** Cambiar el nombre de alguien sin la app. */
+export const renameMember = async (
+  user: { uid: string },
+  input: { id: string; memberId: string; name: string },
+): Promise<void> => {
+  const v = await loadMember(user.uid, input.id);
+  const name = cleanName(input.name);
+  if (!name) throw new PeopleError("Poné el nombre");
+  const members = v.members.map((m) => {
+    if (m.id !== input.memberId) return m;
+    if (m.uid) throw new PeopleError("El nombre de alguien de la app lo cambia esa persona");
+    return { ...m, name };
+  });
+  await col().doc(v.id).update({ members, updatedAt: FieldValue.serverTimestamp() });
+};
+
+/** Sacar a alguien (solo si no tiene gastos ni pagos en la vaquita). */
+export const removeMember = async (
+  user: { uid: string },
+  input: { id: string; memberId: string },
+): Promise<void> => {
+  const v = await loadMember(user.uid, input.id);
+  const m = v.members.find((x) => x.id === input.memberId);
+  if (!m) throw new PeopleError("Esa persona no está en la vaquita");
+  const [exps, pays] = await Promise.all([expensesCol(v.id).get(), paymentsCol(v.id).get()]);
+  const used =
+    exps.docs.some((d) => {
+      const e = d.data() as VaquitaExpense;
+      return (e.paidBy?.[m.id] ?? 0) > 0 || (e.shares?.[m.id] ?? 0) > 0;
+    }) ||
+    pays.docs.some((d) => {
+      const p = d.data() as VaquitaPayment;
+      return p.from === m.id || p.to === m.id;
+    });
+  if (used) throw new PeopleError(`${firstName(m.name)} tiene gastos o pagos en la vaquita: sacalo de esos gastos primero`);
+  const members = v.members.filter((x) => x.id !== m.id);
+  if (members.length < 1) throw new PeopleError("La vaquita se quedaría sin nadie");
+  const uids = indexUids(members);
+  if (uids.length === 0) throw new PeopleError("Tiene que quedar al menos alguien con la app");
+  await col().doc(v.id).update({
+    members,
+    uids,
+    families: v.families.filter((f) => members.some((x) => x.familyId === f.id)),
+    updatedAt: FieldValue.serverTimestamp(),
+  });
+  await refreshSummary(v.id);
+};
+
+/**
+ * Armar las familias: la lista completa (las que no vienen se borran) y a
+ * qué familia va cada integrante. Rehace los asientos de todos los gastos.
+ */
+export const setFamilies = async (
+  user: { uid: string },
+  input: { id: string; families: Array<{ id?: string; name: string }>; assignment: Record<string, string | null> },
+): Promise<void> => {
+  const v = await loadMember(user.uid, input.id);
+  const families: VaquitaFamily[] = (input.families ?? [])
+    .map((f) => ({ id: String(f.id || newId("f_")), name: cleanName(f.name, 40) }))
+    .filter((f) => f.name);
+  const famIds = new Set(families.map((f) => f.id));
+  const members = v.members.map((m) => {
+    const a = input.assignment?.[m.id];
+    const familyId = a === undefined ? m.familyId : a;
+    return { ...m, familyId: familyId && famIds.has(familyId) ? familyId : null };
+  });
+  await col().doc(v.id).update({
+    members,
+    families: families.filter((f) => members.some((m) => m.familyId === f.id)),
+    updatedAt: FieldValue.serverTimestamp(),
+  });
+  await resyncAllBooks(v.id);
+  await refreshSummary(v.id);
+};
+
+/** Borrar la vaquita (solo quien la creó): se sacan sus asientos de las cuentas de todos. */
+export const deleteVaquita = async (user: { uid: string }, input: { id: string }): Promise<void> => {
+  const v = await loadMember(user.uid, input.id);
+  if (v.createdByUid !== user.uid) throw new PeopleError("Solo quien creó la vaquita la puede borrar");
+  const [exps, pays] = await Promise.all([expensesCol(v.id).get(), paymentsCol(v.id).get()]);
+  for (const d of exps.docs) {
+    await clearExpenseBooks(d.id, (d.data().bookUids as string[] | undefined) ?? v.uids);
+    await d.ref.delete();
+  }
+  for (const d of pays.docs) {
+    await clearPaymentBooks(d.id, Object.keys((d.data().legs as Record<string, unknown> | undefined) ?? {}));
+    await d.ref.delete();
+  }
+  await col().doc(v.id).delete();
+};
+
+// === Asientos en las cuentas de cada uno ===
+
+type ServerAccountDoc = ServerAccount & { name: string; active?: boolean; currencies?: Currency[] | null };
+
+const loadAccount = async (uid: string, accountId: string): Promise<ServerAccountDoc> => {
+  const d = (await db().doc(`users/${uid}/accounts/${accountId}`).get()).data();
+  if (!d || d.active === false) throw new PeopleError("Esa cuenta no existe");
+  return {
+    id: accountId,
+    type: d.type as AccountType,
+    defaultClosingDay: d.defaultClosingDay as number | undefined,
+    defaultDueDay: d.defaultDueDay as number | undefined,
+    name: String(d.name ?? ""),
+    currencies: (d.currencies as Currency[] | null | undefined) ?? null,
+  };
+};
+
+/** La cuenta tiene que manejar la moneda (si no, se la agrega; las tarjetas solo pesos y dólares). */
+const ensureCurrency = async (uid: string, acc: ServerAccountDoc, currency: Currency) => {
+  const list = accountCurrencies(acc);
+  if (list.includes(currency)) return;
+  if (acc.type === "credit") {
+    throw new PeopleError(`Las tarjetas cobran en pesos o dólares: cargá el gasto en una de esas monedas`);
+  }
+  if (acc.type === "reserve") throw new PeopleError(`"${acc.name}" no maneja ${currencyLabel(currency).toLowerCase()}`);
+  await db().doc(`users/${uid}/accounts/${acc.id}`).update({ currencies: [...list, currency] });
+};
+
+const deleteTxWithInstallments = async (uid: string, txIds: string[]) => {
+  const ins = await db().collection(`users/${uid}/installments`).where("transactionId", "in", txIds).get();
+  const batch = db().batch();
+  ins.docs.forEach((d) => batch.delete(d.ref));
+  for (const id of txIds) batch.delete(db().doc(`users/${uid}/transactions/${id}`));
+  await batch.commit();
+};
+
+const clearExpenseBooks = async (eid: string, uids: string[]) => {
+  for (const uid of new Set(uids)) await deleteTxWithInstallments(uid, [realTxId(eid), partTxId(eid)]);
+};
+
+const clearPaymentBooks = async (pid: string, uids: string[]) => {
+  for (const uid of new Set(uids)) await deleteTxWithInstallments(uid, [paymentTxId(pid)]);
+};
+
+/** Rehace lo que un gasto escribe en las cuentas de cada uno. */
+const syncExpenseBooks = async (v: Vaquita, e: VaquitaExpense & { bookUids?: string[] }, only?: string[]) => {
+  const entries = computeExpenseBooks(v, e);
+  const touched = new Set([...(e.bookUids ?? []), ...entries.map((x) => x.uid)]);
+  const scope = only ? [...touched].filter((u) => only.includes(u)) : [...touched];
+  await clearExpenseBooks(e.id, scope);
+
+  const date = dateFromYMD(e.date);
+  const month = e.date.slice(0, 7);
+  const createdAt = e.createdAt instanceof Timestamp ? e.createdAt : Timestamp.now();
+  // Los que quedan fuera de `only` no se tocan: siguen como estaban.
+  const written: string[] = (e.bookUids ?? []).filter((u) => !scope.includes(u));
+  for (const x of entries) {
+    if (!scope.includes(x.uid)) continue;
+    const categoryId = v.categoryByUid?.[x.uid] ?? "";
+    const base = { vaquitaId: v.id, vaquitaExpenseId: e.id };
+    if (x.realTx) {
+      try {
+        const acc = await loadAccount(x.uid, x.realTx.accountId);
+        await createTransactionAdmin({
+          id: realTxId(e.id),
+          ownerUid: x.uid,
+          account: acc,
+          accountId: acc.id,
+          categoryId,
+          description: e.description,
+          totalAmount: x.realTx.amount,
+          purchaseDate: date,
+          kind: "expense",
+          installments: x.realTx.installments,
+          currency: e.currency,
+          extra: { ...base, shareFactor: x.realTx.shareFactor, createdAt },
+        });
+        if (!written.includes(x.uid)) written.push(x.uid);
+      } catch (err) {
+        // La cuenta ya no existe: queda como su parte, sin el gasto real.
+        console.warn("[vaquitas] no se pudo escribir el gasto real", x.uid, err);
+        x.partAmount = x.carried;
+      }
+    }
+    if (x.partAmount >= 0.01) {
+      const id = partTxId(e.id);
+      const accountId = vaquitaAccountId(v.id);
+      const batch = db().batch();
+      batch.set(db().doc(`users/${x.uid}/transactions/${id}`), {
+        accountId,
+        categoryId,
+        description: e.description,
+        totalAmount: x.partAmount,
+        purchaseDate: Timestamp.fromDate(date),
+        kind: "expense",
+        installments: 1,
+        cardClosedAtPurchase: false,
+        firstBillingMonth: month,
+        currency: e.currency,
+        ...base,
+        createdAt,
+      });
+      batch.set(db().doc(`users/${x.uid}/installments/${id}_1`), {
+        transactionId: id,
+        accountId,
+        categoryId,
+        amount: x.partAmount,
+        billingMonth: month,
+        billingDate: Timestamp.fromDate(date),
+        paymentMonth: month,
+        installmentNumber: 1,
+        totalInstallments: 1,
+        kind: "expense",
+        description: e.description,
+        currency: e.currency,
+        ...base,
+      });
+      await batch.commit();
+      if (!written.includes(x.uid)) written.push(x.uid);
+    }
+  }
+  await expensesCol(v.id).doc(e.id).update({ bookUids: written });
+};
+
+/** Rehace lo que un pago escribe en las cuentas de quien lo mandó y quien lo recibió. */
+const syncPaymentBooks = async (v: Vaquita, p: VaquitaPayment, prevUids: string[] = []) => {
+  await clearPaymentBooks(p.id, [...prevUids, ...Object.keys(p.legs ?? {})]);
+  const byId = new Map(v.members.map((m) => [m.id, m]));
+  const from = byId.get(p.from);
+  const to = byId.get(p.to);
+  const date = dateFromYMD(p.date);
+  const month = p.date.slice(0, 7);
+  const createdAt = p.createdAt instanceof Timestamp ? p.createdAt : Timestamp.now();
+  const counterpart = vaquitaAccountId(v.id);
+  for (const [uid, leg] of Object.entries(p.legs ?? {})) {
+    const role = from?.uid === uid ? "source" : to?.uid === uid ? "destination" : null;
+    if (!role) continue;
+    const other = role === "source" ? to : from;
+    const description = p.note || `${v.name}: ${role === "source" ? "pago a" : "pago de"} ${firstName(other?.name ?? "alguien")}`;
+    const id = paymentTxId(p.id);
+    const batch = db().batch();
+    batch.set(db().doc(`users/${uid}/transactions/${id}`), {
+      accountId: role === "source" ? leg.accountId : counterpart,
+      toAccountId: role === "source" ? counterpart : leg.accountId,
+      categoryId: "",
+      description,
+      totalAmount: p.amount,
+      purchaseDate: Timestamp.fromDate(date),
+      kind: "transfer",
+      installments: 1,
+      firstBillingMonth: month,
+      currency: p.currency,
+      transferType: "p2p",
+      vaquitaId: v.id,
+      vaquitaPaymentId: p.id,
+      createdAt,
+    });
+    batch.set(db().doc(`users/${uid}/installments/${id}`), {
+      transactionId: id,
+      accountId: leg.accountId,
+      categoryId: "",
+      amount: p.amount,
+      billingMonth: month,
+      billingDate: Timestamp.fromDate(date),
+      paymentMonth: month,
+      installmentNumber: 1,
+      totalInstallments: 1,
+      kind: "transfer",
+      description,
+      transferType: "p2p",
+      transferRole: role,
+      transferCounterpartId: counterpart,
+      currency: p.currency,
+      vaquitaId: v.id,
+      vaquitaPaymentId: p.id,
+    });
+    await batch.commit();
+  }
+};
+
+/** Rehace los asientos de todos los gastos (cambió una familia, una categoría…). */
+const resyncAllBooks = async (vid: string, only?: string[]) => {
+  const v = await loadVaquita(vid);
+  const exps = await expensesCol(vid).get();
+  for (const d of exps.docs) {
+    await syncExpenseBooks(v, { id: d.id, ...(d.data() as Omit<VaquitaExpense, "id">) }, only);
+  }
+};
+
+/**
+ * Guarda en la vaquita el total y el saldo de cada parte (para la lista, sin
+ * tener que leer todos los gastos).
+ */
+const refreshSummary = async (vid: string) => {
+  const v = await loadVaquita(vid);
+  const [exps, pays] = await Promise.all([expensesCol(vid).get(), paymentsCol(vid).get()]);
+  const s = summarizeVaquita(
+    v,
+    exps.docs.map((d) => ({ id: d.id, ...d.data() }) as VaquitaExpense),
+    pays.docs.map((d) => ({ id: d.id, ...d.data() }) as VaquitaPayment),
+  );
+  await col().doc(vid).update({
+    summary: {
+      total: s.total,
+      netByUnit: Object.fromEntries(s.units.map((u) => [u.id, u.net])),
+      expenses: exps.size,
+      lastDate: exps.docs.map((d) => String(d.data().date ?? "")).sort().pop() ?? null,
+    },
+    updatedAt: FieldValue.serverTimestamp(),
+  });
+};
+
+// === Gastos ===
+
+export interface ExpenseInput {
+  vaquitaId: string;
+  /** Para editar uno que ya existe. */
+  expenseId?: string;
+  description: string;
+  date?: string;
+  amount: number;
+  currency: Currency;
+  /** Cotización a mano (moneda de la vaquita por 1 de `currency`). */
+  rate?: number | null;
+  paidBy: Record<string, number>;
+  splitMode: VaquitaSplitMode;
+  splitAmong: string[];
+  amounts?: Record<string, number>;
+  shareInFamily?: boolean;
+  /** Con qué pagué yo (si estoy entre los que pagaron). null = no lo registro en mis cuentas. */
+  myLeg?: VaquitaLeg | null;
+}
+
+export const saveExpense = async (user: { uid: string }, input: ExpenseInput): Promise<{ id: string }> => {
+  const v = await loadMember(user.uid, input.vaquitaId);
+  if (v.status === "closed" && !input.expenseId) throw new PeopleError("La vaquita está cerrada: abrila para cargar gastos");
+  const description = cleanName(input.description, 80);
+  if (!description) throw new PeopleError("Poné qué fue");
+  if (!isCurrency(input.currency)) throw new PeopleError("Moneda inválida");
+  const amount = round2(Number(input.amount));
+  if (!(amount > 0)) throw new PeopleError("Ingresá un monto");
+  const date = input.date && isYMD(input.date) ? input.date : todayYMD();
+  const mode: VaquitaSplitMode = ["people", "families", "amounts"].includes(input.splitMode) ? input.splitMode : "people";
+
+  const paid = checkPaidBy(v, amount, input.paidBy ?? {});
+  if (paid.error) throw new PeopleError(paid.error);
+  const sh = computeShares(v, { amount, splitMode: mode, splitAmong: input.splitAmong ?? [], amounts: input.amounts });
+  if (sh.error) throw new PeopleError(sh.error);
+  const rate = await resolveRate(input.currency, v.currency, date, input.rate);
+
+  const ref = input.expenseId ? expensesCol(v.id).doc(input.expenseId) : expensesCol(v.id).doc();
+  const prevSnap = input.expenseId ? await ref.get() : null;
+  if (input.expenseId && !prevSnap?.exists) throw new PeopleError("Ese gasto ya no existe", 404);
+  const prev = prevSnap?.exists ? ({ id: ref.id, ...prevSnap.data() } as VaquitaExpense & { bookUids?: string[] }) : null;
+
+  // Cuentas con las que pagó cada uno: cada uno elige la suya. Si dejó de
+  // estar entre los que pagaron, se saca.
+  const me = memberOf(v, user.uid);
+  const legs: Record<string, VaquitaLeg> = {};
+  for (const [uid, leg] of Object.entries(prev?.legs ?? {})) {
+    const m = memberOf(v, uid);
+    if (m && (paid.paidBy[m.id] ?? 0) > 0) legs[uid] = leg;
+  }
+  if (input.myLeg !== undefined && me) {
+    if (input.myLeg && (paid.paidBy[me.id] ?? 0) > 0) {
+      if (!input.myLeg.accountId) throw new PeopleError("Elegí con qué pagaste");
+      const acc = await loadAccount(user.uid, input.myLeg.accountId);
+      await ensureCurrency(user.uid, acc, input.currency);
+      const installments = acc.type === "credit" ? Math.min(60, Math.max(1, Math.round(input.myLeg.installments || 1))) : 1;
+      legs[user.uid] = { accountId: acc.id, installments };
+    } else {
+      delete legs[user.uid];
+    }
+  }
+
+  const myName = me?.name ?? profileName(await loadProfile(user.uid));
+  const data = {
+    description,
+    date,
+    amount,
+    currency: input.currency,
+    rate,
+    paidBy: paid.paidBy,
+    splitMode: mode,
+    splitAmong: mode === "amounts" ? Object.keys(sh.shares) : (input.splitAmong ?? []),
+    shares: sh.shares,
+    shareInFamily: !!input.shareInFamily,
+    legs,
+    updatedAt: FieldValue.serverTimestamp(),
+  };
+  if (prev) {
+    await ref.update(data);
+  } else {
+    await ref.set({
+      ...data,
+      createdByUid: user.uid,
+      createdByName: myName,
+      createdAt: FieldValue.serverTimestamp(),
+      bookUids: [],
+    });
+  }
+  const fresh = await ref.get();
+  await syncExpenseBooks(v, { id: ref.id, ...(fresh.data() as Omit<VaquitaExpense, "id">), bookUids: prev?.bookUids ?? [] });
+  await refreshSummary(v.id);
+  return { id: ref.id };
+};
+
+export const deleteExpense = async (user: { uid: string }, input: { vaquitaId: string; expenseId: string }): Promise<void> => {
+  const v = await loadMember(user.uid, input.vaquitaId);
+  const ref = expensesCol(v.id).doc(input.expenseId);
+  const snap = await ref.get();
+  if (!snap.exists) return;
+  await clearExpenseBooks(snap.id, [...((snap.data()?.bookUids as string[] | undefined) ?? []), ...v.uids]);
+  await ref.delete();
+  await refreshSummary(v.id);
+};
+
+// === Pagos para saldar ===
+
+export interface PaymentInput {
+  vaquitaId: string;
+  paymentId?: string;
+  from: string;
+  to: string;
+  amount: number;
+  currency: Currency;
+  rate?: number | null;
+  date?: string;
+  note?: string;
+  /** Mi cuenta (si soy quien mandó o quien recibió). null = no lo registro. */
+  myAccountId?: string | null;
+}
+
+export const savePayment = async (user: { uid: string }, input: PaymentInput): Promise<{ id: string }> => {
+  const v = await loadMember(user.uid, input.vaquitaId);
+  const byId = new Map(v.members.map((m) => [m.id, m]));
+  const from = byId.get(input.from);
+  const to = byId.get(input.to);
+  if (!from || !to) throw new PeopleError("Elegí quién pagó y a quién");
+  if (from.id === to.id) throw new PeopleError("Tienen que ser dos personas distintas");
+  if (!isCurrency(input.currency)) throw new PeopleError("Moneda inválida");
+  const amount = round2(Number(input.amount));
+  if (!(amount > 0)) throw new PeopleError("Ingresá un monto");
+  const date = input.date && isYMD(input.date) ? input.date : todayYMD();
+  const rate = await resolveRate(input.currency, v.currency, date, input.rate);
+
+  const ref = input.paymentId ? paymentsCol(v.id).doc(input.paymentId) : paymentsCol(v.id).doc();
+  const prevSnap = input.paymentId ? await ref.get() : null;
+  if (input.paymentId && !prevSnap?.exists) throw new PeopleError("Ese pago ya no existe", 404);
+  const prev = prevSnap?.exists ? ({ id: ref.id, ...prevSnap.data() } as VaquitaPayment) : null;
+
+  const legs: Record<string, { accountId: string }> = {};
+  for (const [uid, leg] of Object.entries(prev?.legs ?? {})) {
+    if (uid === from.uid || uid === to.uid) legs[uid] = leg;
+  }
+  const iAmParty = from.uid === user.uid || to.uid === user.uid;
+  if (input.myAccountId !== undefined && iAmParty) {
+    if (input.myAccountId) {
+      const acc = await loadAccount(user.uid, input.myAccountId);
+      if (acc.type === "credit") throw new PeopleError("Elegí una cuenta (no una tarjeta)");
+      await ensureCurrency(user.uid, acc, input.currency);
+      legs[user.uid] = { accountId: acc.id };
+    } else delete legs[user.uid];
+  }
+
+  const data = {
+    from: from.id,
+    to: to.id,
+    amount,
+    currency: input.currency,
+    rate,
+    date,
+    note: cleanName(input.note, 80),
+    legs,
+  };
+  if (prev) await ref.update(data);
+  else await ref.set({ ...data, createdByUid: user.uid, createdAt: FieldValue.serverTimestamp() });
+  const fresh = { id: ref.id, ...((await ref.get()).data() as Omit<VaquitaPayment, "id">) };
+  await syncPaymentBooks(v, fresh, Object.keys(prev?.legs ?? {}));
+  await refreshSummary(v.id);
+
+  // Aviso a la otra punta (si usa la app y no es quien lo cargó).
+  if (!prev) {
+    const myName = memberOf(v, user.uid)?.name ?? "Alguien";
+    for (const m of [from, to]) {
+      if (!m.uid || m.uid === user.uid) continue;
+      const other = m.id === from.id ? to : from;
+      const text =
+        m.id === to.id
+          ? `${firstName(other.name)} te pagó ${formatMoney(amount, input.currency)}`
+          : `Le pagaste ${formatMoney(amount, input.currency)} a ${firstName(other.name)}`;
+      await notify(m.uid, {
+        kind: "vaquita-payment",
+        title: `${v.name}: ${text}`,
+        body: `Lo anotó ${firstName(myName)}. Elegí en qué cuenta ${m.id === to.id ? "entró" : "salió"} para que quede en tus cuentas.`,
+        url: `/vaquitas/${v.id}`,
+        whatsappText: `🐮 *${v.name}*: ${text}. Entrá a La Libreta para elegir la cuenta.`,
+      });
+    }
+  }
+  return { id: ref.id };
+};
+
+export const deletePayment = async (user: { uid: string }, input: { vaquitaId: string; paymentId: string }): Promise<void> => {
+  const v = await loadMember(user.uid, input.vaquitaId);
+  const ref = paymentsCol(v.id).doc(input.paymentId);
+  const snap = await ref.get();
+  if (!snap.exists) return;
+  await clearPaymentBooks(snap.id, Object.keys((snap.data()?.legs as Record<string, unknown> | undefined) ?? {}));
+  await ref.delete();
+  await refreshSummary(v.id);
+};

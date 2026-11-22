@@ -193,7 +193,8 @@ export const notify = async (uid: string, input: NotifyInput): Promise<NotifyRes
       input.kind === "connection-response" ||
       input.kind === "split-response" ||
       input.kind === "split-cancelled" ||
-      input.kind === "p2p-response"
+      input.kind === "p2p-response" ||
+      input.kind === "vaquita-payment"
     ) {
       if (!prefs.shared) return result;
     }
