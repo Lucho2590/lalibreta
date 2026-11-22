@@ -7,6 +7,7 @@ import { BottomNav } from "./bottom-nav";
 import { Sidebar } from "./sidebar";
 import { PwaSetup } from "@/components/pwa/pwa-setup";
 import { LocationPrompt } from "@/components/pwa/location-prompt";
+import { NovedadesDialog } from "@/components/novedades/novedades-dialog";
 import { NewTransactionSheetProvider } from "@/components/transactions/new-transaction-sheet";
 
 const PUBLIC_ROUTES = ["/login"];
@@ -18,6 +19,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <ProtectedRoute>
       <PwaSetup />
+      <NovedadesDialog />
       <LocationPrompt />
       <NewTransactionSheetProvider>
         <div className="flex min-h-screen">
