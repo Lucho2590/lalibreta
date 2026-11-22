@@ -9,7 +9,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { NewVaquitaForm } from "@/components/vaquitas/new-vaquita-form";
 import { useAuth } from "@/hooks/use-auth";
 import { useVaquitas } from "@/hooks/use-vaquitas";
-import { firstName, myUnitNet, type Vaquita } from "@/lib/domain/vaquitas";
+import { firstName, myUnitNet, vaquitaDateText, type Vaquita } from "@/lib/domain/vaquitas";
 import { formatMoney } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { ENTER, enterDelay } from "@/components/motion/enter";
@@ -40,10 +40,11 @@ function VaquitaRow({ v, index, uid }: { v: Vaquita; index: number; uid?: string
       <div className="min-w-0 flex-1">
         <div className="truncate text-sm font-semibold">{v.name}</div>
         <div className="truncate text-xs text-muted-foreground">
+          {vaquitaDateText(v) && <span className="font-medium">{vaquitaDateText(v)} · </span>}
           {v.families.length > 0
             ? v.families.map((f) => f.name).join(" · ")
             : v.members.map((m) => (m.uid === uid ? "Vos" : firstName(m.name))).join(", ")}
-          {v.status === "closed" && ` · ${dateText(v.closedAt?.toDate?.() ?? dateOf(v))}`}
+          {v.status === "closed" && !vaquitaDateText(v) && ` · ${dateText(v.closedAt?.toDate?.() ?? dateOf(v))}`}
         </div>
       </div>
       <div className="text-right">

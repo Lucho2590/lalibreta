@@ -20,6 +20,7 @@ import {
   summarizeVaquita,
   toVaquitaCurrency,
   unitOfMember,
+  vaquitaDateText,
   type Settlement,
   type Vaquita,
   type VaquitaExpense,
@@ -107,6 +108,7 @@ export default function VaquitaPage({ params }: { params: Promise<{ id: string }
         <CardContent className="space-y-4 py-5">
           <div>
             <h1 className="text-2xl font-bold tracking-tight">{v.name}</h1>
+            {vaquitaDateText(v) && <p className="text-sm font-medium opacity-90">{vaquitaDateText(v)}</p>}
             <p className="text-sm opacity-80">
               {v.families.length > 0
                 ? v.families.map((f) => f.name).join(" · ")

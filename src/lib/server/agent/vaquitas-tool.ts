@@ -11,10 +11,13 @@ import {
   carriedShares,
   computeShares,
   crossRate,
+  defaultExpenseDate,
   firstName,
+  normalizeVaquitaDates,
   summarizeVaquita,
   toVaquitaCurrency,
   unitOfMember,
+  vaquitaDateText,
   vaquitaUnits,
   type Vaquita,
   type VaquitaMember,
@@ -74,7 +77,7 @@ export const VAQUITA_TOOLS: ChatCompletionFunctionTool[] = [
           description: { type: "string", description: 'Qué fue ("Nafta", "Cena", "Súper")' },
           amount: { type: "number" },
           currency: { type: "string", enum: CURRENCIES, description: 'Moneda del gasto (por defecto, la de la vaquita). Si dice pesos, "lucas" o "mil" en una vaquita en otra moneda, ARS.' },
-          date: { type: "string", description: "YYYY-MM-DD (por defecto hoy)" },
+          date: { type: "string", description: "YYYY-MM-DD (por defecto hoy, o el día más cercano dentro de las fechas de la vaquita)" },
           paidBy: { ...WHO, description: 'Quién pagó todo ("yo" por defecto)' },
           payers: {
             type: "array",
@@ -157,6 +160,8 @@ export const VAQUITA_TOOLS: ChatCompletionFunctionTool[] = [
         properties: {
           name: { type: "string" },
           currency: { type: "string", enum: CURRENCIES, description: "Moneda del viaje/salida (ARS por defecto)" },
+          startDate: { type: "string", description: 'YYYY-MM-DD. Un día ("la cena del sábado"): solo startDate. Varios días ("del 10 al 20 de enero"): startDate y endDate. Si no dice cuándo, omitilo.' },
+          endDate: { type: "string", description: "YYYY-MM-DD, último día (solo si son varios días)" },
           people: {
             type: "array",
             items: { type: "string" },
@@ -224,6 +229,8 @@ const paymentSchema = z.object({
 const createSchema = z.object({
   name: z.string().trim().min(1).max(60),
   currency: z.enum(CURRENCIES).optional(),
+  startDate: optYMD,
+  endDate: optYMD,
   people: z.array(z.string().trim().min(1)).max(40),
   families: z.array(z.object({ name: z.string().trim().min(1).max(40), members: z.array(z.string().min(1)).max(40) })).max(20).optional(),
 });
@@ -400,7 +407,10 @@ export const runVaquitaTool = async (ctx: VaquitaToolContext, name: string, args
         target.familyId = f.id;
       }
     }
-    const lines = [`Moneda: ${currency}`, "", "*Integrantes*", "• Vos", ...members.map((m) => `• ${m.label}`)];
+    const dates = normalizeVaquitaDates(p.startDate, p.endDate);
+    if ("error" in dates) return { error: dates.error };
+    const when = vaquitaDateText(dates);
+    const lines = [...(when ? [`Cuándo: ${when}`] : []), `Moneda: ${currency}`, "", "*Integrantes*", "• Vos", ...members.map((m) => `• ${m.label}`)];
     if (families.length) {
       lines.push("", "*Familias*");
       for (const f of families) {
@@ -417,6 +427,7 @@ export const runVaquitaTool = async (ctx: VaquitaToolContext, name: string, args
       create: {
         name: p.name,
         currency,
+        ...dates,
         members: members.map(({ ref, name, familyId }) => ({ ...(ref ? { ref } : { name }), familyId: familyId ?? null })),
         families: families.map(({ id, name }) => ({ id, name })),
         myFamilyId,
@@ -442,6 +453,7 @@ export const runVaquitaTool = async (ctx: VaquitaToolContext, name: string, args
             id: v.id,
             name: v.name,
             status: v.status === "closed" ? "cerrada" : "abierta",
+            ...(vaquitaDateText(v) ? { when: vaquitaDateText(v) } : {}),
             total: formatMoney(v.summary?.total ?? 0, v.currency),
             mine: Math.abs(net) < 0.01 ? "a mano" : net > 0 ? `recibe ${formatMoney(net, v.currency)}` : `debe ${formatMoney(-net, v.currency)}`,
           };
@@ -473,6 +485,7 @@ export const runVaquitaTool = async (ctx: VaquitaToolContext, name: string, args
       id: v.id,
       name: v.name,
       status: v.status === "closed" ? "cerrada" : "abierta",
+      ...(vaquitaDateText(v) ? { when: vaquitaDateText(v) } : {}),
       currency: v.currency,
       total: formatMoney(s.total, v.currency),
       ...(fx ? { totalInPesosToday: formatMoney(round2(s.total * fx), "ARS") } : {}),
@@ -510,7 +523,8 @@ export const runVaquitaTool = async (ctx: VaquitaToolContext, name: string, args
     const me = v.members.find((m) => m.uid === uid) ?? null;
     const amount = round2(p.amount);
     const currency = p.currency ?? v.currency;
-    const date = p.date ?? todayYMD();
+    // Sin fecha: hoy, o el día más cercano dentro de las fechas de la vaquita.
+    const date = p.date ?? defaultExpenseDate(v, todayYMD());
 
     // Quién pagó.
     const paidBy: Record<string, number> = {};

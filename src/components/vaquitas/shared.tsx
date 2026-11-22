@@ -175,3 +175,70 @@ export function FamiliesEditor({
     </div>
   );
 }
+
+export type DatesMode = "none" | "day" | "range";
+export interface DatesValue {
+  mode: DatesMode;
+  start: string;
+  end: string;
+}
+
+export const datesFromVaquita = (v: { startDate?: string | null; endDate?: string | null }): DatesValue => ({
+  mode: v.startDate ? (v.endDate && v.endDate !== v.startDate ? "range" : "day") : "none",
+  start: v.startDate ?? todayLocal(),
+  end: v.endDate ?? v.startDate ?? todayLocal(),
+});
+
+/** Lo que se manda al server: un día (solo startDate) o desde/hasta. */
+export const datesPayload = (d: DatesValue): { startDate: string | null; endDate: string | null } =>
+  d.mode === "none"
+    ? { startDate: null, endDate: null }
+    : d.mode === "day"
+      ? { startDate: d.start || null, endDate: null }
+      : { startDate: d.start || null, endDate: d.end || null };
+
+/** ¿Cuándo? Sin fecha, un día, o de tal día a tal día. */
+export function DatesPicker({ value, onChange }: { value: DatesValue; onChange: (v: DatesValue) => void }) {
+  return (
+    <div className="space-y-2">
+      <Segmented
+        value={value.mode}
+        onChange={(mode) => onChange({ ...value, mode })}
+        options={[
+          { value: "day", label: "Un día" },
+          { value: "range", label: "Varios días" },
+          { value: "none", label: "Sin fecha" },
+        ]}
+      />
+      {value.mode === "day" && (
+        <Input type="date" className="h-11" value={value.start} onChange={(e) => onChange({ ...value, start: e.target.value })} />
+      )}
+      {value.mode === "range" && (
+        <div className="grid grid-cols-2 gap-2">
+          <div className="space-y-1">
+            <span className="text-xs text-muted-foreground">Desde</span>
+            <Input
+              type="date"
+              className="h-11"
+              value={value.start}
+              onChange={(e) => {
+                const start = e.target.value;
+                onChange({ ...value, start, end: value.end && value.end < start ? start : value.end });
+              }}
+            />
+          </div>
+          <div className="space-y-1">
+            <span className="text-xs text-muted-foreground">Hasta</span>
+            <Input
+              type="date"
+              className="h-11"
+              min={value.start || undefined}
+              value={value.end}
+              onChange={(e) => onChange({ ...value, end: e.target.value })}
+            />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
