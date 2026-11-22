@@ -92,7 +92,10 @@ function SortableSidebarLink({ item, active }: { item: NavItem; active: boolean 
     <Link
       href={item.href}
       {...itemProps}
-      className={cn("block rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-ring", isDragging && "opacity-35")}
+      className={cn(
+        "block select-none rounded-lg outline-none [-webkit-touch-callout:none] focus-visible:ring-2 focus-visible:ring-ring",
+        isDragging && "opacity-35",
+      )}
     >
       <SidebarRow item={item} active={active} />
     </Link>
