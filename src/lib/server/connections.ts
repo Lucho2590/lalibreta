@@ -10,6 +10,8 @@ import {
   type Connection,
   type ConnectionProfile,
 } from "@/lib/domain/people";
+import { normalizePhone, parseContactQuery, phoneVariants, type ContactQuery } from "@/lib/domain/phone";
+import { MAX_BOOK_CONTACTS, type BookContact } from "@/lib/domain/address-book";
 
 /**
  * Conexiones entre usuarios (connections/{pairId}). Una persona le manda una
@@ -73,6 +75,55 @@ const linkContacts = async (a: { uid: string; profile: ConnectionProfile }, b: {
   await batch.commit();
 };
 
+export interface FoundUser {
+  uid: string;
+  profile: ConnectionProfile;
+}
+
+/** Usuario de la app con ese email (el de su cuenta). */
+export const findUserByEmail = async (email: string): Promise<FoundUser | null> => {
+  const target = email.trim().toLowerCase();
+  if (!target) return null;
+  const found = await adminDb().collection("users").where("email", "==", target).limit(1).get();
+  const d = found.docs[0];
+  if (!d) return null;
+  const data = d.data();
+  return {
+    uid: d.id,
+    profile: {
+      email: String(data.email ?? "").toLowerCase(),
+      displayName: (data.displayName as string | null | undefined) ?? null,
+      photoURL: (data.photoURL as string | null | undefined) ?? null,
+    },
+  };
+};
+
+/** Usuario de la app que tiene ese WhatsApp vinculado (waId normalizado). */
+export const findUserByPhone = async (waId: string): Promise<FoundUser | null> => {
+  const snaps = await Promise.all(phoneVariants(waId).map((id) => adminDb().collection("whatsappLinks").doc(id).get()));
+  const uid = snaps.map((s) => (s.exists ? (s.data()?.uid as string | undefined) : undefined)).find(Boolean);
+  return uid ? { uid, profile: await loadProfile(uid) } : null;
+};
+
+export const findUserByQuery = (q: NonNullable<ContactQuery>) =>
+  q.kind === "email" ? findUserByEmail(q.value) : findUserByPhone(q.value);
+
+/** Cómo estoy con otro usuario: conectados, solicitud enviada/recibida o nada. */
+export type ConnectionState = "self" | "connected" | "outgoing" | "incoming" | "none";
+
+export const connectionState = async (meUid: string, otherId: string): Promise<{ state: ConnectionState; id: string | null }> => {
+  if (otherId === meUid) return { state: "self", id: null };
+  const c = await getConnection(meUid, otherId);
+  if (c?.status === "accepted") return { state: "connected", id: c.id };
+  if (c?.status === "pending") return { state: c.requesterUid === meUid ? "outgoing" : "incoming", id: c.id };
+  return { state: "none", id: null };
+};
+
+export const NOT_A_USER_EMAIL =
+  "Esa persona no usa La Libreta (o se registró con otro email). Podés invitarla o agregarla como contacto sin app.";
+export const NOT_A_USER_PHONE =
+  "Ese número no tiene La Libreta vinculada a su WhatsApp. Podés invitarlo o agregarlo como contacto sin app.";
+
 /** Solicitud de conexión a otro usuario (por email). Si él ya me la había mandado, queda aceptada. */
 export const requestConnection = async (
   me: { uid: string },
@@ -80,14 +131,28 @@ export const requestConnection = async (
 ): Promise<{ status: "pending" | "accepted"; name: string }> => {
   const target = email.trim().toLowerCase();
   if (!target.includes("@")) throw new PeopleError("Ingresá un email válido");
-  const found = await adminDb().collection("users").where("email", "==", target).limit(1).get();
-  if (found.empty) {
-    throw new PeopleError(
-      "Esa persona no usa La Libreta (o se registró con otro email). Podés agregarla como contacto sin app.",
-      404,
-    );
-  }
-  const otherId = found.docs[0].id;
+  const found = await findUserByEmail(target);
+  if (!found) throw new PeopleError(NOT_A_USER_EMAIL, 404);
+  return requestConnectionTo(me, found.uid);
+};
+
+/** Solicitud de conexión por email o por su número de WhatsApp. */
+export const requestConnectionByQuery = async (
+  me: { uid: string },
+  raw: string,
+): Promise<{ status: "pending" | "accepted"; name: string }> => {
+  const q = parseContactQuery(raw);
+  if (!q) throw new PeopleError("Escribí su email o su número de WhatsApp (con característica)");
+  const found = await findUserByQuery(q);
+  if (!found) throw new PeopleError(q.kind === "email" ? NOT_A_USER_EMAIL : NOT_A_USER_PHONE, 404);
+  return requestConnectionTo(me, found.uid);
+};
+
+/** Solicitud de conexión a un usuario ya encontrado. Si él ya me la había mandado, queda aceptada. */
+export const requestConnectionTo = async (
+  me: { uid: string },
+  otherId: string,
+): Promise<{ status: "pending" | "accepted"; name: string }> => {
   if (otherId === me.uid) throw new PeopleError("Ese sos vos 🙂");
   const [mine, theirs] = await Promise.all([loadProfile(me.uid), loadProfile(otherId)]);
   const ref = col().doc(pairId(me.uid, otherId));
@@ -210,4 +275,105 @@ export const removeConnection = async (me: { uid: string }, id: string): Promise
       dedupeKey: `connection-removed-${id}-${Date.now()}`,
     });
   }
+};
+
+export interface BookMatch {
+  name: string;
+  phones: string[];
+  emails: string[];
+  /** Usuario de la app que coincide (por su WhatsApp vinculado o su email). */
+  user: {
+    /** Con qué dato se lo encontró (para mandarle la solicitud). */
+    q: string;
+    name: string;
+    photoURL: string | null;
+    state: ConnectionState;
+  } | null;
+  /** Ya lo tengo agendado sin app (mismo teléfono o email). */
+  offlineContactId: string | null;
+}
+
+/**
+ * ¿Quiénes de estos contactos de la agenda usan La Libreta? En lote: los
+ * teléfonos contra whatsappLinks y los emails contra users. Nunca devuelve
+ * uids ni el email de su cuenta.
+ */
+export const lookupBookContacts = async (meUid: string, contacts: BookContact[]): Promise<BookMatch[]> => {
+  const db = adminDb();
+  const list = contacts.slice(0, MAX_BOOK_CONTACTS);
+
+  // Teléfonos → uid (cada número en sus dos formas).
+  const phoneIds = [...new Set(list.flatMap((c) => c.phones.flatMap(phoneVariants)))];
+  const phoneToUid = new Map<string, string>();
+  for (let i = 0; i < phoneIds.length; i += 300) {
+    const refs = phoneIds.slice(i, i + 300).map((id) => db.collection("whatsappLinks").doc(id));
+    if (!refs.length) continue;
+    for (const s of await db.getAll(...refs)) {
+      const uid = s.exists ? (s.data()?.uid as string | undefined) : undefined;
+      if (uid) phoneToUid.set(s.id, uid);
+    }
+  }
+  // Emails → uid.
+  const emails = [...new Set(list.flatMap((c) => c.emails))];
+  const emailToUid = new Map<string, string>();
+  for (let i = 0; i < emails.length; i += 30) {
+    const snap = await db.collection("users").where("email", "in", emails.slice(i, i + 30)).get();
+    for (const d of snap.docs) emailToUid.set(String(d.data().email ?? "").toLowerCase(), d.id);
+  }
+
+  // Mis contactos sin app, para no ofrecer agendar dos veces al mismo.
+  const offline = (await db.collection(`users/${meUid}/contacts`).get()).docs
+    .map((d) => ({ id: d.id, ...(d.data() as { phone?: string | null; email?: string | null; linkedUid?: string | null; kind?: string }) }))
+    .filter((c) => !c.linkedUid && c.kind !== "app");
+  const offlineByKey = new Map<string, string>();
+  for (const c of offline) {
+    const p = c.phone ? normalizePhone(c.phone) : null;
+    if (p) offlineByKey.set(p, c.id);
+    if (c.email) offlineByKey.set(c.email.toLowerCase(), c.id);
+  }
+
+  const uids = new Set<string>();
+  const hits = list.map((c) => {
+    for (const p of c.phones) {
+      const uid = phoneVariants(p).map((v) => phoneToUid.get(v)).find(Boolean);
+      if (uid) return { uid, q: p };
+    }
+    for (const e of c.emails) {
+      const uid = emailToUid.get(e);
+      if (uid) return { uid, q: e };
+    }
+    return null;
+  });
+  hits.forEach((h) => h && uids.add(h.uid));
+
+  const [profiles, conns] = await Promise.all([
+    Promise.all([...uids].map(async (u) => [u, await loadProfile(u)] as const)),
+    db.collection("connections").where("uids", "array-contains", meUid).get(),
+  ]);
+  const profileOf = new Map(profiles);
+  const connOf = new Map<string, Connection>();
+  for (const d of conns.docs) {
+    const c = { id: d.id, ...d.data() } as Connection;
+    connOf.set(otherUid(c, meUid), c);
+  }
+  const stateOf = (uid: string): ConnectionState => {
+    if (uid === meUid) return "self";
+    const c = connOf.get(uid);
+    if (c?.status === "accepted") return "connected";
+    if (c?.status === "pending") return c.requesterUid === meUid ? "outgoing" : "incoming";
+    return "none";
+  };
+
+  const shownUser = new Set<string>();
+  return list.map((c, i) => {
+    const h = hits[i];
+    // El mismo usuario en dos contactos de la agenda: lo muestro una vez.
+    const user =
+      h && !shownUser.has(h.uid)
+        ? { q: h.q, name: profileName(profileOf.get(h.uid)), photoURL: profileOf.get(h.uid)?.photoURL ?? null, state: stateOf(h.uid) }
+        : null;
+    if (h) shownUser.add(h.uid);
+    const offlineContactId = [...c.phones, ...c.emails].map((k) => offlineByKey.get(k)).find(Boolean) ?? null;
+    return { name: c.name, phones: c.phones, emails: c.emails, user, offlineContactId };
+  });
 };

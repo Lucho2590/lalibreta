@@ -242,3 +242,36 @@ export const renderListShareEmail = (p: ListShareEmailParams) => {
   ].join("\n");
   return { subject, html, text };
 };
+
+const esc = (s: string) =>
+  s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] ?? c);
+
+export interface AppInviteEmailParams {
+  inviterName: string;
+  inviterEmail: string | null;
+  /** Cómo lo agendó quien invita ("Juan"), si lo puso. */
+  inviteeName?: string | null;
+  appUrl: string;
+}
+
+/** "X te invitó a unirte a La Libreta" (a alguien que todavía no usa la app). */
+export const renderAppInviteEmail = (p: AppInviteEmailParams) => {
+  const url = `${p.appUrl}/login`;
+  const name = esc(p.inviterName);
+  const subject = `${p.inviterName} te invitó a unirte a La Libreta`;
+  const html = card(`
+    <h2 style="margin: 0 0 12px; font-size: 20px;">${p.inviteeName ? `¡Hola, ${esc(p.inviteeName)}! ` : ""}Te invitaron a La Libreta</h2>
+    <p style="margin: 0 0 16px; font-size: 14px; line-height: 1.5; color: #52525b;">
+      <strong>${name}</strong>${p.inviterEmail ? ` (${esc(p.inviterEmail)})` : ""} te invitó a unirte a La Libreta, la app donde anota sus gastos.
+    </p>
+    <p style="margin: 0 0 16px; font-size: 14px; line-height: 1.5; color: #52525b;">
+      Juntos pueden repartir gastos, armar vaquitas para viajes y salidas, compartir listas y llevar la cuenta de quién le debe a quién. Y se carga hasta por WhatsApp.
+    </p>
+    ${button(url, "Crear mi cuenta")}
+    <p style="margin: 16px 0 0; font-size: 12px; line-height: 1.5; color: #71717a;">
+      Registrate con este mismo email para que ${name} te encuentre.
+    </p>
+  `);
+  const text = `${p.inviterName} te invitó a unirte a La Libreta, la app donde anota sus gastos: pueden repartir gastos, armar vaquitas y llevar la cuenta de quién le debe a quién. Creá tu cuenta (con este mismo email) en ${url}`;
+  return { subject, html, text };
+};

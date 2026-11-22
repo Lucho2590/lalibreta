@@ -2,12 +2,11 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { Check, Pencil, Plus, Send, Trash2, UserPlus, Users, X } from "lucide-react";
+import { Check, Pencil, Plus, Trash2, UserPlus, Users, X } from "lucide-react";
 import { toast } from "sonner";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import {
   Sheet,
   SheetContent,
@@ -18,6 +17,7 @@ import {
 import { useAuth } from "@/hooks/use-auth";
 import { useConnections, useContacts } from "@/hooks/use-data";
 import { ContactForm } from "@/components/contacts/contact-form";
+import { AddPersonCard, type OfflineDraft } from "@/components/contacts/add-person-card";
 import { EditContactSheet, type EditContactTarget } from "@/components/contacts/edit-contact-sheet";
 import { apiPost, errorText } from "@/lib/api";
 import { deleteContact } from "@/lib/domain/contacts";
@@ -85,8 +85,7 @@ export default function ContactsPage() {
   const { user } = useAuth();
   const { data: connections, loading: loadingConn } = useConnections();
   const { data: contacts, loading: loadingContacts } = useContacts();
-  const [email, setEmail] = useState("");
-  const [sending, setSending] = useState(false);
+  const [offlineDraft, setOfflineDraft] = useState<OfflineDraft | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<EditContactTarget | null>(null);
@@ -102,21 +101,6 @@ export default function ContactsPage() {
   const connName = (c: Connection) => {
     const uid = otherUid(c, me);
     return contactByUid.get(uid)?.customName?.trim() || profileName(c.profiles[uid]);
-  };
-
-  const send = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!email.trim()) return;
-    setSending(true);
-    try {
-      const r = await apiPost<{ status: string; name: string }>("/api/connections/request", { email });
-      toast.success(r.status === "accepted" ? `Ya estás conectado con ${r.name}` : `Le mandamos la solicitud a ${r.name}`);
-      setEmail("");
-    } catch (err) {
-      toast.error(errorText(err));
-    } finally {
-      setSending(false);
-    }
   };
 
   const act = async (c: Connection, path: string, body: object, ok: string, ask?: string) => {
@@ -187,29 +171,12 @@ export default function ContactsPage() {
         </Card>
       )}
 
-      <Card className="rounded-3xl">
-        <CardHeader className="pb-2">
-          <CardTitle className="text-sm font-semibold">Conectarte con alguien que usa La Libreta</CardTitle>
-          <p className="text-xs text-muted-foreground">
-            Le llega una solicitud. Cuando acepta, pueden repartir gastos (cada uno acepta su parte) y registrar
-            transferencias entre ustedes.
-          </p>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={send} className="flex gap-2">
-            <Input
-              type="email"
-              className="h-11"
-              placeholder="Su email en La Libreta"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-            />
-            <Button type="submit" className="h-11" disabled={sending || !email.trim()}>
-              <Send className="mr-1 size-4" /> {sending ? "Enviando…" : "Conectar"}
-            </Button>
-          </form>
-        </CardContent>
-      </Card>
+      <AddPersonCard
+        onAddOffline={(draft) => {
+          setOfflineDraft(draft);
+          setOpen(true);
+        }}
+      />
 
       <Card className="rounded-3xl">
         <CardHeader className="pb-1">
@@ -297,7 +264,13 @@ export default function ContactsPage() {
               Gente a la que le pagás cosas o le prestás plata: la app te recuerda cobrarle.
             </p>
           </div>
-          <Sheet open={open} onOpenChange={setOpen}>
+          <Sheet
+            open={open}
+            onOpenChange={(v) => {
+              setOpen(v);
+              if (!v) setOfflineDraft(null);
+            }}
+          >
             <SheetTrigger render={<Button size="sm" variant="outline" />}>
               <Plus className="mr-1 size-4" /> Agregar
             </SheetTrigger>
@@ -306,7 +279,14 @@ export default function ContactsPage() {
                 <SheetTitle>Persona sin la app</SheetTitle>
               </SheetHeader>
               <div className="px-5 pb-6 pt-3">
-                <ContactForm onSaved={() => setOpen(false)} />
+                <ContactForm
+                  key={offlineDraft ? `${offlineDraft.phone ?? ""}|${offlineDraft.email ?? ""}` : "new"}
+                  initial={offlineDraft ?? undefined}
+                  onSaved={() => {
+                    setOpen(false);
+                    setOfflineDraft(null);
+                  }}
+                />
               </div>
             </SheetContent>
           </Sheet>
