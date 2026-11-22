@@ -16,6 +16,7 @@ import {
   type PersonTransferDraft,
   type StatementDraft,
   type TransactionDraft,
+  type VaquitaDraft,
 } from "../whatsapp/types";
 
 const money = (n: number) => formatCurrency(n);
@@ -325,6 +326,10 @@ export const renderDraft = (d: Draft): string => {
       return renderTransfer(d as TransferDraft);
     case "person-transfer":
       return renderPersonTransfer(d as PersonTransferDraft);
+    case "vaquita": {
+      const v = d as VaquitaDraft;
+      return [v.title, "", ...v.lines, "", v.op === "create" ? "¿La armo?" : "¿Lo anoto?"].join("\n");
+    }
     default:
       return renderTransaction(d as TransactionDraft);
   }

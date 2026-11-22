@@ -777,3 +777,21 @@ export const deletePayment = async (user: { uid: string }, input: { vaquitaId: s
   await ref.delete();
   await refreshSummary(v.id);
 };
+
+// === Lecturas (agente) ===
+
+/** Vaquitas donde participa un usuario. */
+export const loadVaquitasFor = async (uid: string): Promise<Vaquita[]> =>
+  (await col().where("uids", "array-contains", uid).get()).docs.map(toVaquita);
+
+/** Gastos y pagos de una vaquita (los gastos, del más nuevo al más viejo). */
+export const loadVaquitaMovements = async (
+  vid: string,
+): Promise<{ expenses: VaquitaExpense[]; payments: VaquitaPayment[] }> => {
+  const [exps, pays] = await Promise.all([expensesCol(vid).get(), paymentsCol(vid).get()]);
+  const expenses = exps.docs
+    .map((d) => ({ id: d.id, ...d.data() }) as VaquitaExpense)
+    .sort((a, b) => b.date.localeCompare(a.date) || (b.createdAt?.toDate?.().getTime() ?? 0) - (a.createdAt?.toDate?.().getTime() ?? 0));
+  const payments = pays.docs.map((d) => ({ id: d.id, ...d.data() }) as VaquitaPayment).sort((a, b) => b.date.localeCompare(a.date));
+  return { expenses, payments };
+};

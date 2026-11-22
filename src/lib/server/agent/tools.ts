@@ -24,6 +24,7 @@ import { AGENDA_TOOLS, AGENDA_TOOL_NAMES, runAgendaTool } from "./agenda-tool";
 import { WEATHER_TOOLS, WEATHER_TOOL_NAMES, runWeatherTool } from "./weather-tool";
 import { WATCH_TOOLS, WATCH_TOOL_NAMES, runWatchTool } from "./watch-tool";
 import { LISTS_TOOLS, LISTS_TOOL_NAMES, resolveItems, resolveNode, runListsTool } from "./lists-tool";
+import { VAQUITA_TOOLS, VAQUITA_TOOL_NAMES, runVaquitaTool } from "./vaquitas-tool";
 import { loadActor, loadTreeFor } from "../lists";
 import { canEdit, myRole, nodePath } from "@/lib/domain/list-model";
 import type { AgentPending, AgentPerson } from "../people";
@@ -817,6 +818,7 @@ export const TOOL_DEFINITIONS: ChatCompletionFunctionTool[] = [
   ...WEATHER_TOOLS,
   ...WATCH_TOOLS,
   ...LISTS_TOOLS,
+  ...VAQUITA_TOOLS,
 ];
 
 // ---------- Schemas ----------
@@ -1955,6 +1957,7 @@ export const executeTool = async (
   if (WEATHER_TOOL_NAMES.has(name)) return runWeatherTool(ctx.uid, name, args);
   if (WATCH_TOOL_NAMES.has(name)) return runWatchTool(ctx.uid, name, args);
   if (LISTS_TOOL_NAMES.has(name)) return runListsTool(ctx.uid, name, args);
+  if (VAQUITA_TOOL_NAMES.has(name)) return runVaquitaTool(ctx, name, args);
 
   switch (name) {
     case "propose_transaction":
