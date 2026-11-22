@@ -8,6 +8,7 @@ import {
   ChevronLeft,
   CloudSun,
   Coins,
+  FileText,
   Handshake,
   LayoutGrid,
   ListChecks,
@@ -44,6 +45,7 @@ const ICONS: Record<NovedadIcon, React.ComponentType<{ className?: string }>> = 
   reloj: Watch,
   editar: Pencil,
   gente: Handshake,
+  resumen: FileText,
 };
 
 // ---------------------------------------------------------------------------

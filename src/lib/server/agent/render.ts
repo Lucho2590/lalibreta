@@ -138,7 +138,7 @@ const renderStatement = (d: StatementDraft) => {
   const out = [
     "💳 *Resumen de tarjeta*",
     "",
-    `*${d.accountName}*${d.last4 ? ` ···· ${d.last4}` : ""}${d.newCard ? " _(tarjeta nueva, se crea al guardar)_" : ""}`,
+    `*${d.accountName}*${d.last4 ? ` ···· ${d.last4}` : ""}${d.newCard ? " _(tarjeta nueva, se crea al guardar)_" : ""}${d.matchedBy === "last4" ? ` _(la reconocí por la terminación ${d.last4})_` : ""}`,
     `Cierre: ${fecha(d.closingDate)} · Vence: ${fecha(d.dueDate)}`,
   ];
   if (d.nextClosingDate && d.nextDueDate) {

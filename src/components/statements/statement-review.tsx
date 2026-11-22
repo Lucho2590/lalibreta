@@ -28,7 +28,7 @@ import {
   type ImportResult,
   type StatementAnalysis,
 } from "@/lib/domain/statement-import";
-import { zeroMoney } from "@/lib/domain/types";
+import { zeroMoney, type Category } from "@/lib/domain/types";
 
 const fmtDate = (ymd: string | null) => (ymd ? ymd.split("-").reverse().slice(0, 2).join("/") : "—");
 
@@ -113,6 +113,17 @@ export function StatementReview({
       });
     });
   };
+
+  const setInclude = (index: number, include: boolean) =>
+    setRows((prev) => prev.map((x) => (x.index === index ? { ...x, include } : x)));
+
+  /** Marca o desmarca un consumo como "se repite todos los meses". */
+  const toggleRecurring = (index: number) =>
+    setRows((prev) =>
+      prev.map((x) =>
+        x.index === index ? { ...x, type: x.type === "subscription" ? "purchase" : "subscription" } : x,
+      ),
+    );
 
   const bulkCategory = (categoryId: string) => {
     if (!categoryId) return;
@@ -271,28 +282,28 @@ export function StatementReview({
 
       {/* Barra de filtros y acciones en lote */}
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex gap-1 rounded-xl bg-muted p-1 text-sm">
+        <div className="flex w-full gap-1 rounded-xl bg-muted p-1 text-sm md:w-auto">
           {(
             [
-              ["all", `Todos (${rows.length})`],
-              ["uncategorized", `Sin categoría (${uncategorized})`],
-              ["duplicates", `Ya cargados (${duplicates})`],
-            ] as Array<[Filter, string]>
-          ).map(([f, label]) => (
+              ["all", "Todos", rows.length],
+              ["uncategorized", "Sin categoría", uncategorized],
+              ["duplicates", "Ya cargados", duplicates],
+            ] as Array<[Filter, string, number]>
+          ).map(([f, label, n]) => (
             <button
               key={f}
               type="button"
               onClick={() => setFilter(f)}
-              className={`rounded-lg px-3 py-1.5 font-medium transition ${
+              className={`flex-1 whitespace-nowrap rounded-lg px-2 py-1.5 font-medium transition md:flex-none md:px-3 ${
                 filter === f ? "bg-background shadow-sm" : "text-muted-foreground"
               }`}
             >
-              {label}
+              {label} ({n})
             </button>
           ))}
         </div>
         {selected.size > 0 && (
-          <div className="flex items-center gap-2 rounded-xl border bg-background px-3 py-1.5 text-sm">
+          <div className="hidden items-center gap-2 rounded-xl border bg-background px-3 py-1.5 text-sm md:flex">
             <span className="text-muted-foreground">{selected.size} seleccionados</span>
             <CategorySelect
               className="w-56"
@@ -313,8 +324,66 @@ export function StatementReview({
         )}
       </div>
 
-      {/* Tabla de consumos */}
-      <Card className="overflow-hidden rounded-3xl">
+      {/* Celu: un consumo por tarjetita */}
+      <div className="space-y-2 md:hidden">
+        {visible.map((r) => {
+          const payment = isPaymentLine(r);
+          const muted = !r.include || payment;
+          return (
+            <Card key={r.index} className={`rounded-2xl py-0 ${muted ? "opacity-70" : ""}`}>
+              <CardContent className="space-y-2.5 px-3 py-3">
+                <div className="flex items-start gap-3">
+                  {payment ? (
+                    <span className="mt-0.5 w-9 shrink-0 text-center text-[11px] text-muted-foreground">pago</span>
+                  ) : (
+                    <label className="-m-2 flex shrink-0 cursor-pointer items-center justify-center p-2">
+                      <input
+                        type="checkbox"
+                        className="size-5 cursor-pointer rounded accent-brand"
+                        aria-label="Cargar este consumo"
+                        checked={r.include}
+                        onChange={(e) => setInclude(r.index, e.target.checked)}
+                      />
+                    </label>
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-start justify-between gap-2">
+                      <span
+                        className={`min-w-0 break-words text-sm ${r.include && !payment ? "font-medium" : "text-muted-foreground"}`}
+                      >
+                        {r.description}
+                      </span>
+                      <span className="shrink-0 text-sm font-semibold tabular-nums">
+                        {formatMoney(r.amount, r.currency)}
+                      </span>
+                    </div>
+                    <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+                      <span className="tabular-nums">{fmtDate(r.date)}</span>
+                      <LineBadges row={r} accountChoice={accountChoice} onToggleRecurring={toggleRecurring} />
+                    </div>
+                  </div>
+                </div>
+                {payment ? (
+                  <p className="text-xs text-muted-foreground">Es un pago: no se carga.</p>
+                ) : (
+                  <RowCategory
+                    row={r}
+                    categories={expenseCats}
+                    onChange={(id) => setCategory(r.index, id)}
+                    className="h-10"
+                  />
+                )}
+              </CardContent>
+            </Card>
+          );
+        })}
+        {visible.length === 0 && (
+          <p className="py-8 text-center text-sm text-muted-foreground">Nada para mostrar con este filtro.</p>
+        )}
+      </div>
+
+      {/* Compu: tabla de consumos */}
+      <Card className="hidden overflow-hidden rounded-3xl md:block">
         <table className="w-full text-sm">
           <thead className="border-b bg-muted/40 text-left text-xs text-muted-foreground">
             <tr>
@@ -339,9 +408,6 @@ export function StatementReview({
           <tbody>
             {visible.map((r) => {
               const payment = isPaymentLine(r);
-              const credit = isCreditLine(r);
-              // Los reintegros llevan la categoría del gasto que devuelven.
-              const options = expenseCats;
               return (
                 <tr
                   key={r.index}
@@ -367,11 +433,7 @@ export function StatementReview({
                   className="size-4 cursor-pointer rounded accent-brand"
                         aria-label="Cargar este consumo"
                         checked={r.include}
-                        onChange={(e) =>
-                          setRows((prev) =>
-                            prev.map((x) => (x.index === r.index ? { ...x, include: e.target.checked } : x)),
-                          )
-                        }
+                        onChange={(e) => setInclude(r.index, e.target.checked)}
                       />
                     )}
                   </td>
@@ -379,54 +441,7 @@ export function StatementReview({
                   <td className="px-2 py-2">
                     <div className="flex flex-wrap items-center gap-1.5">
                       <span className={r.include ? "font-medium text-foreground" : ""}>{r.description}</span>
-                      {r.installmentNumber && (
-                        <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium">
-                          cuota {r.installmentNumber}/{r.installmentsTotal}
-                        </span>
-                      )}
-                      {credit && (
-                        <span className="rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600">
-                          reintegro
-                        </span>
-                      )}
-                      {/* Servicios y suscripciones que se debitan todos los meses: se estiman
-                          en el resumen siguiente (y se reemplazan por el real al importarlo). */}
-                      {!payment && !credit && !r.installmentNumber && r.amount > 0 &&
-                        (r.type === "purchase" || r.type === "subscription" || r.type === "other") && (
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setRows((prev) =>
-                                prev.map((x) =>
-                                  x.index === r.index
-                                    ? { ...x, type: x.type === "subscription" ? "purchase" : "subscription" }
-                                    : x,
-                                ),
-                              )
-                            }
-                            title={
-                              r.type === "subscription"
-                                ? "Se repite todos los meses: lo estimo en el próximo resumen. Tocá para sacarlo."
-                                : "¿Se debita todos los meses (servicio, seguro, suscripción)? Tocá para estimarlo en el próximo resumen."
-                            }
-                            className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium transition ${
-                              r.type === "subscription"
-                                ? "bg-brand/10 text-brand"
-                                : "border border-dashed text-muted-foreground hover:bg-muted"
-                            }`}
-                          >
-                            {r.type === "subscription" ? "🔁 se repite" : "🔁 ¿todos los meses?"}
-                          </button>
-                        )}
-                      {r.duplicateOf && (
-                        <Link
-                          href={`/movimientos?account=${accountChoice}`}
-                          className="rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 hover:underline"
-                          title="Ya hay un movimiento igual en la tarjeta"
-                        >
-                          ya cargado
-                        </Link>
-                      )}
+                      <LineBadges row={r} accountChoice={accountChoice} onToggleRecurring={toggleRecurring} />
                     </div>
                   </td>
                   <td className="px-2 py-2 text-right tabular-nums">{formatMoney(r.amount, r.currency)}</td>
@@ -434,25 +449,7 @@ export function StatementReview({
                     {payment ? (
                       <span className="text-xs">no se carga</span>
                     ) : (
-                      <div className="flex items-center gap-1.5">
-                        <CategorySelect
-                          value={r.categoryId}
-                          onChange={(id) => setCategory(r.index, id)}
-                          groups={[{ categories: options }]}
-                          placeholder="Elegí…"
-                          warn={r.include}
-                        />
-                        {!r.touched && r.categorySource === "rule" && r.categoryId === r.suggestedCategoryId && (
-                          <span title="La elegiste vos en un resumen anterior" className="text-emerald-600">
-                            <CheckCircle2 className="size-4" />
-                          </span>
-                        )}
-                        {!r.touched && r.categorySource === "ai" && r.categoryId === r.suggestedCategoryId && (
-                          <span title="Sugerida por la IA" className="text-brand">
-                            <Sparkles className="size-4" />
-                          </span>
-                        )}
-                      </div>
+                      <RowCategory row={r} categories={expenseCats} onChange={(id) => setCategory(r.index, id)} />
                     )}
                   </td>
                 </tr>
@@ -469,7 +466,7 @@ export function StatementReview({
         </table>
       </Card>
 
-      <p className="flex items-center gap-4 text-xs text-muted-foreground">
+      <p className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-muted-foreground">
         <span className="flex items-center gap-1">
           <CheckCircle2 className="size-3.5 text-emerald-600" /> aprendida de tus resúmenes anteriores
         </span>
@@ -482,7 +479,7 @@ export function StatementReview({
       </p>
 
       {/* Pie */}
-      <div className="sticky bottom-4 flex items-center justify-between gap-4 rounded-2xl border bg-background/95 px-5 py-3 shadow-lg backdrop-blur">
+      <div className="sticky bottom-[calc(5.5rem+env(safe-area-inset-bottom))] z-20 flex flex-col gap-3 rounded-2xl border bg-background/95 px-4 py-3 shadow-lg backdrop-blur md:bottom-4 md:flex-row md:items-center md:justify-between md:gap-4 md:px-5">
         <div className="text-sm">
           <span className="font-semibold">{totals.count} consumos</span>
           <span className="text-muted-foreground">
@@ -495,11 +492,11 @@ export function StatementReview({
           )}
         </div>
         <div className="flex gap-2">
-          <Button variant="ghost" onClick={onCancel} disabled={busy}>
+          <Button variant="ghost" className="flex-1 md:flex-none" onClick={onCancel} disabled={busy}>
             Cancelar
           </Button>
           <Button
-            className="bg-brand-grad text-white hover:opacity-95"
+            className="flex-1 bg-brand-grad text-white hover:opacity-95 md:flex-none"
             onClick={submit}
             disabled={busy || totals.count === 0}
           >
@@ -516,6 +513,101 @@ function Info({ label, value }: { label: string; value: string }) {
     <div>
       <div className="text-[11px] uppercase tracking-wider text-muted-foreground">{label}</div>
       <div className="font-medium tabular-nums">{value}</div>
+    </div>
+  );
+}
+
+/** Chips de un consumo: cuota, reintegro, "se repite" y "ya cargado". */
+function LineBadges({
+  row: r,
+  accountChoice,
+  onToggleRecurring,
+}: {
+  row: Row;
+  accountChoice: string;
+  onToggleRecurring: (index: number) => void;
+}) {
+  const payment = isPaymentLine(r);
+  const credit = isCreditLine(r);
+  return (
+    <>
+      {r.installmentNumber && (
+        <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-foreground">
+          cuota {r.installmentNumber}/{r.installmentsTotal}
+        </span>
+      )}
+      {credit && (
+        <span className="rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600">
+          reintegro
+        </span>
+      )}
+      {/* Servicios y suscripciones que se debitan todos los meses: se estiman
+          en el resumen siguiente (y se reemplazan por el real al importarlo). */}
+      {!payment && !credit && !r.installmentNumber && r.amount > 0 &&
+        (r.type === "purchase" || r.type === "subscription" || r.type === "other") && (
+          <button
+            type="button"
+            onClick={() => onToggleRecurring(r.index)}
+            title={
+              r.type === "subscription"
+                ? "Se repite todos los meses: lo estimo en el próximo resumen. Tocá para sacarlo."
+                : "¿Se debita todos los meses (servicio, seguro, suscripción)? Tocá para estimarlo en el próximo resumen."
+            }
+            className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium transition ${
+              r.type === "subscription"
+                ? "bg-brand/10 text-brand"
+                : "border border-dashed text-muted-foreground hover:bg-muted"
+            }`}
+          >
+            {r.type === "subscription" ? "🔁 se repite" : "🔁 ¿todos los meses?"}
+          </button>
+        )}
+      {r.duplicateOf && (
+        <Link
+          href={`/movimientos?account=${accountChoice}`}
+          className="rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 hover:underline"
+          title="Ya hay un movimiento igual en la tarjeta"
+        >
+          ya cargado
+        </Link>
+      )}
+    </>
+  );
+}
+
+/** Selector de categoría de un consumo, con la marca de dónde salió la sugerencia. */
+function RowCategory({
+  row: r,
+  categories,
+  onChange,
+  className,
+}: {
+  row: Row;
+  categories: Category[];
+  onChange: (categoryId: string) => void;
+  className?: string;
+}) {
+  const suggested = !r.touched && r.categoryId === r.suggestedCategoryId;
+  return (
+    <div className="flex items-center gap-1.5">
+      <CategorySelect
+        value={r.categoryId}
+        onChange={onChange}
+        groups={[{ categories }]}
+        placeholder="Elegí…"
+        warn={r.include}
+        className={className}
+      />
+      {suggested && r.categorySource === "rule" && (
+        <span title="La elegiste vos en un resumen anterior" className="shrink-0 text-emerald-600">
+          <CheckCircle2 className="size-4" />
+        </span>
+      )}
+      {suggested && r.categorySource === "ai" && (
+        <span title="Sugerida por la IA" className="shrink-0 text-brand">
+          <Sparkles className="size-4" />
+        </span>
+      )}
     </div>
   );
 }

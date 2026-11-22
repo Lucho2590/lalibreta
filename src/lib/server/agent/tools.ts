@@ -332,7 +332,16 @@ export const TOOL_DEFINITIONS: ChatCompletionFunctionTool[] = [
             type: "string",
             description: "Opcional, con newCardName: id de la cuenta bancaria de la que depende",
           },
-          last4: { type: "string", description: "Últimos 4 dígitos de la tarjeta, si figuran" },
+          last4: {
+            type: "string",
+            description:
+              "Últimos 4 dígitos de la tarjeta, si figuran en el resumen (pasalos siempre: el sistema elige la tarjeta del usuario que termina igual).",
+          },
+          cardConfirmedByUser: {
+            type: "boolean",
+            description:
+              "true solo si el usuario te dijo explícitamente a qué tarjeta va este resumen (ej. después de que el sistema te avisó que la terminación no coincide). Si no, omitir.",
+          },
           closingDate: { type: "string", description: "Fecha de cierre de este resumen, YYYY-MM-DD" },
           dueDate: { type: "string", description: "Fecha de vencimiento de este resumen, YYYY-MM-DD" },
           nextClosingDate: { type: "string", description: "Próximo cierre, YYYY-MM-DD, si figura" },
@@ -1025,11 +1034,18 @@ const accountsSchema = z.object({
   accounts: z.array(accountItemSchema).min(1).max(15),
 });
 
+/** "XXXX-1234" o el número entero → "1234"; menos de 4 dígitos → sin dato. */
+const cleanLast4 = (v: string | undefined) => {
+  const digits = v?.replace(/\D/g, "") ?? "";
+  return digits.length >= 4 ? digits.slice(-4) : undefined;
+};
+
 const statementSchema = z.object({
   accountId: optStr,
   newCardName: optStr,
   newCardParentId: optStr,
-  last4: optStr.refine((v) => !v || /^\d{4}$/.test(v), "last4 debe tener 4 dígitos"),
+  last4: optStr.transform(cleanLast4),
+  cardConfirmedByUser: z.boolean().optional(),
   closingDate: z.string().refine(isYMD, "closingDate debe ser YYYY-MM-DD"),
   dueDate: z.string().refine(isYMD, "dueDate debe ser YYYY-MM-DD"),
   nextClosingDate: optYMD,
@@ -1425,6 +1441,30 @@ const registerStatement = (ctx: ToolContext, raw: unknown): ToolResult => {
     return { error: "El próximo cierre tiene que ser posterior al cierre actual." };
   }
 
+  // Tarjeta: si el resumen trae los últimos 4 y el usuario tiene una tarjeta
+  // que termina igual, va a esa (como al importar desde la app), aunque el
+  // modelo haya elegido otra o propuesto crearla. Si el usuario eligió la
+  // tarjeta a mano, se respeta.
+  let matchedBy: StatementDraft["matchedBy"] = args.cardConfirmedByUser ? "user" : null;
+  if (args.last4 && !args.cardConfirmedByUser) {
+    const sameEnd = ctx.accounts.filter((a) => a.type === "credit" && a.active && a.last4 === args.last4);
+    const chosen = args.accountId ? ctx.accounts.find((a) => a.id === args.accountId) : undefined;
+    if (sameEnd.length === 1) {
+      args.accountId = sameEnd[0].id;
+      args.newCardName = undefined;
+      args.newCardParentId = undefined;
+      matchedBy = "last4";
+    } else if (sameEnd.length > 1 && !sameEnd.some((a) => a.id === args.accountId)) {
+      return {
+        error: `Hay varias tarjetas terminadas en ${args.last4} (${sameEnd.map((a) => a.name).join(", ")}). Preguntale al usuario cuál es y volvé a llamar con su accountId y cardConfirmedByUser: true.`,
+      };
+    } else if (sameEnd.length === 0 && chosen?.type === "credit" && chosen.last4 && chosen.last4 !== args.last4) {
+      return {
+        error: `El resumen es de una tarjeta terminada en ${args.last4} y "${chosen.name}" termina en ${chosen.last4}. Preguntale al usuario si es otra tarjeta (crearla con newCardName) o si es "${chosen.name}" con número nuevo (volvé a llamar con su accountId y cardConfirmedByUser: true).`,
+      };
+    }
+  }
+
   // Tarjeta existente o nueva.
   let accountId: string | null = null;
   let accountName: string;
@@ -1525,6 +1565,7 @@ const registerStatement = (ctx: ToolContext, raw: unknown): ToolResult => {
     nextClosingDate: args.nextClosingDate ?? null,
     nextDueDate: args.nextDueDate ?? null,
     last4: args.last4 ?? null,
+    matchedBy,
     totalARS: round2(args.totalARS),
     totalUSD: round2(args.totalUSD ?? 0),
     minimumPayment: args.minimumPayment != null ? round2(args.minimumPayment) : null,
@@ -1558,6 +1599,7 @@ const updateStatementDraft = (ctx: ToolContext, raw: unknown): ToolResult => {
     newCardName: current.newCard?.name,
     newCardParentId: current.newCard?.parentId ?? undefined,
     last4: current.last4 ?? undefined,
+    cardConfirmedByUser: current.matchedBy === "user" ? true : undefined,
     closingDate: current.closingDate,
     dueDate: current.dueDate,
     nextClosingDate: current.nextClosingDate ?? undefined,
@@ -1589,6 +1631,8 @@ const updateStatementDraft = (ctx: ToolContext, raw: unknown): ToolResult => {
     base.newCardParentId = undefined;
   }
   if (patch.newCardName) base.accountId = undefined;
+  // Si el usuario corrigió la tarjeta, manda su elección (no la terminación).
+  if (patch.accountId || patch.newCardName) base.cardConfirmedByUser = true;
 
   return registerStatement(ctx, { ...base, ...patch });
 };

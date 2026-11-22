@@ -871,6 +871,11 @@ const confirmStatement = async (
       lines.push("• Los movimientos de este resumen ya estaban cargados, no los dupliqué.");
     }
   }
+  if (loaded && loaded.rulesSaved > 0) {
+    lines.push(
+      `• Aprendí la categoría de ${loaded.rulesSaved} ${loaded.rulesSaved === 1 ? "comercio" : "comercios"} para la próxima.`,
+    );
+  }
   if (r.subscriptionsCreated.length > 0) {
     lines.push(`• Fijos nuevos: ${r.subscriptionsCreated.join(", ")}.`);
   }

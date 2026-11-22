@@ -347,7 +347,6 @@ export const markDuplicates = async (
 // === Importación ===
 
 export const importStatement = async (uid: string, payload: ImportPayload): Promise<ImportResult> => {
-  const db = adminDb();
   const period = payload.closingDate.slice(0, 7);
 
   // 1. Tarjeta existente o nueva.
@@ -470,6 +469,20 @@ export const importStatement = async (uid: string, payload: ImportPayload): Prom
   await applySplitRules(uid, newIds.filter((id) => !relinked.has(id)));
 
   // 6. Aprender: comercio → categoría.
+  await saveCategoryRules(uid, learned);
+
+  return { accountId, accountName, createdAccount, created, skipped, rulesSaved: learned.size, projected };
+};
+
+/**
+ * Guarda lo aprendido de un resumen: comercio (merchantKey) → categoría. Lo
+ * usan el próximo resumen (en la app o por WhatsApp) y el agente.
+ */
+const saveCategoryRules = async (
+  uid: string,
+  learned: Map<string, { categoryId: string; sample: string }>,
+) => {
+  const db = adminDb();
   const rulesCol = db.collection(`users/${uid}/categoryRules`);
   const entries = [...learned.entries()];
   for (let i = 0; i < entries.length; i += 400) {
@@ -483,8 +496,6 @@ export const importStatement = async (uid: string, payload: ImportPayload): Prom
     }
     await batch.commit();
   }
-
-  return { accountId, accountName, createdAccount, created, skipped, rulesSaved: learned.size, projected };
 };
 
 // === Carga de renglones de un resumen ===
@@ -664,6 +675,8 @@ export interface DraftLinesResult {
   created: number;
   /** Renglones que ya estaban cargados y no se repitieron. */
   duplicates: number;
+  /** Comercios cuya categoría quedó aprendida para la próxima. */
+  rulesSaved: number;
 }
 
 /**
@@ -687,7 +700,7 @@ export const loadStatementDraftLines = async (
     db.collection(`users/${uid}/recurring`).where("accountId", "==", accountId).get(),
   ]);
   const card = accounts.find((a) => a.id === accountId);
-  if (!card) return { created: 0, duplicates: 0 };
+  if (!card) return { created: 0, duplicates: 0, rulesSaved: 0 };
   const period = draft.period;
 
   const analyzed: AnalyzedLine[] = draft.lines.map((l, index) => {
@@ -725,6 +738,10 @@ export const loadStatementDraftLines = async (
   };
 
   const toLoad: LoadableLine[] = [];
+  // Igual que al importar desde la app: lo que se carga con categoría se
+  // aprende por comercio (no los impuestos/cargos del banco, que van todos a
+  // la misma categoría).
+  const learned = new Map<string, { categoryId: string; sample: string }>();
   for (const l of analyzed) {
     if (isPaymentLine(l) || l.duplicateOf) continue;
     const isCharge = CHARGE_LINE_TYPES.has(l.type);
@@ -735,6 +752,9 @@ export const loadStatementDraftLines = async (
       (chosen && catKind.get(chosen) === "expense" ? chosen : null) ??
       (ruled && catKind.get(ruled) === "expense" ? ruled : null) ??
       (isCharge ? draft.chargesCategoryId : null);
+    if (categoryId && !isCharge && l.merchantKey) {
+      learned.set(l.merchantKey, { categoryId, sample: l.description });
+    }
     toLoad.push({
       ...l,
       categoryId,
@@ -745,5 +765,10 @@ export const loadStatementDraftLines = async (
   const loaded = await loadStatementLines(uid, toServerAccount(card), period, draft.closingDate, toLoad, categories);
   const relinked = await relinkProjectedSplits(uid, removedProjected, loaded.ids);
   await applySplitRules(uid, loaded.ids.filter((id) => !relinked.has(id)));
-  return { created: loaded.created, duplicates: analyzed.filter((l) => l.duplicateOf).length };
+  await saveCategoryRules(uid, learned);
+  return {
+    created: loaded.created,
+    duplicates: analyzed.filter((l) => l.duplicateOf).length,
+    rulesSaved: learned.size,
+  };
 };
