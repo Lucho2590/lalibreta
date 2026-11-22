@@ -117,7 +117,9 @@ export default function AgendaPage() {
     onUnlinkExpense: async (a) => {
       if (!user) return;
       if (!confirm("¿Desvincular el gasto de esta actividad? El gasto sigue en tus movimientos.")) return;
-      await setActivityExpense(a.id, user.uid, null).catch(() => toast.error("No se pudo desvincular"));
+      await setActivityExpense(a.id, user.uid, null, a.expenses?.[user.uid]?.transactionId).catch(() =>
+        toast.error("No se pudo desvincular"),
+      );
     },
   };
 
@@ -348,6 +350,7 @@ export default function AgendaPage() {
             {expenseFor && user && (
               <TransactionForm
                 key={`${expenseFor.activity.id}-${expenseFor.split}`}
+                modes={["expense"]}
                 initial={expenseInitial}
                 onSaved={async (info) => {
                   await setActivityExpense(expenseFor.activity.id, user.uid, {

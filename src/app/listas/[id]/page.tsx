@@ -483,6 +483,7 @@ export default function ListDetailPage({ params }: { params: Promise<{ id: strin
             {expenseFor && (
               <TransactionForm
                 key={expenseFor.id}
+                modes={["expense"]}
                 initial={{
                   description: expenseFor.title,
                   date: today,

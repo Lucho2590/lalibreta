@@ -9,6 +9,19 @@ import type { Currency } from "./types";
  */
 export const activitiesCollectionPath = (): string => "activities";
 
+/**
+ * Índice inverso gasto → actividad en la libreta de quien lo cargó:
+ * `users/{uid}/activityLinks/{transactionId}`. Si el gasto se edita o se borra
+ * desde Movimientos, la actividad se actualiza (ver syncActivityLinkForTransaction).
+ */
+export const activityLinksCollectionPath = (uid: string): string => `users/${uid}/activityLinks`;
+
+export interface ActivityLink {
+  activityId: string;
+  /** epoch ms */
+  createdAt: number;
+}
+
 export type ActivityParticipantStatus = "owner" | "pending" | "accepted" | "rejected";
 
 export interface ActivityParticipant {

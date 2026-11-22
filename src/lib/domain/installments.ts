@@ -13,7 +13,7 @@ import type { Account, Currency, Installment, Transaction, TransferType } from "
 import { paymentMonthOf } from "./types";
 import { monthKey } from "./types";
 import { addMonths, computeFirstBillingMonth, getOrBuildCycle } from "./cycles";
-import { syncListLinkForTransaction } from "./lists";
+import { syncTransactionLinks } from "./transaction-links";
 
 export const installmentsCollectionPath = (uid: string): string =>
   `users/${uid}/installments`;
@@ -260,8 +260,8 @@ export const deleteTransactionAndInstallments = async (
   snap.forEach((d) => batch.delete(d.ref));
   batch.delete(doc(db, `${transactionsCollectionPath(uid)}/${transactionId}`));
   await batch.commit();
-  // Si era el gasto de un ítem de una lista, sale de la lista.
-  await syncListLinkForTransaction(uid, transactionId, { deleted: true });
+  // Si era el gasto de un ítem de una lista o de una actividad, sale de ahí.
+  await syncTransactionLinks(uid, transactionId, { deleted: true });
 };
 
 /**
@@ -377,8 +377,8 @@ export const updateTransaction = async (
   old.forEach((d) => batch.delete(d.ref));
   await batch.commit();
   await createTransactionWithInstallments(uid, account, { ...input, transactionId });
-  // Si es el gasto de un ítem de una lista, la lista toma el monto nuevo.
-  await syncListLinkForTransaction(
+  // Si es el gasto de un ítem de una lista o de una actividad, toma el monto nuevo.
+  await syncTransactionLinks(
     uid,
     transactionId,
     input.kind === "expense"
