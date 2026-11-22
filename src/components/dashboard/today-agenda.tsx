@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { useMemo } from "react";
 import { CalendarDays, ChevronRight } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useAuth } from "@/hooks/use-auth";
 import { useActivities } from "@/hooks/use-data";
 import {
@@ -45,7 +44,10 @@ export function useTodayAgenda() {
   }, [data, user, today, tomorrow]);
 }
 
-/** En el inicio: lo de hoy y mañana, y las invitaciones sin responder. */
+/**
+ * Lo de hoy y mañana, y las invitaciones sin responder. Va dentro de la hoja
+ * que abre el atajo "Agenda" del inicio (el título lo pone la hoja).
+ */
 export function TodayAgenda() {
   const { user } = useAuth();
   const { todays, tomorrows, invites, visible } = useTodayAgenda();
@@ -70,38 +72,38 @@ export function TodayAgenda() {
   };
 
   return (
-    <Link href="/agenda" className="block">
-      <Card className="rounded-3xl transition hover:bg-muted/30">
-        <CardHeader className="pb-2">
-          <CardTitle className="flex items-center gap-2 text-sm font-semibold">
-            <CalendarDays className="size-4 text-primary" /> Tu agenda
-            {invites > 0 && (
-              <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary">
-                {invites} {invites === 1 ? "invitación" : "invitaciones"}
-              </span>
-            )}
-            <ChevronRight className="ml-auto size-4 text-muted-foreground" />
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3 pt-1">
-          <div>
-            <div className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Hoy</div>
-            {todays.length > 0 ? (
-              <ul className="space-y-1">{todays.map(row)}</ul>
-            ) : (
-              <p className="text-sm text-muted-foreground">Nada agendado.</p>
-            )}
+    <div className="space-y-4">
+      {invites > 0 && (
+        <Link
+          href="/agenda"
+          className="flex items-center justify-between rounded-2xl bg-primary/10 px-4 py-2.5 text-sm font-medium text-primary hover:bg-primary/15"
+        >
+          {invites} {invites === 1 ? "invitación sin responder" : "invitaciones sin responder"}
+          <ChevronRight className="size-4" />
+        </Link>
+      )}
+      <div>
+        <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Hoy</div>
+        {todays.length > 0 ? (
+          <ul className="space-y-1.5">{todays.map(row)}</ul>
+        ) : (
+          <p className="text-sm text-muted-foreground">Nada agendado.</p>
+        )}
+      </div>
+      {tomorrows.length > 0 && (
+        <div>
+          <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+            Mañana
           </div>
-          {tomorrows.length > 0 && (
-            <div>
-              <div className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                Mañana
-              </div>
-              <ul className="space-y-1">{tomorrows.map(row)}</ul>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-    </Link>
+          <ul className="space-y-1.5">{tomorrows.map(row)}</ul>
+        </div>
+      )}
+      <Link
+        href="/agenda"
+        className="flex items-center justify-center gap-2 rounded-2xl border py-2.5 text-sm font-medium hover:bg-muted"
+      >
+        <CalendarDays className="size-4 text-primary" /> Ver agenda completa
+      </Link>
+    </div>
   );
 }

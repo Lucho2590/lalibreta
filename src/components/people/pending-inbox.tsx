@@ -108,8 +108,11 @@ function TransferToConfirm({ t }: { t: PersonTransfer }) {
   );
 }
 
-/** Tarjeta "Para responder" (no se muestra si no hay nada). */
-export function PendingInbox({ compact = false }: { compact?: boolean }) {
+/**
+ * Tarjeta "Para responder" (no se muestra si no hay nada). `bare`: solo la
+ * lista, sin tarjeta ni título (dentro de una hoja que ya tiene el suyo).
+ */
+export function PendingInbox({ compact = false, bare = false }: { compact?: boolean; bare?: boolean }) {
   const { user } = useAuth();
   const pending = usePendingForMe();
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -127,14 +130,8 @@ export function PendingInbox({ compact = false }: { compact?: boolean }) {
     }
   };
 
-  return (
-    <Card className="rounded-3xl ring-2 ring-brand/30">
-      <CardHeader className="pb-1">
-        <CardTitle className="text-sm font-semibold">
-          Para responder <span className="text-muted-foreground">· {pending.count}</span>
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="divide-y">
+  const list = (
+    <>
         {pending.connections.map((c) => {
           const p = c.profiles[c.requesterUid];
           return (
@@ -185,7 +182,18 @@ export function PendingInbox({ compact = false }: { compact?: boolean }) {
             <span className="text-xs font-medium text-brand">Ver</span>
           </Link>
         )}
-      </CardContent>
+    </>
+  );
+
+  if (bare) return <div className="divide-y">{list}</div>;
+  return (
+    <Card className="rounded-3xl ring-2 ring-brand/30">
+      <CardHeader className="pb-1">
+        <CardTitle className="text-sm font-semibold">
+          Para responder <span className="text-muted-foreground">· {pending.count}</span>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="divide-y">{list}</CardContent>
     </Card>
   );
 }
