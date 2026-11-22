@@ -14,7 +14,17 @@ import { usePeople } from "@/hooks/use-data";
 import { apiPost, errorText } from "@/lib/api";
 import type { Currency } from "@/lib/domain/types";
 import { currencyOptionLabel } from "@/lib/format";
-import { Chip, CurrencyPicker, FamiliesEditor, newFamilyId, type FamilyDraft } from "./shared";
+import {
+  Chip,
+  CurrencyPicker,
+  DatesPicker,
+  FamiliesEditor,
+  datesPayload,
+  newFamilyId,
+  todayLocal,
+  type DatesValue,
+  type FamilyDraft,
+} from "./shared";
 
 const ME = "me";
 
@@ -25,6 +35,7 @@ export function NewVaquitaForm({ onCreated }: { onCreated?: () => void }) {
   const { data: people } = usePeople();
   const [name, setName] = useState("");
   const [currency, setCurrency] = useState<Currency>("ARS");
+  const [dates, setDates] = useState<DatesValue>(() => ({ mode: "day", start: todayLocal(), end: todayLocal() }));
   const [selected, setSelected] = useState<string[]>([]);
   const [extra, setExtra] = useState<Array<{ key: string; name: string }>>([]);
   const [extraName, setExtraName] = useState("");
@@ -57,11 +68,13 @@ export function NewVaquitaForm({ onCreated }: { onCreated?: () => void }) {
     if (!name.trim()) return toast.error("Ponele un nombre");
     if (chosen.length < 2) return toast.error("Sumá al menos a otra persona");
     const fam = (key: string) => (useFamilies ? (assignment[key] ?? null) : null);
+    if (dates.mode === "range" && dates.end < dates.start) return toast.error("La fecha de fin es anterior a la de inicio");
     setBusy(true);
     try {
       const r = await apiPost<{ id: string }>("/api/vaquitas", {
         name: name.trim(),
         currency,
+        ...datesPayload(dates),
         families: useFamilies ? families.filter((f) => f.name.trim()) : [],
         myFamilyId: fam(ME),
         members: [
@@ -91,6 +104,11 @@ export function NewVaquitaForm({ onCreated }: { onCreated?: () => void }) {
           onChange={(e) => setName(e.target.value)}
           autoFocus
         />
+      </div>
+
+      <div className="space-y-1">
+        <Label>¿Cuándo?</Label>
+        <DatesPicker value={dates} onChange={setDates} />
       </div>
 
       <div className="space-y-1">

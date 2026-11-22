@@ -16,6 +16,7 @@ import {
   computeShares,
   crossRate,
   firstName,
+  normalizeVaquitaDates,
   summarizeVaquita,
   vaquitaAccountId,
   type Vaquita,
@@ -165,12 +166,17 @@ export interface CreateVaquitaInput {
   families?: Array<{ id: string; name: string }>;
   /** Mi familia (id de `families`), si estoy en una. */
   myFamilyId?: string | null;
+  /** YYYY-MM-DD: un día (solo startDate) o de startDate a endDate. */
+  startDate?: string | null;
+  endDate?: string | null;
 }
 
 export const createVaquita = async (user: { uid: string }, input: CreateVaquitaInput): Promise<{ id: string }> => {
   const name = cleanName(input.name);
   if (!name) throw new PeopleError("Ponele un nombre");
   if (!isCurrency(input.currency)) throw new PeopleError("Moneda inválida");
+  const dates = normalizeVaquitaDates(input.startDate, input.endDate);
+  if ("error" in dates) throw new PeopleError(dates.error);
   const families: VaquitaFamily[] = (input.families ?? [])
     .map((f) => ({ id: String(f.id || newId("f_")), name: cleanName(f.name, 40) }))
     .filter((f) => f.name);
@@ -200,6 +206,8 @@ export const createVaquita = async (user: { uid: string }, input: CreateVaquitaI
     families: families.filter((f) => members.some((m) => m.familyId === f.id)),
     uids,
     categoryByUid,
+    startDate: dates.startDate,
+    endDate: dates.endDate,
     status: "open",
     createdAt: FieldValue.serverTimestamp(),
     updatedAt: FieldValue.serverTimestamp(),
@@ -215,6 +223,8 @@ export interface UpdateVaquitaInput {
   status?: "open" | "closed";
   /** Mi categoría para los gastos de esta vaquita. */
   categoryId?: string;
+  /** Cambiar las fechas (null en las dos = sin fecha). */
+  dates?: { startDate: string | null; endDate: string | null };
 }
 
 export const updateVaquita = async (user: { uid: string }, input: UpdateVaquitaInput): Promise<void> => {
@@ -236,6 +246,12 @@ export const updateVaquita = async (user: { uid: string }, input: UpdateVaquitaI
     if (input.status !== "open" && input.status !== "closed") throw new PeopleError("Estado inválido");
     patch.status = input.status;
     patch.closedAt = input.status === "closed" ? FieldValue.serverTimestamp() : null;
+  }
+  if (input.dates !== undefined) {
+    const dates = normalizeVaquitaDates(input.dates?.startDate, input.dates?.endDate);
+    if ("error" in dates) throw new PeopleError(dates.error);
+    patch.startDate = dates.startDate;
+    patch.endDate = dates.endDate;
   }
   if (input.categoryId !== undefined) {
     await checkCategory(user.uid, input.categoryId);

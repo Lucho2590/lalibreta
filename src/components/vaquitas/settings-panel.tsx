@@ -12,7 +12,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { useCategories, usePeople } from "@/hooks/use-data";
 import { apiPost, errorText } from "@/lib/api";
 import { firstName, type Vaquita } from "@/lib/domain/vaquitas";
-import { Chip, FamiliesEditor, type FamilyDraft } from "./shared";
+import { Chip, DatesPicker, FamiliesEditor, datesFromVaquita, datesPayload, type DatesValue, type FamilyDraft } from "./shared";
 
 /** Ajustes de una vaquita: nombre, mi categoría, gente, familias, cerrar y borrar. */
 export function VaquitaSettings({ vaquita: v, onClose }: { vaquita: Vaquita; onClose?: () => void }) {
@@ -21,6 +21,8 @@ export function VaquitaSettings({ vaquita: v, onClose }: { vaquita: Vaquita; onC
   const { data: categories } = useCategories();
   const { data: people } = usePeople();
   const [name, setName] = useState(v.name);
+  const [dates, setDates] = useState<DatesValue>(() => datesFromVaquita(v));
+  const [datesDirty, setDatesDirty] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [families, setFamilies] = useState<FamilyDraft[]>(v.families.map((f) => ({ ...f })));
   const [assignment, setAssignment] = useState<Record<string, string | null>>(
@@ -101,6 +103,30 @@ export function VaquitaSettings({ vaquita: v, onClose }: { vaquita: Vaquita; onC
             Guardar
           </Button>
         </div>
+      </section>
+
+      <section className="space-y-2">
+        <Label>¿Cuándo?</Label>
+        <DatesPicker
+          value={dates}
+          onChange={(d) => {
+            setDates(d);
+            setDatesDirty(true);
+          }}
+        />
+        {datesDirty && (
+          <Button
+            variant="outline"
+            className="w-full"
+            disabled={busy === "dates"}
+            onClick={async () => {
+              if (dates.mode === "range" && dates.end < dates.start) return toast.error("La fecha de fin es anterior a la de inicio");
+              if (await run("dates", "/api/vaquitas/update", { id: v.id, dates: datesPayload(dates) }, "Fechas guardadas")) setDatesDirty(false);
+            }}
+          >
+            Guardar fechas
+          </Button>
+        )}
       </section>
 
       <section className="space-y-2">

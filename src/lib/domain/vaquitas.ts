@@ -50,6 +50,9 @@ export interface Vaquita {
   /** Categoría de cada usuario para sus gastos de esta vaquita. */
   categoryByUid: Record<string, string>;
   status: "open" | "closed";
+  /** Cuándo es (YYYY-MM-DD): un día (solo startDate o las dos iguales) o de tal día a tal día. */
+  startDate?: string | null;
+  endDate?: string | null;
   /** Lo guarda el server en cada cambio (para la lista). */
   summary?: {
     total: number;
@@ -157,6 +160,47 @@ export const myUnitNet = (v: Pick<Vaquita, "members" | "families" | "summary">, 
   if (!me) return 0;
   const unit = unitOfMember(vaquitaUnits(v)).get(me.id);
   return unit ? (v.summary?.netByUnit?.[unit] ?? 0) : 0;
+};
+
+const MONTHS = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
+const dayText = (ymd: string, withYear: boolean) => {
+  const [y, m, d] = ymd.split("-").map(Number);
+  return `${d} ${MONTHS[m - 1]}${withYear ? ` ${y}` : ""}`;
+};
+
+/** "15 dic 2026" o "10 al 20 ene 2027" (null si no tiene fecha). */
+export const vaquitaDateText = (v: Pick<Vaquita, "startDate" | "endDate">): string | null => {
+  const start = v.startDate ?? null;
+  const end = v.endDate && v.endDate !== start ? v.endDate : null;
+  if (!start) return null;
+  if (!end) return dayText(start, true);
+  const [sy, sm] = start.split("-");
+  const [ey, em] = end.split("-");
+  if (sy === ey && sm === em) return `${Number(start.slice(8))} al ${dayText(end, true)}`;
+  if (sy === ey) return `${dayText(start, false)} al ${dayText(end, true)}`;
+  return `${dayText(start, true)} al ${dayText(end, true)}`;
+};
+
+/** Fecha por defecto para un gasto nuevo: hoy, o el día más cercano dentro de las fechas de la vaquita. */
+export const defaultExpenseDate = (v: Pick<Vaquita, "startDate" | "endDate">, today: string): string => {
+  const start = v.startDate ?? null;
+  const end = v.endDate ?? start;
+  if (start && today < start) return start;
+  if (end && today > end) return end;
+  return today;
+};
+
+/** Valida y ordena las fechas: devuelve {startDate, endDate} o un error. */
+export const normalizeVaquitaDates = (
+  startDate: string | null | undefined,
+  endDate: string | null | undefined,
+): { startDate: string | null; endDate: string | null } | { error: string } => {
+  const ok = (s: string | null | undefined) => !s || /^\d{4}-\d{2}-\d{2}$/.test(s);
+  if (!ok(startDate) || !ok(endDate)) return { error: "Las fechas tienen que ser YYYY-MM-DD" };
+  const start = startDate || endDate || null;
+  const end = startDate && endDate ? endDate : null;
+  if (start && end && end < start) return { error: "La fecha de fin es anterior a la de inicio" };
+  return { startDate: start, endDate: end && end !== start ? end : null };
 };
 
 export const firstName = (name: string) => name.trim().split(/\s+/)[0] || name;

@@ -18,6 +18,7 @@ import {
   carriedShares,
   computeShares,
   crossRate,
+  defaultExpenseDate,
   firstName,
   vaquitaUnits,
   type Vaquita,
@@ -51,7 +52,7 @@ export function VaquitaExpenseForm({
   const [amountInput, setAmountInput] = useState(expense ? num(expense.amount) : "");
   const [currency, setCurrency] = useState<Currency>(expense?.currency ?? v.currency);
   const [rateInput, setRateInput] = useState(expense && expense.currency !== v.currency ? num(expense.rate) : "");
-  const [date, setDate] = useState(expense?.date ?? todayLocal());
+  const [date, setDate] = useState(expense?.date ?? defaultExpenseDate(v, todayLocal()));
   const payers0 = Object.keys(expense?.paidBy ?? {});
   const [multiPay, setMultiPay] = useState(payers0.length > 1);
   const [payer, setPayer] = useState<string>(payers0[0] ?? me?.id ?? v.members[0]?.id ?? "");
