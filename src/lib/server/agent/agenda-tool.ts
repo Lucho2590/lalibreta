@@ -15,6 +15,7 @@ import {
 } from "../activities";
 import { addDaysYMD, dayLabel, participantName, type Activity, type Invitee } from "@/lib/domain/activity-model";
 import { formatMoney } from "@/lib/format";
+import { personMatchScore } from "@/lib/domain/contact-info";
 import { CURRENCIES } from "@/lib/domain/types";
 
 /** Agenda por WhatsApp: anotar actividades (y con quién), consultar qué hay y responder invitaciones. */
@@ -177,7 +178,21 @@ export const resolvePeople = async (
 ): Promise<{ ok: Invitee[] } | { error: string }> => {
   if (people.length === 0) return { ok: [] };
   const snap = await adminDb().collection(`users/${uid}/contacts`).get();
-  const contacts = snap.docs.map((d) => d.data() as { email: string; displayName?: string | null; linkedUid?: string | null; photoURL?: string | null });
+  // Para invitar hace falta el email: los contactos sin email no sirven acá.
+  const contacts = snap.docs
+    .map(
+      (d) =>
+        d.data() as {
+          email?: string | null;
+          displayName?: string | null;
+          customName?: string | null;
+          nicknames?: string[] | null;
+          linkedUid?: string | null;
+          photoURL?: string | null;
+        },
+    )
+    .filter((c): c is typeof c & { email: string } => !!c.email);
+  const label = (c: (typeof contacts)[number]) => c.customName || c.displayName || c.email;
   const out: Invitee[] = [];
   for (const raw of people) {
     const q = raw.trim();
@@ -193,24 +208,28 @@ export const resolvePeople = async (
       out.push({ uid: found, email, displayName: c?.displayName ?? null, photoURL: c?.photoURL ?? null });
       continue;
     }
-    const n = norm(q);
-    const exact = contacts.filter((c) => c.displayName && norm(c.displayName) === n);
-    const partial = contacts.filter(
-      (c) =>
-        (c.displayName && norm(c.displayName).split(/\s+/).some((w) => w === n)) ||
-        (c.displayName && norm(c.displayName).includes(n)) ||
-        norm(c.email.split("@")[0]).includes(n),
-    );
-    const matches = exact.length > 0 ? exact : partial;
+    // Por nombre, el que le puso el usuario o un apodo ("Orne", "mi señora").
+    const scored = contacts.map((c) => ({
+      c,
+      s: personMatchScore([c.customName, c.displayName, ...(c.nicknames ?? [])], q),
+    }));
+    const best = Math.max(0, ...scored.map((x) => x.s));
+    let matches = best ? scored.filter((x) => x.s === best).map((x) => x.c) : [];
+    if (matches.length === 0) {
+      const n = norm(q);
+      matches = contacts.filter(
+        (c) => (c.displayName && norm(c.displayName).includes(n)) || norm(c.email.split("@")[0]).includes(n),
+      );
+    }
     if (matches.length === 1) {
       const c = matches[0];
       out.push({ uid: c.linkedUid ?? null, email: c.email.toLowerCase(), displayName: c.displayName ?? null, photoURL: c.photoURL ?? null });
     } else if (matches.length > 1) {
       return {
-        error: `"${q}" coincide con varios contactos: ${matches.map((c) => c.displayName || c.email).join(", ")}. Preguntale cuál.`,
+        error: `"${q}" coincide con varios contactos: ${matches.map(label).join(", ")}. Preguntale cuál.`,
       };
     } else {
-      const names = contacts.map((c) => c.displayName || c.email);
+      const names = contacts.map(label);
       return {
         error: `"${q}" no está en sus contactos${names.length ? ` (tiene: ${names.join(", ")})` : " (no tiene contactos cargados)"}. Pedile el email de esa persona para invitarla.`,
       };

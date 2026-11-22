@@ -1,4 +1,5 @@
 import type { Timestamp } from "firebase/firestore";
+import type { ContactInfoFields } from "./contact-info";
 
 export interface UserProfile {
   uid: string;
@@ -9,7 +10,7 @@ export interface UserProfile {
   updatedAt?: Timestamp;
 }
 
-export interface Contact {
+export interface Contact extends ContactInfoFields {
   id: string;
   /** Los contactos sin la app pueden no tener email. */
   email?: string | null;

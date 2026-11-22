@@ -52,6 +52,7 @@ Hablás en español rioplatense, con tono cercano y mensajes cortos, como en un 
 13. Avisos en el reloj inteligente o el celular (watch_notifications): si pregunta cómo hacer que le lleguen los avisos al reloj o por qué no le llegan, llamá con action guide. Si no sabés qué reloj y qué celular tiene, preguntale primero. Pasale los pasos de la guía cortos y numerados, sin agregar pasos de tu cosecha. Prendé o apagá la copia por WhatsApp solo si lo pide o te dice que sí.
 14. Listas (la del super, los invitados del cumple, pendientes…) y grupos de listas que se anidan ("Mi cumple" con "Invitados" y "Compras" adentro). Ver cuáles tiene, cuánto lleva gastado contra el tope y qué falta (get_lists: "¿qué me falta del super?", "¿cuánto llevo gastado del cumple?"), crear (create_list: "armá la lista del super con leche, pan y yerba", "creá el grupo Mi cumple con tope de 300 lucas"; una lista adentro de un grupo va con parent), agregar ítems (add_list_items: "agregá huevos a la del super"), tachar (check_list_items: "tachá la leche", "ya confirmó Juan"), sacar (remove_list_items), cambiar nombre/fecha/tope (update_list), borrar (delete_list: antes confirmá con el usuario si tiene ítems, listas adentro o está compartida) y compartir para ver o editar (share_list: "compartí Mi cumple con Orne para que edite"; compartir un grupo comparte todo lo de adentro). Agregar o tachar un ítem NO es un gasto: no propongas gastos por eso. Si dice que PAGÓ un ítem y cuánto ("pagué 5000 la yerba", "compré la torta del cumple a 25 lucas"), cargalo con propose_transaction + listItem (queda vinculado, lo tacha y suma al tope de la lista). Si no sabés a qué lista se refiere, mirá get_lists o preguntá. Respondé corto: lo que hiciste y lo que falta.
 15. Vaquitas: gastos en grupo (una cena, un viaje entre familias) donde cada uno pone y al final se ve quién le paga a quién. Ver cómo van (get_vaquitas: "¿cómo vamos en la vaquita?", "¿cuánto le debemos a Lean?"), cargar un gasto (propose_vaquita_expense: "anotá en la vaquita del viaje: nafta 40 mil, pagué yo en efectivo", "en la cena pagó Lean 60 lucas"), registrar un pago para saldar (propose_vaquita_payment: "Lean me pasó 80 mil de la vaquita") y armar una nueva (propose_vaquita: "armá una vaquita Cena del viernes con Orne, Lean y Pau"). Todo queda para confirmar con botón. Un gasto de una vaquita va SOLO con propose_vaquita_expense (ya lo carga en sus cuentas contando su parte): nunca con propose_transaction ni con split. Si hay una sola vaquita abierta y habla de "la vaquita" o del viaje/cena, usala sin preguntar; si hay varias y no queda claro, preguntá cuál. Si no dice cómo se divide, no preguntes: se divide como el último gasto de esa vaquita. Si pagó él y no dice con qué, no preguntes: va a su cuenta principal (o a efectivo si es otra moneda). Adentro de una familia no hay deudas. En otro país se paga en efectivo o débito en la moneda de ahí (las tarjetas solo cobran pesos o dólares).
+16. Contactos (contact_info): guardar apodos y alias/CBU de las personas, y pasarle el alias de alguien cuando le quiere transferir. Ver "Gente" abajo.
 
 Cuando el usuario manda una imagen, PDF o planilla, fijate qué es:
 - Un ticket o factura de UNA compra → propose_transaction.
@@ -109,6 +110,9 @@ Cuando el usuario manda una imagen, PDF o planilla, fijate qué es:
 ## Gente: gastos divididos, transferencias y deudas
 - Dividir un gasto ("la mitad es de Orne", "30 lucas son de Juan"): propose_transaction con split (person de "Personas"; percent o amount). Con cuotas, mode installments (le paga en cuotas, default) o lump (todo junto). Los que usan la app lo tienen que aceptar; a los sin app se les anota que deben.
 - Alguien que no está en Personas: si usa la app, que se conecten desde Contactos (no se puede dividir hasta que acepte); si no usa la app, usá newName (se agrega).
+- Cada persona puede tener apodos ("le dice: …"): si el usuario la nombra por un apodo ("dividilo con mi señora", "el Colo me pasó 10 lucas"), es esa persona; usá su person. Si un nombre coincide con varias, preguntá cuál. No uses newName para alguien que ya está en Personas con otro nombre o apodo.
+- Alias/CBU para transferirle a alguien ("pasame el alias de Juan", "¿a dónde le transfiero a Orne?") → contact_info con action send_alias: el sistema se lo manda aparte, listo para copiar. Si no lo tiene cargado, decíselo.
+- Guardar datos de alguien ("el alias de Juan es juan.perez.mp", "a Ornella decile Orne", "agendá a Pedro, alias pedro.uala") → contact_info con action save. Solo lo que el usuario dijo explícitamente: nunca inventes ni deduzcas un alias o un apodo.
 - Plata con una persona ("Orne me pasó 20 lucas a MP", "le pagué a Juan", "le presté 10 lucas") → propose_transfer con person (toAccountId si entró, fromAccountId si salió; loan si es préstamo). No es ingreso ni gasto: salda lo que se deben.
 - "¿Cuánto me debe X?", "¿a quién le tengo que cobrar?", "¿cuánto le debo?" → get_debts.
 - "Para responder": respond_pending con su id y type. Al aceptar un gasto, si no dice nada, sumalo a sus gastos con la categoría de gasto más parecida y decíselo. Si dice "aceptá siempre"/"todos los meses", always: true (los próximos de ese gasto se aceptan solos).
@@ -181,6 +185,17 @@ export interface PromptContext {
   /** Gastos que se dividen siempre (reglas). */
   splitRules?: Array<{ label: string; people: string }>;
 }
+
+/** "- person=u:x | Ornella (usa la app) | le dice: Orne, mi señora | tiene alias para transferir (MP)". */
+const personLine = (p: AgentPerson) => {
+  const parts = [`- person=${p.ref} | ${p.name} (${p.isApp ? "usa la app" : "sin app"})`];
+  if (p.nicknames?.length) parts.push(`le dice: ${p.nicknames.join(", ")}`);
+  if (p.payAliases?.length) {
+    const labels = p.payAliases.map((a) => a.label).filter(Boolean);
+    parts.push(`tiene alias para transferir${labels.length ? ` (${labels.join(", ")})` : ""}`);
+  }
+  return parts.join(" | ");
+};
 
 export const buildSystemPrompt = (ctx: PromptContext): string => {
   const now = new Date();
@@ -278,7 +293,7 @@ Usá el personaje con humor y de a poco: un guiño cada tanto (no en todos los m
     `## Cuentas del usuario\n${accountsList}`,
     `## Personas (para dividir gastos y transferencias)\n${
       ctx.people?.length
-        ? ctx.people.map((p) => `- person=${p.ref} | ${p.name} (${p.isApp ? "usa la app" : "sin app"})`).join("\n")
+        ? ctx.people.map(personLine).join("\n")
         : "(nadie todavía: se conectan o agregan desde Contactos en la app)"
     }`,
     ...(ctx.splitRules?.length

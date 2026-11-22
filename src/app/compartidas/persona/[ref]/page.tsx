@@ -2,21 +2,23 @@
 
 import Link from "next/link";
 import { use, useMemo, useState } from "react";
-import { ArrowLeft, ArrowLeftRight, HandCoins, Trash2 } from "lucide-react";
+import { ArrowLeft, ArrowLeftRight, HandCoins, Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { useAuth } from "@/hooks/use-auth";
-import { usePeople, usePeopleLedger } from "@/hooks/use-data";
+import { useConnections, usePeople, usePeopleLedger } from "@/hooks/use-data";
+import { EditContactSheet, type EditContactTarget } from "@/components/contacts/edit-contact-sheet";
+import { PayAliasList } from "@/components/contacts/pay-aliases";
 import { PersonTransferForm, type PersonDirection } from "@/components/people/person-transfer-form";
 import { personBalanceText } from "@/components/people/balance-text";
 import { apiPost, errorText } from "@/lib/api";
 import { ledgerNow } from "@/lib/domain/debts";
 import { useMonth } from "@/hooks/use-month";
 import { formatMonth } from "@/lib/format";
-import { participantSchedule, transferSide, type PersonRef, type Split } from "@/lib/domain/people";
+import { otherUid, participantSchedule, transferSide, type PersonRef, type Split } from "@/lib/domain/people";
 import { CURRENCIES, type Currency } from "@/lib/domain/types";
 import { formatMoney } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -54,12 +56,24 @@ export default function PersonPage({ params }: { params: Promise<{ ref: string }
   const { monthKey, year, month } = useMonth();
   const { ledger, splits, transfers, loading } = usePeopleLedger(monthKey);
   const [sheet, setSheet] = useState<{ direction: PersonDirection; amount?: number; currency: Currency } | null>(null);
+  const [editing, setEditing] = useState<EditContactTarget | null>(null);
+  const { data: connections } = useConnections();
 
   const l = ledger.get(ref);
   const person = people.find((p) => p.ref === ref);
-  const name = l?.name ?? person?.name ?? "Persona";
+  const name = person?.name ?? l?.name ?? "Persona";
   const isApp = ref.startsWith("u:");
   const me = user?.uid ?? "";
+
+  // Ficha: los sin app siempre tienen contacto; a los conectados se les crea si falta.
+  const editTarget = ((): EditContactTarget | null => {
+    if (person?.contactId) return { contactId: person.contactId };
+    if (!isApp) return null;
+    const uid = ref.slice(2);
+    const conn = connections.find((c) => c.status === "accepted" && otherUid(c, me) === uid);
+    const p = conn?.profiles[uid];
+    return p ? { appUser: { uid, email: p.email, displayName: p.displayName, photoURL: p.photoURL } } : null;
+  })();
 
   // Historial: lo confirmado (del ledger, agrupado por gasto) + lo pendiente con esta persona.
   const rows = useMemo<Row[]>(() => {
@@ -203,10 +217,24 @@ export default function PersonPage({ params }: { params: Promise<{ ref: string }
           <Avatar className="size-12">
             <AvatarFallback className="bg-white/20 text-white">{name[0]?.toUpperCase() ?? "?"}</AvatarFallback>
           </Avatar>
-          <div>
-            <div className="text-xl font-bold">{name}</div>
-            <div className="text-xs opacity-80">{isApp ? "Usa La Libreta" : "Sin la app"}</div>
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-xl font-bold">{name}</div>
+            <div className="truncate text-xs opacity-80">
+              {isApp ? "Usa La Libreta" : "Sin la app"}
+              {person?.nicknames.length ? ` · ${person.nicknames.join(", ")}` : ""}
+            </div>
           </div>
+          {editTarget && (
+            <Button
+              size="icon"
+              variant="ghost"
+              className="shrink-0 bg-white/15 text-white hover:bg-white/25"
+              aria-label="Editar ficha"
+              onClick={() => setEditing(editTarget)}
+            >
+              <Pencil className="size-4" />
+            </Button>
+          )}
         </div>
         <div className="mt-5 text-2xl font-bold tabular-nums">
           {balance ? <PersonBalanceText balance={balance} /> : "Están a mano"}
@@ -246,6 +274,28 @@ export default function PersonPage({ params }: { params: Promise<{ ref: string }
           </Button>
         </div>
       </div>
+
+      {person && (
+        <Card className="rounded-3xl">
+          <CardHeader className="pb-1">
+            <CardTitle className="text-sm font-semibold">Para transferirle</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {person.payAliases.length > 0 ? (
+              <PayAliasList aliases={person.payAliases} />
+            ) : (
+              <div className="flex items-center justify-between gap-3 py-1">
+                <p className="text-xs text-muted-foreground">No cargaste su alias ni su CBU.</p>
+                {editTarget && (
+                  <Button size="sm" variant="outline" onClick={() => setEditing(editTarget)}>
+                    Cargar alias
+                  </Button>
+                )}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       <Card className="rounded-3xl">
         <CardHeader className="pb-1">
@@ -317,6 +367,8 @@ export default function PersonPage({ params }: { params: Promise<{ ref: string }
           </div>
         </SheetContent>
       </Sheet>
+
+      <EditContactSheet target={editing} onClose={() => setEditing(null)} />
     </div>
   );
 }

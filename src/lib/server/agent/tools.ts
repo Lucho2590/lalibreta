@@ -23,6 +23,8 @@ import { PROPOSE_BATCH_TOOL, proposeBatch } from "./batch-tool";
 import { AGENDA_TOOLS, AGENDA_TOOL_NAMES, runAgendaTool } from "./agenda-tool";
 import { WEATHER_TOOLS, WEATHER_TOOL_NAMES, runWeatherTool } from "./weather-tool";
 import { WATCH_TOOLS, WATCH_TOOL_NAMES, runWatchTool } from "./watch-tool";
+import { CONTACTS_TOOLS, CONTACTS_TOOL_NAMES, runContactsTool } from "./contacts-tool";
+import { personMatchScore } from "@/lib/domain/contact-info";
 import { LISTS_TOOLS, LISTS_TOOL_NAMES, resolveItems, resolveNode, runListsTool } from "./lists-tool";
 import { VAQUITA_TOOLS, VAQUITA_TOOL_NAMES, runVaquitaTool } from "./vaquitas-tool";
 import { loadActor, loadTreeFor } from "../lists";
@@ -819,6 +821,7 @@ export const TOOL_DEFINITIONS: ChatCompletionFunctionTool[] = [
   ...WATCH_TOOLS,
   ...LISTS_TOOLS,
   ...VAQUITA_TOOLS,
+  ...CONTACTS_TOOLS,
 ];
 
 // ---------- Schemas ----------
@@ -979,15 +982,22 @@ const respondPendingSchema = z.object({
   always: z.boolean().optional(),
 });
 
+/** Quién de Personas se llama así (por nombre o apodo); si hay varios, ninguno. */
+const personByName = (ctx: ToolContext, q: string) => {
+  const exact = ctx.people.filter((x) => personMatchScore([x.name, ...x.nicknames], q) === 2);
+  return exact.length === 1 ? exact[0] : null;
+};
+
 /** Persona de la lista (o alguien nuevo sin app). */
 const resolveAgentPerson = (ctx: ToolContext, person?: string, newName?: string) => {
   if (person) {
-    const p = ctx.people.find((x) => x.ref === person);
+    // A veces el modelo manda el nombre o el apodo en vez del ref.
+    const p = ctx.people.find((x) => x.ref === person) ?? personByName(ctx, person);
     if (!p) return { error: `"${person}" no está en Personas. Si usa la app, que se conecten desde Contactos; si no, usá newName.` };
     return { ref: p.ref as PersonRef | null, name: p.name, isApp: p.isApp, newName: null as string | null };
   }
   if (newName) {
-    const same = ctx.people.find((x) => sameName(x.name, newName));
+    const same = ctx.people.find((x) => sameName(x.name, newName)) ?? personByName(ctx, newName);
     if (same) return { ref: same.ref as PersonRef | null, name: same.name, isApp: same.isApp, newName: null as string | null };
     return { ref: null, name: newName, isApp: false, newName };
   }
@@ -1958,6 +1968,7 @@ export const executeTool = async (
   if (WATCH_TOOL_NAMES.has(name)) return runWatchTool(ctx.uid, name, args);
   if (LISTS_TOOL_NAMES.has(name)) return runListsTool(ctx.uid, name, args);
   if (VAQUITA_TOOL_NAMES.has(name)) return runVaquitaTool(ctx, name, args);
+  if (CONTACTS_TOOL_NAMES.has(name)) return runContactsTool(ctx, name, args);
 
   switch (name) {
     case "propose_transaction":
