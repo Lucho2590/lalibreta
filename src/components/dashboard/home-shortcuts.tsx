@@ -61,7 +61,7 @@ export function HomeShortcuts() {
       icon: <Inbox className="size-6" />,
       action: true,
       badge: pending.count,
-      content: <PendingInbox />,
+      content: <PendingInbox bare />,
     });
   }
   if (recurring.visible) {
@@ -145,13 +145,16 @@ export function HomeShortcuts() {
           side="bottom"
           className="sheet-md-modal max-h-[85dvh] gap-0 overflow-y-auto rounded-t-3xl p-0 pb-[calc(1.25rem+env(safe-area-inset-bottom))]"
         >
-          <SheetHeader className="px-5 pb-2 pt-5">
-            {/* La agenda y "Para responder" ya traen su propio título en la tarjeta. */}
-            <SheetTitle className={cn(active && OWN_TITLE.has(active.key) && "sr-only")}>
+          {/* pr-14: deja lugar a la X (absoluta arriba a la derecha) en la misma fila del título. */}
+          <SheetHeader className="min-h-14 justify-center px-5 py-3 pr-14">
+            <SheetTitle>
               {active ? SHEET_TITLE[active.key] ?? active.label : ""}
+              {active?.badge != null && active.key !== "weather" && (
+                <span className="text-muted-foreground"> · {active.badge}</span>
+              )}
             </SheetTitle>
           </SheetHeader>
-          <div className="px-4">{active?.content}</div>
+          <div className="px-5">{active?.content}</div>
         </SheetContent>
       </Sheet>
     </>
@@ -162,11 +165,9 @@ const SHEET_TITLE: Record<string, string> = {
   approvals: "Para aprobar",
   pending: "Para responder",
   recurring: "Fijos del mes",
-  agenda: "Agenda",
+  agenda: "Tu agenda",
   weather: "Clima",
 };
-
-const OWN_TITLE = new Set(["agenda", "pending"]);
 
 const ALERT_RING = {
   amarilla: "ring-2 ring-yellow-400",
