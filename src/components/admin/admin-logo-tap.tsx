@@ -87,7 +87,11 @@ export function PinDialog({
   return (
     <Dialog
       open={open}
-      onOpenChange={(v) => {
+      // Solo se cierra con la X: los toques de más al logo (caen sobre el fondo),
+      // tocar afuera o Escape no lo cierran.
+      disablePointerDismissal
+      onOpenChange={(v, details) => {
+        if (!v && details.reason !== "close-press") return;
         onOpenChange(v);
         if (!v) {
           setPin("");
