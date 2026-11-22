@@ -9,6 +9,7 @@ import { renderActivityInviteEmail, renderActivityNoticeEmail } from "./mail-tem
 import { todayYMD } from "./time";
 import {
   activitiesCollectionPath,
+  activityLinksCollectionPath,
   activityBaseFields,
   activityIndexFields,
   compareActivities,
@@ -17,6 +18,7 @@ import {
   participantName,
   type Activity,
   type ActivityInput,
+  type ActivityLink,
   type ActivityParticipant,
   type Invitee,
 } from "@/lib/domain/activity-model";
@@ -431,4 +433,27 @@ export const agendaReminders = async (
     }
   }
   return sent;
+};
+
+/**
+ * Se borró un movimiento desde el server (ej. al cancelar un reparto con
+ * "borrar el gasto"): si era el gasto de una actividad, sale de la actividad.
+ */
+export const unlinkActivityTransactionAdmin = async (uid: string, transactionId: string): Promise<void> => {
+  try {
+    const linkRef = adminDb().doc(`${activityLinksCollectionPath(uid)}/${transactionId}`);
+    const linkSnap = await linkRef.get();
+    if (!linkSnap.exists) return;
+    const { activityId } = linkSnap.data() as ActivityLink;
+    const snap = await col().doc(activityId).get();
+    const current = snap.exists ? (snap.data() as Omit<Activity, "id">).expenses?.[uid] : undefined;
+    if (current?.transactionId === transactionId) {
+      await col()
+        .doc(activityId)
+        .update({ [`expenses.${uid}`]: FieldValue.delete(), updatedAt: FieldValue.serverTimestamp() });
+    }
+    await linkRef.delete();
+  } catch (err) {
+    console.warn("[agenda] no se pudo sacar el gasto de la actividad", err);
+  }
 };

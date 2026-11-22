@@ -80,18 +80,30 @@ export function TransactionForm({
   initial,
   onSubmitted,
   onSaved,
+  modes,
 }: {
   defaultKind?: FormMode;
   initial?: TransactionFormInitial;
   onSubmitted?: () => void;
   /** Se llama con el gasto/ingreso guardado (no con transferencias). */
   onSaved?: (info: SavedTransactionInfo) => void | Promise<void>;
+  /**
+   * Pestañas permitidas (por defecto, todas). Con una sola no se muestran:
+   * ej. el gasto de un ítem de una lista o de una actividad solo puede ser gasto.
+   */
+  modes?: FormMode[];
 }) {
-  const [mode, setMode] = useState<FormMode>(defaultKind);
+  const options = modes?.length ? MODES.filter((m) => modes.includes(m.value)) : MODES;
+  const [mode, setMode] = useState<FormMode>(
+    options.some((o) => o.value === defaultKind) ? defaultKind : options[0].value,
+  );
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-4 gap-1 rounded-2xl bg-muted p-1">
-        {MODES.map((opt) => (
+      <div
+        className={`grid gap-1 rounded-2xl bg-muted p-1 ${options.length <= 1 ? "hidden" : ""}`}
+        style={{ gridTemplateColumns: `repeat(${options.length}, minmax(0, 1fr))` }}
+      >
+        {options.map((opt) => (
           <button
             key={opt.value}
             type="button"

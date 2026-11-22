@@ -4,6 +4,7 @@ import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { adminDb } from "./firebase-admin";
 import { notify } from "./notifications";
 import { unlinkTransactionAdmin } from "./lists";
+import { unlinkActivityTransactionAdmin } from "./activities";
 import { PeopleError, getConnection, loadProfile } from "./connections";
 import { dateFromYMD } from "./time";
 import {
@@ -496,8 +497,11 @@ export const cancelSplit = async (
     ins.docs.forEach((d) => batch.delete(d.ref));
     batch.delete(db.doc(`users/${owner.uid}/transactions/${split.ownerTxId}`));
     await batch.commit();
-    // Si era el gasto de un ítem de una lista, sale de la lista.
-    await unlinkTransactionAdmin(owner.uid, split.ownerTxId);
+    // Si era el gasto de un ítem de una lista o de una actividad, sale de ahí.
+    await Promise.all([
+      unlinkTransactionAdmin(owner.uid, split.ownerTxId),
+      unlinkActivityTransactionAdmin(owner.uid, split.ownerTxId),
+    ]);
   }
 };
 
