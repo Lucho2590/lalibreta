@@ -12,6 +12,8 @@ export type NotificationKind =
   | "agenda-response"
   | "agenda-changed"
   | "agenda-cancelled"
+  // Listas
+  | "list-shared"
   // Cuentas con gente
   | "connection-request"
   | "connection-response"

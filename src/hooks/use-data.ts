@@ -49,6 +49,7 @@ import {
   compareActivities,
   type Activity,
 } from "@/lib/domain/activities";
+import { listsCollectionPath, type ListNode } from "@/lib/domain/list-model";
 
 const accountsCollectionPath = (uid: string) => `users/${uid}/accounts`;
 
@@ -355,6 +356,32 @@ export function useActivities() {
     const map = new Map<string, Activity>();
     for (const x of [...a.data, ...b.data]) map.set(x.id, x);
     return [...map.values()].sort(compareActivities);
+  }, [a.data, b.data]);
+  return { data, loading: a.loading || b.loading, error: a.error ?? b.error };
+}
+
+/**
+ * Listas: todos los grupos y listas a los que tengo acceso (míos o
+ * compartidos), por uid y por email (si me compartieron antes de tener cuenta).
+ * Con esto se arma el árbol entero del lado del cliente.
+ */
+export function useLists() {
+  const { user } = useAuth();
+  const email = user?.email?.toLowerCase() ?? null;
+  const byUid = useMemo(
+    () => (user ? query(collection(db, listsCollectionPath()), where("memberUids", "array-contains", user.uid)) : null),
+    [user],
+  );
+  const byEmail = useMemo(
+    () => (email ? query(collection(db, listsCollectionPath()), where("memberEmails", "array-contains", email)) : null),
+    [email],
+  );
+  const a = useCollection<ListNode>(byUid);
+  const b = useCollection<ListNode>(byEmail);
+  const data = useMemo(() => {
+    const map = new Map<string, ListNode>();
+    for (const x of [...a.data, ...b.data]) map.set(x.id, x);
+    return [...map.values()];
   }, [a.data, b.data]);
   return { data, loading: a.loading || b.loading, error: a.error ?? b.error };
 }

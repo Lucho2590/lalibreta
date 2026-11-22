@@ -1,6 +1,7 @@
 import "server-only";
 
 import { adminDb } from "../firebase-admin";
+import { ListError, linkTransactionToListItem } from "../lists";
 import { createTransactionAdmin, createTransferAdmin } from "../transactions-admin";
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { createAccountAdmin } from "../accounts-admin";
@@ -536,6 +537,27 @@ const resolveDraft = async (
   }
 };
 
+/** Si el gasto era de un ítem de una lista, lo vincula y devuelve la línea para la respuesta. */
+const listLinkText = async (
+  uid: string,
+  draft: TransactionDraft,
+  txId: string,
+  txOwnerUid?: string,
+): Promise<string> => {
+  if (!draft.listItem || draft.kind !== "expense") return "";
+  try {
+    return await linkTransactionToListItem(
+      uid,
+      draft.listItem,
+      { transactionId: txId, amount: draft.amount, currency: draft.currency ?? "ARS", sharedExpenseId: null },
+      txOwnerUid,
+    );
+  } catch (err) {
+    console.warn("[wa] no se pudo vincular a la lista", err);
+    return `\n⚠️ No lo pude vincular a *${draft.listItem.itemTitle}*: ${err instanceof ListError ? err.message : "error"}. Podés hacerlo desde la app.`;
+  }
+};
+
 const confirmTransaction = async (waId: string, uid: string, draft: TransactionDraft) => {
   if (draft.shared) {
     await confirmSharedTransaction(waId, uid, draft);
@@ -614,9 +636,10 @@ const confirmTransaction = async (waId: string, uid: string, draft: TransactionD
     account.type === "credit" && draft.kind === "expense"
       ? await cardDueText(uid, txId).catch(() => "")
       : "";
+  const listText = await listLinkText(uid, draft, txId);
   await sendText(
     waId,
-    `✅ Guardado: *${draft.description}* por *${formatMoney(draft.amount, draft.currency ?? "ARS")}*${cuotas} (${account.name}).${dueText}${createdCategory ? `\n🏷️ Creé la categoría *${category.name}*.` : ""}${splitText}`,
+    `✅ Guardado: *${draft.description}* por *${formatMoney(draft.amount, draft.currency ?? "ARS")}*${cuotas} (${account.name}).${dueText}${createdCategory ? `\n🏷️ Creé la categoría *${category.name}*.` : ""}${splitText}${listText}`,
   );
 };
 
@@ -983,8 +1006,9 @@ const confirmSharedTransaction = async (waId: string, uid: string, draft: Transa
       whatsappText: `🧾 *${me}* cargó *${draft.description}* por *${money}*${cuotas} con tu *${account.name}* (${category.name}).`,
     })
   ).stored;
+  const listText = await listLinkText(uid, draft, txId, shared.ownerUid);
   await sendText(
     waId,
-    `✅ Cargado en la *${account.name}* de ${shared.ownerName}: *${draft.description}* por *${money}*${cuotas}.${dueText}${notified ? ` Le avisé a ${shared.ownerName}.` : ""}`,
+    `✅ Cargado en la *${account.name}* de ${shared.ownerName}: *${draft.description}* por *${money}*${cuotas}.${dueText}${notified ? ` Le avisé a ${shared.ownerName}.` : ""}${listText}`,
   );
 };

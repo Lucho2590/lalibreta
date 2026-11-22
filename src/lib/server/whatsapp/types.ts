@@ -83,6 +83,8 @@ export interface TransactionDraft {
   shared?: { shareId: string; ownerUid: string; ownerName: string } | null;
   /** Dividirlo con otras personas (al confirmar se arma el reparto). */
   split?: SplitDraft | null;
+  /** Ítem de una lista al que se vincula al guardarlo (itemId null: se agrega). */
+  listItem?: { listId: string; itemId: string | null; listTitle: string; itemTitle: string } | null;
   /** epoch ms */
   createdAt: number;
 }
