@@ -52,7 +52,9 @@ import { applySplitRules, createSplitRule } from "../split-rules";
 import { createPersonTransfer } from "../person-transfers";
 import { createVaquita, loadVaquita, savePayment, saveExpense } from "../vaquitas";
 import { myUnitNet } from "@/lib/domain/vaquitas";
-import { PeopleError } from "../connections";
+import { PeopleError, lookupBookContacts } from "../connections";
+import { cleanBookContacts } from "@/lib/domain/address-book";
+import { formatPhone } from "@/lib/domain/phone";
 import { loadSession, saveSession, takeDraft } from "./sessions";
 import {
   draftType,
@@ -373,10 +375,50 @@ const routeMessage = async (
       historyText = `📍 [ubicación] ${where}`;
       break;
     }
+    case "contacts": {
+      // Contactos compartidos de la agenda: nos fijamos quiénes usan La
+      // Libreta y el agente sigue (manda las solicitudes y ofrece invitar al resto).
+      const book = cleanBookContacts(
+        (message.contacts ?? []).map((c) => ({
+          name: c.name?.formatted_name || [c.name?.first_name, c.name?.last_name].filter(Boolean).join(" "),
+          // wa_id (si tiene WhatsApp) es el número exacto; si no, el que figura.
+          phones: (c.phones ?? []).map((p) => (p.wa_id ? `+${p.wa_id}` : p.phone)),
+          emails: (c.emails ?? []).map((e) => e.email),
+        })),
+      );
+      if (!book.length) {
+        await sendText(waId, "Ese contacto no tiene teléfono ni email 🤔");
+        return;
+      }
+      const matches = await lookupBookContacts(uid, book.slice(0, 20));
+      const STATE: Record<string, string> = {
+        connected: "ya están conectados",
+        outgoing: "ya le mandó la solicitud, falta que acepte",
+        incoming: "esa persona ya le mandó una solicitud (connect la acepta)",
+        self: "es el propio usuario",
+        none: "todavía no están conectados",
+      };
+      const lines = matches.map((m) => {
+        const data = [...m.phones.map((p) => `WhatsApp ${formatPhone(p)}`), ...m.emails].join(" · ");
+        if (m.user) {
+          return `- ${m.name} (${data}): USA La Libreta como "${m.user.name}", ${STATE[m.user.state]} (contact: ${m.user.q})`;
+        }
+        return `- ${m.name} (${data}): NO usa La Libreta${m.offlineContactId ? ", ya está agendado sin app" : ""} (contact: ${m.phones[0] ?? m.emails[0]})`;
+      });
+      input = {
+        text:
+          `(el usuario compartió ${book.length > 1 ? `${book.length} contactos` : "un contacto"} de su agenda${book.length > 20 ? "; muestro los primeros 20" : ""}. ` +
+          `Si no venía hablando de otra cosa, quiere agregarlos: a los que usan La Libreta y todavía no están conectados mandales la solicitud con contact_info connect (con su contact); ` +
+          `a los que no la usan, decile que no la usan y ofrecele invitarlos (action invite) o agendarlos sin app (save con newName y phone/email). Respondé corto, en una lista si son varios.)\n` +
+          lines.join("\n"),
+      };
+      historyText = `👤 [${book.length > 1 ? `${book.length} contactos` : "contacto"}] ${book.map((b) => b.name).join(", ")}`;
+      break;
+    }
     default:
       await sendText(
         waId,
-        "Por ahora entiendo texto, audios, fotos, PDFs y planillas (Excel o CSV) 🙂",
+        "Por ahora entiendo texto, audios, fotos, PDFs, planillas (Excel o CSV), ubicaciones y contactos 🙂",
       );
       return;
   }
