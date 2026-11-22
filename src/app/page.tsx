@@ -34,6 +34,8 @@ import { cardFloorMonth, summarizeCardMonth } from "@/lib/domain/card-summary";
 import { monthRates } from "@/lib/domain/exchanges";
 import { ExchangeSummaryCard } from "@/components/transactions/exchange-summary-card";
 import { isPersonAccountId } from "@/lib/domain/people";
+import { isVaquitaAccountId, vaquitaIdFromAccountId } from "@/lib/domain/vaquitas";
+import { useVaquitas } from "@/hooks/use-vaquitas";
 import { HomeShortcuts } from "@/components/dashboard/home-shortcuts";
 import { Onboarding } from "@/components/dashboard/onboarding";
 import { AnimatedNumber } from "@/components/motion/animated-number";
@@ -47,6 +49,8 @@ export default function Dashboard() {
   const { data: installments, loading, stale } = useInstallmentsForMonth(monthKey);
   const { data: categories, loading: categoriesLoading } = useCategories();
   const { data: accounts, loading: accountsLoading } = useAccounts();
+  const { data: vaquitas } = useVaquitas();
+  const vaquitaNames = useMemo(() => new Map(vaquitas.map((v) => [v.id, v.name])), [vaquitas]);
   // Gastos repartidos: cuenta solo mi parte (y "si te pagan" lo que me deben los sin app).
   const adj = useSplitAdjustment();
   const adjProjected = useSplitAdjustment({ projected: true });
@@ -355,7 +359,15 @@ export default function Dashboard() {
                 {sortedAccounts.map(({ id, acc, total }, i) => (
                   <Link
                     key={id}
-                    href={acc ? `/cuentas/${acc.id}` : isPersonAccountId(id) ? "/compartidas" : "#"}
+                    href={
+                      acc
+                        ? `/cuentas/${acc.id}`
+                        : isPersonAccountId(id)
+                          ? "/compartidas"
+                          : isVaquitaAccountId(id)
+                            ? `/vaquitas/${vaquitaIdFromAccountId(id)}`
+                            : "#"
+                    }
                     className={cn(
                       "flex items-center justify-between rounded-xl px-2 py-2.5 text-sm transition hover:bg-muted/60",
                       ENTER,
@@ -370,7 +382,12 @@ export default function Dashboard() {
                         />
                       </span>
                       <span className="font-medium">
-                        {acc?.name ?? (isPersonAccountId(id) ? "Tu parte de gastos de otros" : "—")}
+                        {acc?.name ??
+                          (isPersonAccountId(id)
+                            ? "Tu parte de gastos de otros"
+                            : isVaquitaAccountId(id)
+                              ? `Vaquita: ${vaquitaNames.get(vaquitaIdFromAccountId(id) ?? "") ?? "tu parte"}`
+                              : "—")}
                       </span>
                     </div>
                     <AnimatedNumber className="tabular-nums" value={total} format={formatCurrency} />

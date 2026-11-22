@@ -34,6 +34,21 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Vaquitas: gastos de un grupo (cenas, viajes entre familias). Las ven
+    // los integrantes con la app (uids); sus gastos y pagos, también. Todo
+    // se escribe desde /api/vaquitas/* (Admin SDK), que además lo refleja
+    // en las cuentas de cada uno.
+    match /vaquitas/{id} {
+      allow read: if request.auth != null && request.auth.uid in resource.data.uids;
+      allow write: if false;
+
+      match /{sub}/{docId} {
+        allow read: if request.auth != null && sub in ['expenses', 'payments'] &&
+          request.auth.uid in get(/databases/$(database)/documents/vaquitas/$(id)).data.uids;
+        allow write: if false;
+      }
+    }
+
     // Gastos compartidos (modelo viejo, reemplazado por splits): solo lectura.
     match /sharedExpenses/{id} {
       allow read: if request.auth != null && (

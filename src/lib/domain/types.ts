@@ -226,6 +226,12 @@ export interface Transaction {
   splitId?: string;
   /** Transferencia con una persona (p2pTransfers/{id}). */
   p2pTransferId?: string;
+  /** Vaquita: gasto o pago de la vaquita que lo generó (se edita desde ahí). */
+  vaquitaId?: string;
+  vaquitaExpenseId?: string;
+  vaquitaPaymentId?: string;
+  /** Parte del gasto que es mía (0..1): lo pagué yo pero era de varios. Default 1. */
+  shareFactor?: number;
   createdAt: Timestamp;
 }
 
@@ -266,6 +272,12 @@ export interface Installment {
   /** Mi parte de un gasto que pagó otra persona / transferencia con una persona. */
   splitId?: string;
   p2pTransferId?: string;
+  /** Vaquita: gasto o pago de la vaquita que lo generó (se edita desde ahí). */
+  vaquitaId?: string;
+  vaquitaExpenseId?: string;
+  vaquitaPaymentId?: string;
+  /** Parte del gasto que es mía (0..1): lo pagué yo pero era de varios. Default 1. */
+  shareFactor?: number;
   /** Moneda de amount. Default ARS. */
   currency?: Currency;
   /** Si lo cargó otra persona desde una cuenta compartida. */

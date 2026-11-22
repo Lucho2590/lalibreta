@@ -49,12 +49,26 @@ export const unconvertedCurrencies = (
     .filter(([c, v]) => c !== "ARS" && Math.abs(v ?? 0) >= 0.005 && !rates?.[c])
     .map(([c]) => c);
 
+/**
+ * Qué parte de un gasto es mía (0..1): la de un reparto (byTxId) y la de una
+ * vaquita (shareFactor, guardado en la cuota). Las dos son partes del mismo
+ * total, así que lo que no es mío se suma.
+ */
+export const myShareFactor = (
+  ins: Pick<Installment, "transactionId" | "shareFactor">,
+  adj: SharedAdjustment | undefined,
+): number => {
+  const split = adj?.byTxId.get(ins.transactionId)?.factor ?? 1;
+  const vaquita = ins.shareFactor ?? 1;
+  return Math.min(1, Math.max(0, split + vaquita - 1));
+};
+
 const expenseAmount = (
   ins: Installment,
   adj: SharedAdjustment | undefined,
 ): number => {
-  const info = adj?.byTxId.get(ins.transactionId);
-  return info ? Math.round(ins.amount * info.factor * 100) / 100 : ins.amount;
+  const f = myShareFactor(ins, adj);
+  return f === 1 ? ins.amount : Math.round(ins.amount * f * 100) / 100;
 };
 
 /** Ingresos y gastos del mes en UNA moneda (las transferencias no cuentan). */

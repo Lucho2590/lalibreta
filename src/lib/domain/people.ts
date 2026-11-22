@@ -30,6 +30,9 @@ export const parsePersonRef = (
  */
 export const personAccountId = (ref: PersonRef) => `person:${ref}`;
 export const isPersonAccountId = (id: string | null | undefined): boolean => !!id?.startsWith("person:");
+/** Cuenta que no es real: la de una persona o la de una vaquita (no tiene saldo propio). */
+export const isVirtualAccountId = (id: string | null | undefined): boolean =>
+  !!id && (id.startsWith("person:") || id.startsWith("vaquita:"));
 export const personRefFromAccountId = (id: string | null | undefined): PersonRef | null =>
   id && id.startsWith("person:") ? (id.slice("person:".length) as PersonRef) : null;
 

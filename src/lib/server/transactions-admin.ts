@@ -122,6 +122,10 @@ export interface ServerCreateInput {
   createdBy?: { uid: string; name: string };
   /** Gasto estimado (ej. suscripción proyectada al próximo resumen). */
   projected?: boolean;
+  /** Id fijo para la transacción (para poder reescribirla). Default: uno nuevo. */
+  id?: string;
+  /** Campos extra para la transacción y sus cuotas (ej. los de una vaquita). */
+  extra?: Record<string, unknown>;
 }
 
 export const createTransactionAdmin = async (
@@ -138,7 +142,7 @@ export const createTransactionAdmin = async (
 
   const txCol = adminDb().collection(`users/${input.ownerUid}/transactions`);
 
-  const txRef = txCol.doc();
+  const txRef = input.id ? txCol.doc(input.id) : txCol.doc();
 
   let firstYear: number;
   let firstMonth: number;
@@ -174,6 +178,7 @@ export const createTransactionAdmin = async (
     ...(input.createdBy ? { createdByUid: input.createdBy.uid, createdByName: input.createdBy.name } : {}),
     ...(input.projected ? { projected: true } : {}),
     createdAt: FieldValue.serverTimestamp(),
+    ...(input.extra ?? {}),
   });
 
   await writeInstallments(batch, input.ownerUid, input.account, {
@@ -192,6 +197,7 @@ export const createTransactionAdmin = async (
     recurringId: input.recurringId,
     createdByName: input.createdBy?.name,
     projected: input.projected,
+    extra: input.extra,
   });
 
   await batch.commit();
@@ -214,6 +220,7 @@ interface InstallmentSpec {
   recurringId?: string;
   createdByName?: string;
   projected?: boolean;
+  extra?: Record<string, unknown>;
 }
 
 const writeInstallments = async (
@@ -250,6 +257,8 @@ const writeInstallments = async (
       ...(spec.projected ? { projected: true } : {}),
       // Plata que "entra" a una tarjeta = saldo a favor, no ingreso.
       ...(spec.isCredit && spec.kind === "income" ? { cardCredit: true } : {}),
+      // Sin createdAt: las cuotas no lo llevan.
+      ...Object.fromEntries(Object.entries(spec.extra ?? {}).filter(([k]) => k !== "createdAt")),
     });
   }
 };
@@ -307,6 +316,12 @@ export const rebuildCardInstallmentsAdmin = async (
       recurringId: tx.recurringId as string | undefined,
       createdByName: tx.createdByName as string | undefined,
       projected: tx.projected === true,
+      // Lo de una vaquita (qué parte es mía) vive también en las cuotas.
+      extra: Object.fromEntries(
+        (["vaquitaId", "vaquitaExpenseId", "shareFactor"] as const)
+          .filter((k) => tx[k] != null)
+          .map((k) => [k, tx[k]]),
+      ),
     });
     await batch.commit();
     rebuilt += 1;

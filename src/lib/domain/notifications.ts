@@ -24,6 +24,9 @@ export type NotificationKind =
   | "p2p-response"
   | "debt-reminder"
   | "pending-reminder"
+  // Vaquitas
+  | "vaquita-invite"
+  | "vaquita-payment"
   // Clima
   | "weather-alert"
   | "weather-daily"
