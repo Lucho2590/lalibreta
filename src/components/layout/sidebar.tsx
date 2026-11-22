@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { GripVertical, LogOut, Plus, Wallet } from "lucide-react";
+import { GripVertical, LogOut, Plus, Sparkles, Wallet } from "lucide-react";
 import { verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -11,6 +11,7 @@ import { signOut } from "@/lib/firebase/auth";
 import { useNewTransactionSheet } from "@/components/transactions/new-transaction-sheet";
 import { cn } from "@/lib/utils";
 import { AdminLogoTap } from "@/components/admin/admin-logo-tap";
+import { openNovedades } from "@/components/novedades/novedades-dialog";
 import { useNavOrder } from "@/hooks/use-nav-order";
 import { isNavActive, type NavItem } from "@/components/layout/nav-items";
 import { SortableNav, useSortableNavItem } from "@/components/layout/sortable-nav";
@@ -72,6 +73,9 @@ export function Sidebar() {
             <div className="truncate text-xs font-medium">{user?.displayName ?? "Cuenta"}</div>
             <div className="truncate text-[11px] text-muted-foreground">{user?.email}</div>
           </div>
+          <Button size="icon" variant="ghost" onClick={() => openNovedades()} aria-label="Novedades" title="Novedades">
+            <Sparkles className="size-4" />
+          </Button>
           <Button
             size="icon"
             variant="ghost"

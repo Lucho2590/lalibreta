@@ -13,6 +13,7 @@ import {
   CalendarDays,
   CloudSun,
   ListChecks,
+  Sparkles,
 } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -29,6 +30,7 @@ import { signOut } from "@/lib/firebase/auth";
 import { MonthSelector } from "./month-selector";
 import { NotificationBell } from "@/components/pwa/notification-bell";
 import { AdminLogoTap } from "@/components/admin/admin-logo-tap";
+import { openNovedades } from "@/components/novedades/novedades-dialog";
 
 export function Header({ variant = "mobile" }: { variant?: "mobile" | "desktop" }) {
   const { user } = useAuth();
@@ -101,6 +103,9 @@ export function Header({ variant = "mobile" }: { variant?: "mobile" | "desktop" 
           </DropdownMenuItem>
           <DropdownMenuItem render={<Link href="/whatsapp" />}>
             <MessageCircle className="mr-2 size-4" /> WhatsApp
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => openNovedades()}>
+            <Sparkles className="mr-2 size-4" /> Novedades
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem onClick={() => signOut()}>

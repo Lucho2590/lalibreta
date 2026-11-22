@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useAuth } from "@/hooks/use-auth";
 import { useAccounts } from "@/hooks/use-data";
+import { useNovedadesPhase } from "@/components/novedades/novedades-dialog";
 import {
   fetchSavedLocation,
   geoPermission,
@@ -28,7 +29,8 @@ import {
  *   "Ahora no" lo oculta solo hasta que se cierre la app.
  * - Si el permiso está bloqueado, explica cómo habilitarlo a mano.
  * - Si el usuario eligió "Dejar de usar mi ubicación" (en /clima), no molesta.
- * No aparece hasta que terminó de armar sus cuentas (para no tapar el alta).
+ * No aparece hasta que terminó de armar sus cuentas (para no tapar el alta)
+ * ni mientras se muestran las novedades.
  */
 
 const DISMISS_KEY = "location-prompt-dismissed";
@@ -87,6 +89,7 @@ export function LocationPrompt() {
   const [busy, setBusy] = useState(false);
   const checked = useRef(false);
 
+  const novedades = useNovedadesPhase();
   const setupDone = !accountsLoading && accounts.some((a) => a.isMain && a.active !== false);
 
   const show = useCallback((next: Exclude<Phase, "hidden">) => {
@@ -96,7 +99,7 @@ export function LocationPrompt() {
 
   // Una vez por apertura de la app.
   useEffect(() => {
-    if (!user || !setupDone || checked.current) return;
+    if (!user || !setupDone || novedades !== "done" || checked.current) return;
     checked.current = true;
     void (async () => {
       const perm: GeoPermission = await geoPermission();
@@ -131,7 +134,7 @@ export function LocationPrompt() {
       }
       show("ask");
     })();
-  }, [user, setupDone, show]);
+  }, [user, setupDone, novedades, show]);
 
   // Si lo habilita desde el navegador con el cartel abierto, se cierra solo.
   useEffect(() => {
