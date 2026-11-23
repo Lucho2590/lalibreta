@@ -25,6 +25,8 @@ const lineSchema = z.object({
   suggestedCategoryId: z.string().nullable(),
   categorySource: z.enum(["rule", "ai"]).nullable(),
   duplicateOf: z.string().nullable(),
+  recurringId: z.string().max(100).nullable().optional(),
+  recurringName: z.string().max(120).nullable().optional(),
   include: z.boolean(),
   categoryId: z.string().nullable(),
 });

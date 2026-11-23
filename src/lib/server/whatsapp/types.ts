@@ -180,6 +180,13 @@ export interface StatementDraftLine {
     | "other";
   /** Categoría de gasto sugerida por el agente (opcional). */
   categoryId?: string | null;
+  /**
+   * Podría debitarse todos los meses (prepaga, mutual, seguro, colegio…) pero
+   * el agente no está seguro: se le pregunta al usuario antes de guardar.
+   */
+  maybeRecurring?: boolean;
+  /** Ya es un fijo del usuario (se reconoció solo): su nombre. */
+  recurringName?: string | null;
 }
 
 export interface SubscriptionProposal {
@@ -190,6 +197,10 @@ export interface SubscriptionProposal {
   categoryId: string;
   categoryName: string;
   dayOfMonth: number;
+  /** Descripción de la línea del resumen de la que sale. */
+  line?: string | null;
+  /** normalizeMerchant de esa línea: el fijo la reconoce en los próximos resúmenes. */
+  matchKey?: string | null;
 }
 
 export interface StatementDraft {
@@ -314,6 +325,8 @@ export interface RecurringDraft {
   dayOfMonth: number;
   /** YYYY-MM desde cuándo. */
   startMonth: string;
+  /** Cómo figura en el resumen de la tarjeta (normalizeMerchant), si se sabe. */
+  matchKey?: string | null;
   createdAt: number;
 }
 

@@ -541,9 +541,18 @@ function LineBadges({
           reintegro
         </span>
       )}
+      {/* Ya es uno de sus fijos: se engancha solo (el mes que viene lo pone el fijo). */}
+      {r.recurringId && (
+        <span
+          className="rounded-full bg-brand/10 px-1.5 py-0.5 text-[10px] font-medium text-brand"
+          title="Es uno de tus fijos: lo reconocí por cómo figura en el resumen"
+        >
+          🔁 fijo{r.recurringName ? `: ${r.recurringName}` : ""}
+        </span>
+      )}
       {/* Servicios y suscripciones que se debitan todos los meses: se estiman
           en el resumen siguiente (y se reemplazan por el real al importarlo). */}
-      {!payment && !credit && !r.installmentNumber && r.amount > 0 &&
+      {!r.recurringId && !payment && !credit && !r.installmentNumber && r.amount > 0 &&
         (r.type === "purchase" || r.type === "subscription" || r.type === "other") && (
           <button
             type="button"

@@ -15,6 +15,7 @@ import {
   MessageCircle,
   Pencil,
   PiggyBank,
+  Repeat,
   Sparkles,
   Users,
   Watch,
@@ -46,6 +47,7 @@ const ICONS: Record<NovedadIcon, React.ComponentType<{ className?: string }>> = 
   editar: Pencil,
   gente: Handshake,
   resumen: FileText,
+  fijos: Repeat,
 };
 
 // ---------------------------------------------------------------------------

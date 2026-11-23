@@ -11,13 +11,14 @@ import { createTransactionAdmin } from "./transactions-admin";
 import { saveStatementAdmin } from "./statements-admin";
 import { loadAccounts, loadCategories, toServerAccount } from "./queries-admin";
 import { dateFromYMD, isYMD } from "./time";
-import { normalizeMerchant } from "@/lib/domain/merchants";
+import { fijoForLine, normalizeMerchant, type FijoMatchInfo } from "@/lib/domain/merchants";
 import { activeSplitIdsForTx } from "./splits";
 import { applySplitRules, relinkProjectedSplits, type RemovedProjected } from "./split-rules";
 import {
   isCreditLine,
   isPaymentLine,
   type AnalyzedLine,
+  type ImportLine,
   type ImportPayload,
   type ImportResult,
   type StatementAnalysis,
@@ -263,7 +264,22 @@ ${rules
   });
 
   const period = raw.closingDate.slice(0, 7);
-  if (matched) await markDuplicates(uid, matched.id, period, lines);
+  if (matched) {
+    // Lo que ya es un fijo de la tarjeta se reconoce solo (ej. la prepaga).
+    const fijoSnap = await adminDb().collection(`users/${uid}/recurring`).where("accountId", "==", matched.id).get();
+    const fijos = fijoSnap.docs.map((d) => fijoInfo(d.id, d.data()));
+    raw.lines.forEach((l, i) => {
+      const line = lines[i];
+      if (line.amount <= 0 || line.installmentNumber || !["purchase", "subscription", "other", "fee"].includes(line.type)) return;
+      const f =
+        fijoForLine(fijos, matched.id, l.rawDescription || l.description) ?? fijoForLine(fijos, matched.id, line.description);
+      if (!f) return;
+      line.type = "subscription";
+      line.recurringId = f.id;
+      line.recurringName = f.name;
+    });
+    await markDuplicates(uid, matched.id, period, lines);
+  }
 
   return {
     card: {
@@ -426,6 +442,24 @@ export const importStatement = async (uid: string, payload: ImportPayload): Prom
     categories.find((c) => c.kind === kind && /^otro/i.test(c.name))?.id ??
     categories.find((c) => c.kind === kind)?.id;
 
+  // Fijos reconocidos: solo valen los de esta tarjeta (si se eligió otra, no
+  // se enganchan). Lo que se aplicó a mano de esos fijos para este resumen
+  // era una estimación: lo reemplaza el renglón real.
+  const fijoIds = new Set(
+    (await adminDb().collection(`users/${uid}/recurring`).where("accountId", "==", accountId).get()).docs.map((d) => d.id),
+  );
+  const fijoOf = (l: ImportLine) => (l.recurringId && fijoIds.has(l.recurringId) ? l.recurringId : null);
+  removedProjected.push(
+    ...(await deleteAppliedFijos(
+      uid,
+      accountId,
+      period,
+      payload.lines
+        .filter((l) => l.include && !isPaymentLine(l) && fijoOf(l))
+        .map((l) => ({ recurringId: fijoOf(l)!, description: l.description })),
+    )),
+  );
+
   let skipped = 0;
   const learned = new Map<string, { categoryId: string; sample: string }>();
   const subscriptions: ProjectedSubscription[] = [];
@@ -435,7 +469,7 @@ export const importStatement = async (uid: string, payload: ImportPayload): Prom
       if (line.duplicateOf) skipped += 1;
       continue;
     }
-    toLoad.push(line);
+    toLoad.push({ ...line, recurringId: fijoOf(line) });
     if (line.categoryId && line.merchantKey) {
       learned.set(line.merchantKey, { categoryId: line.categoryId, sample: line.description });
     }
@@ -448,6 +482,8 @@ export const importStatement = async (uid: string, payload: ImportPayload): Prom
   for (const line of payload.lines) {
     if (line.type !== "subscription" || line.amount <= 0 || line.installmentNumber) continue;
     if (!line.include && !line.duplicateOf) continue;
+    // Los fijos no se estiman: el mes que viene lo pone el fijo.
+    if (fijoOf(line)) continue;
     const categoryId =
       line.categoryId && catKind.get(line.categoryId) === "expense" ? line.categoryId : fallback("expense");
     if (!categoryId) continue;
@@ -665,11 +701,67 @@ export const projectSubscriptions = async (
   return ids;
 };
 
+/** Un fijo de Firestore, con lo necesario para reconocerlo en un resumen. */
+export const fijoInfo = (id: string, data: FirebaseFirestore.DocumentData): FijoMatchInfo => ({
+  id,
+  name: String(data.name ?? ""),
+  accountId: String(data.accountId ?? ""),
+  kind: String(data.kind ?? "expense"),
+  active: data.active !== false,
+  matchKey: typeof data.matchKey === "string" && data.matchKey ? data.matchKey : null,
+});
+
+/**
+ * Borra lo que se cargó de un fijo para este resumen al aplicar los fijos del
+ * mes (era una estimación: el renglón real del resumen lo reemplaza, aunque el
+ * monto haya cambiado). `description` es la del renglón, para pasarle al real
+ * el reparto si el gasto estaba dividido.
+ */
+export const deleteAppliedFijos = async (
+  uid: string,
+  accountId: string,
+  period: string,
+  targets: Array<{ recurringId: string; description: string }>,
+): Promise<RemovedProjected[]> => {
+  if (targets.length === 0) return [];
+  const db = adminDb();
+  const lineFor = new Map(targets.map((t) => [t.recurringId, t.description]));
+  const ins = await db
+    .collection(`users/${uid}/installments`)
+    .where("accountId", "==", accountId)
+    .where("billingMonth", "==", period)
+    .get();
+  const txIds = new Map<string, string>();
+  for (const d of ins.docs) {
+    const r = d.data().recurringId as string | undefined;
+    if (r && lineFor.has(r)) txIds.set(String(d.data().transactionId), r);
+  }
+  const removed: RemovedProjected[] = [];
+  for (const [txId, recurringId] of txIds) {
+    const ref = db.doc(`users/${uid}/transactions/${txId}`);
+    const tx = await ref.get();
+    const t = tx.data();
+    if (!t || t.projected || (t.installments ?? 1) > 1) continue;
+    removed.push({
+      txId,
+      description: lineFor.get(recurringId)!,
+      currency: String(t.currency ?? "ARS"),
+      firstBillingMonth: period,
+      amount: Number(t.totalAmount ?? 0),
+      splitIds: await activeSplitIdsForTx(uid, txId),
+    });
+    const its = await db.collection(`users/${uid}/installments`).where("transactionId", "==", txId).get();
+    const batch = db.batch();
+    its.docs.forEach((d) => batch.delete(d.ref));
+    batch.delete(ref);
+    await batch.commit();
+  }
+  return removed;
+};
+
 // === Resumen leído por WhatsApp: carga del detalle ===
 
 const CHARGE_LINE_TYPES = new Set<StatementLineType>(["tax", "fee", "interest"]);
-const plain = (s: string) =>
-  s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]/g, "");
 
 export interface DraftLinesResult {
   created: number;
@@ -724,18 +816,31 @@ export const loadStatementDraftLines = async (
     };
   });
 
+  // Cada suscripción, con su fijo (por cómo figura en el resumen o por el nombre).
+  const fijos = recurringSnap.docs.map((d) => fijoInfo(d.id, d.data()));
+  const fijoOf = new Map<number, string>();
+  for (const l of analyzed) {
+    if (l.type !== "subscription" || l.amount <= 0 || l.installmentNumber) continue;
+    const f = fijoForLine(fijos, accountId, l.description);
+    if (f) fijoOf.set(l.index, f.id);
+  }
+
   // Si un resumen anterior se importó desde la web, las suscripciones de este
-  // quedaron estimadas: se reemplazan por lo real.
-  const removedProjected = await deleteProjected(uid, accountId, [period]);
+  // quedaron estimadas: se reemplazan por lo real. Lo mismo con los fijos que
+  // se aplicaron a mano para este resumen (la prepaga que aumenta cada mes).
+  const removedProjected = [
+    ...(await deleteProjected(uid, accountId, [period])),
+    ...(await deleteAppliedFijos(
+      uid,
+      accountId,
+      period,
+      [...fijoOf.entries()].map(([index, recurringId]) => ({ recurringId, description: analyzed[index].description })),
+    )),
+  ];
   await markDuplicates(uid, accountId, period, analyzed);
 
   const catKind = new Map(categories.map((c) => [c.id, c.kind]));
   const ruleByKey = new Map(rules.map((r) => [r.key, r.categoryId]));
-  const fixed = recurringSnap.docs.map((d) => ({ id: d.id, key: plain(String(d.data().name ?? "")) }));
-  const fixedFor = (description: string) => {
-    const key = plain(description);
-    return fixed.find((f) => f.key && (f.key === key || key.includes(f.key) || f.key.includes(key)))?.id ?? null;
-  };
 
   const toLoad: LoadableLine[] = [];
   // Igual que al importar desde la app: lo que se carga con categoría se
@@ -758,7 +863,7 @@ export const loadStatementDraftLines = async (
     toLoad.push({
       ...l,
       categoryId,
-      recurringId: l.type === "subscription" && l.amount > 0 ? fixedFor(l.description) : null,
+      recurringId: fijoOf.get(l.index) ?? null,
     });
   }
 

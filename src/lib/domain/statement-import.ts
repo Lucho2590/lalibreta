@@ -25,6 +25,9 @@ export interface AnalyzedLine {
   categorySource: CategorySource | null;
   /** Si ya estaba cargado en la app: id de la transacción. */
   duplicateOf: string | null;
+  /** Si es un fijo del usuario (se reconoció solo): su id y su nombre. */
+  recurringId?: string | null;
+  recurringName?: string | null;
 }
 
 export interface StatementAnalysis {

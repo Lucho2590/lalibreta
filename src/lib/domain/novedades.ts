@@ -18,7 +18,8 @@ export type NovedadIcon =
   | "reloj"
   | "editar"
   | "gente"
-  | "resumen";
+  | "resumen"
+  | "fijos";
 
 export interface Novedad {
   id: string;
@@ -36,6 +37,17 @@ export interface Novedad {
 
 /** De la más nueva a la más vieja. */
 export const NOVEDADES: Novedad[] = [
+  {
+    id: "fijos-del-resumen",
+    // Un día después de la anterior: quien ya la vio también ve esta.
+    date: "2026-11-25",
+    icon: "fijos",
+    title: "Lo que pagás todos los meses, reconocido solo",
+    body: "Cuando mandás el resumen de la tarjeta, tu agente te pregunta por lo que podría repetirse todos los meses (la prepaga, una mutual, un seguro, el colegio) y lo deja como fijo. En la app, editá cualquier gasto y prendé «Se repite todos los meses». Desde ahí, en los próximos resúmenes lo reconozco solo, aunque figure con un nombre raro, y no se duplica.",
+    whatsapp: "la mutual del resumen es la prepaga, la pago todos los meses",
+    href: "/movimientos",
+    cta: "Ver movimientos",
+  },
   {
     id: "vaquitas-pasar-gasto",
     // Un día después de la de resúmenes: quien ya la vio también ve esta.

@@ -81,6 +81,7 @@ export const loadAccounts = async (uid: string): Promise<ServerAccountInfo[]> =>
 };
 
 export interface ServerRecurringInfo {
+  id: string;
   name: string;
   amount: number;
   currency: Currency;
@@ -88,6 +89,8 @@ export interface ServerRecurringInfo {
   dayOfMonth: number;
   accountId: string;
   active: boolean;
+  /** Cómo figura en el resumen de la tarjeta (normalizeMerchant), si se sabe. */
+  matchKey: string | null;
 }
 
 export const loadRecurring = async (uid: string): Promise<ServerRecurringInfo[]> => {
@@ -95,6 +98,7 @@ export const loadRecurring = async (uid: string): Promise<ServerRecurringInfo[]>
   return snap.docs.map((d) => {
     const data = d.data();
     return {
+      id: d.id,
       name: String(data.name ?? ""),
       amount: Number(data.amount ?? 0),
       currency: currencyOf(data as { currency?: Currency }),
@@ -102,6 +106,7 @@ export const loadRecurring = async (uid: string): Promise<ServerRecurringInfo[]>
       dayOfMonth: Number(data.dayOfMonth ?? 1),
       accountId: String(data.accountId ?? ""),
       active: data.active !== false,
+      matchKey: typeof data.matchKey === "string" && data.matchKey ? data.matchKey : null,
     };
   });
 };

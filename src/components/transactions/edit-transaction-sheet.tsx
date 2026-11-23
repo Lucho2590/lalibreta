@@ -1,7 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { doc, getDoc } from "firebase/firestore";
+import { Timestamp, addDoc, collection, doc, getDoc } from "firebase/firestore";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,12 +17,14 @@ import {
 } from "@/components/ui/select";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { CategorySelect } from "@/components/category-select";
-import { useAccounts, useCategories } from "@/hooks/use-data";
+import { useAccounts, useCategories, useRecurring } from "@/hooks/use-data";
 import { useAuth } from "@/hooks/use-auth";
 import { db } from "@/lib/firebase/client";
 import { apiPost } from "@/lib/api";
 import { sortAccounts } from "@/lib/domain/accounts";
 import { transactionsCollectionPath, updateTransaction } from "@/lib/domain/installments";
+import { normalizeMerchant } from "@/lib/domain/merchants";
+import { recurringCollectionPath } from "@/lib/domain/recurring";
 import type { Currency, Installment, Transaction } from "@/lib/domain/types";
 import { accountCurrencies } from "@/lib/domain/types";
 import type { SplitTxInfo } from "@/lib/domain/debts";
@@ -46,6 +49,7 @@ export function EditTransactionSheet({
   const { user } = useAuth();
   const { data: accounts } = useAccounts();
   const { data: categories } = useCategories();
+  const { data: recurring } = useRecurring();
   const [tx, setTx] = useState<Transaction | null>(null);
   const [amountInput, setAmountInput] = useState("");
   const [currency, setCurrency] = useState<Currency>("ARS");
@@ -55,6 +59,9 @@ export function EditTransactionSheet({
   const [date, setDate] = useState("");
   const [installments, setInstallments] = useState(1);
   const [cardClosed, setCardClosed] = useState(false);
+  // "Se repite todos los meses": lo da de alta como fijo.
+  const [repeats, setRepeats] = useState(false);
+  const [fijoName, setFijoName] = useState("");
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -72,6 +79,8 @@ export function EditTransactionSheet({
       setDate(ymdLocal(t.purchaseDate.toDate()));
       setInstallments(Math.max(1, t.installments ?? 1));
       setCardClosed(!!t.cardClosedAtPurchase);
+      setRepeats(false);
+      setFijoName("");
     });
     return () => {
       alive = false;
@@ -89,6 +98,10 @@ export function EditTransactionSheet({
   const isCredit = account?.type === "credit" && kind === "expense";
   const cats = categories.filter((c) => c.kind === kind || (account?.type === "credit" && c.kind === "expense"));
   const amount = parseAmount(amountInput) || 0;
+  const fijo = tx?.recurringId ? recurring.find((r) => r.id === tx.recurringId) : undefined;
+  // Un gasto o ingreso de un pago (no cuotas ni estimados) se puede volver fijo.
+  const canRepeat =
+    !!tx && !item?.projected && tx.kind !== "transfer" && !(isCredit && installments > 1);
 
   if (!item) return null;
 
@@ -98,6 +111,28 @@ export function EditTransactionSheet({
     if (!categoryId) return toast.error("Elegí una categoría");
     setBusy(true);
     try {
+      // Se repite todos los meses: fijo nuevo, enganchado a este movimiento
+      // (así no se ofrece aplicarlo de nuevo este mes). En una tarjeta guarda
+      // cómo figura en el resumen, para reconocerlo solo en los próximos.
+      let recurringId = tx.recurringId;
+      const makeFijo = canRepeat && repeats && !recurringId;
+      if (makeFijo) {
+        const ref = await addDoc(collection(db, recurringCollectionPath(user.uid)), {
+          name: (fijoName.trim() || description.trim()).slice(0, 60),
+          amount,
+          currency: effCurrency,
+          accountId: account.id,
+          categoryId,
+          kind,
+          dayOfMonth: Number(date.slice(8, 10)) || 1,
+          startMonth: item.billingMonth,
+          endMonth: null,
+          active: true,
+          matchKey: account.type === "credit" && tx.description ? normalizeMerchant(tx.description) : null,
+          createdAt: Timestamp.now(),
+        });
+        recurringId = ref.id;
+      }
       await updateTransaction(user.uid, account, tx.id, {
         accountId: account.id,
         categoryId,
@@ -108,13 +143,19 @@ export function EditTransactionSheet({
         installments: isCredit ? installments : 1,
         cardClosedAtPurchase: isCredit ? cardClosed : false,
         currency: effCurrency,
-        ...(tx.recurringId ? { recurringId: tx.recurringId } : {}),
+        ...(recurringId ? { recurringId } : {}),
         ...(item.projected ? { projected: true } : {}),
         ...(item.createdByName ? { createdByName: item.createdByName } : {}),
       });
       // Gasto dividido: se recalculan las partes y se les avisa.
       if (split) await apiPost("/api/splits/resync", { txIds: [tx.id] });
-      toast.success(split ? "Gasto actualizado (y el reparto)" : "Gasto actualizado");
+      toast.success(
+        makeFijo
+          ? `Listo: quedó en Fijos${account.type === "credit" ? " y lo reconozco solo en los próximos resúmenes" : ""}`
+          : split
+            ? "Gasto actualizado (y el reparto)"
+            : "Gasto actualizado",
+      );
       onClose();
     } catch (err) {
       console.error(err);
@@ -217,6 +258,43 @@ export function EditTransactionSheet({
                 </div>
               </div>
             )}
+
+            {canRepeat &&
+              (tx.recurringId ? (
+                <div className="flex items-center justify-between gap-3 rounded-lg border bg-muted/30 p-3 text-sm">
+                  <span>🔁 Es un fijo{fijo ? `: ${fijo.name}` : ""}</span>
+                  <Link href="/fijos" onClick={onClose} className="shrink-0 text-xs font-medium text-brand underline">
+                    Ver en Fijos
+                  </Link>
+                </div>
+              ) : (
+                <div className="space-y-3 rounded-lg border bg-muted/30 p-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="space-y-0.5">
+                      <Label htmlFor="ed-repeat" className="text-sm">
+                        Se repite todos los meses
+                      </Label>
+                      <p className="text-xs text-muted-foreground">
+                        Queda en Fijos
+                        {account?.type === "credit" ? " y lo reconozco solo en los próximos resúmenes de la tarjeta" : ""}.
+                      </p>
+                    </div>
+                    <Switch id="ed-repeat" checked={repeats} onCheckedChange={setRepeats} />
+                  </div>
+                  {repeats && (
+                    <div className="space-y-1">
+                      <Label htmlFor="ed-fijo-name">Nombre del fijo</Label>
+                      <Input
+                        id="ed-fijo-name"
+                        className="h-12"
+                        placeholder={description || "Ej. Prepaga"}
+                        value={fijoName}
+                        onChange={(e) => setFijoName(e.target.value)}
+                      />
+                    </div>
+                  )}
+                </div>
+              ))}
 
             {split && (
               <p className="rounded-lg bg-brand/5 p-3 text-xs">

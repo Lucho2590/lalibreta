@@ -240,14 +240,12 @@ export const saveStatementAdmin = async (
   if (mode === "all" && draft.subscriptions.length > 0) {
     const recurringCol = db.collection(`users/${uid}/recurring`);
     const existingRecurring = await recurringCol.get();
-    const existingNames = new Set(
-      existingRecurring.docs
-        .filter((d) => d.data().accountId === accountId)
-        .map((d) => normalize(String(d.data().name ?? ""))),
-    );
+    const mine = existingRecurring.docs.filter((d) => d.data().accountId === accountId);
+    const existingNames = new Set(mine.map((d) => normalize(String(d.data().name ?? ""))));
+    const existingKeys = new Set(mine.map((d) => String(d.data().matchKey ?? "")).filter(Boolean));
     for (const sub of draft.subscriptions) {
       const key = normalize(sub.name);
-      if (existingNames.has(key)) {
+      if (existingNames.has(key) || (sub.matchKey && existingKeys.has(sub.matchKey))) {
         subscriptionsSkipped.push(sub.name);
         continue;
       }
@@ -262,9 +260,12 @@ export const saveStatementAdmin = async (
         startMonth: draft.period,
         endMonth: null,
         active: true,
+        // Cómo figura en el resumen: el próximo lo reconoce solo.
+        matchKey: sub.matchKey ?? null,
         createdAt: Timestamp.now(),
       });
       existingNames.add(key);
+      if (sub.matchKey) existingKeys.add(sub.matchKey);
       subscriptionsCreated.push(sub.name);
     }
   }
