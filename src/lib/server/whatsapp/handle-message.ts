@@ -1043,11 +1043,12 @@ const confirmRecurring = async (waId: string, uid: string, d: RecurringDraft) =>
     startMonth: d.startMonth,
     endMonth: null,
     active: true,
+    matchKey: d.matchKey ?? null,
     createdAt: Timestamp.now(),
   });
   await sendText(
     waId,
-    `✅ Guardé el ${d.kind === "income" ? "ingreso" : "gasto"} fijo *${d.name}* (${formatMoney(d.amount, d.currency)} todos los ${d.dayOfMonth}).\nCada mes aparece en el inicio de la app para aplicarlo. Si ya ${d.kind === "income" ? "cobraste" : "pagaste"} el de este mes, decime y lo cargo.`,
+    `✅ Guardé el ${d.kind === "income" ? "ingreso" : "gasto"} fijo *${d.name}* (${formatMoney(d.amount, d.currency)} todos los ${d.dayOfMonth}).\nCada mes aparece en el inicio de la app para aplicarlo.${d.matchKey ? " En los próximos resúmenes de la tarjeta lo reconozco solo." : ` Si ya ${d.kind === "income" ? "cobraste" : "pagaste"} el de este mes, decime y lo cargo.`}`,
   );
 };
 

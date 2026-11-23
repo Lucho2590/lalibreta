@@ -134,6 +134,9 @@ const renderAccount = (d: AccountDraft) => {
 
 const CHARGE_TYPES = new Set(["tax", "fee", "interest"]);
 
+const normalizeForCompare = (t: string) =>
+  t.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, "");
+
 const renderStatement = (d: StatementDraft) => {
   const out = [
     "💳 *Resumen de tarjeta*",
@@ -172,11 +175,31 @@ const renderStatement = (d: StatementDraft) => {
     if (charges.length > 8) out.push(`• … y ${charges.length - 8} más`);
   }
 
+  const amountOf = (amount: number, currency: Currency) => (currency === "USD" ? usd(amount) : money(amount));
+
+  // Lo que ya es un fijo: se engancha solo.
+  const known = d.lines.filter((l) => l.recurringName);
+  if (known.length > 0) {
+    out.push("", "🔁 *Ya son fijos (los reconocí):*");
+    for (const l of known) out.push(`• ${l.recurringName}: ${amountOf(l.amount, l.currency)} _(${l.description})_`);
+  }
+
   if (d.subscriptions.length > 0) {
-    out.push("", "🔁 *Suscripciones para dar de alta como fijo:*");
+    out.push("", "🔁 *Fijos nuevos (se repiten todos los meses):*");
     for (const s of d.subscriptions) {
-      out.push(`• ${s.name}: ${s.currency === "USD" ? usd(s.amount) : money(s.amount)} (día ${s.dayOfMonth})`);
+      const from = s.line && normalizeForCompare(s.line) !== normalizeForCompare(s.name) ? ` _(${s.line})_` : "";
+      out.push(`• ${s.name}: ${amountOf(s.amount, s.currency ?? "ARS")} (día ${s.dayOfMonth})${from}`);
     }
+  }
+
+  // Lo dudoso: se pregunta antes de guardar.
+  const doubtful = d.lines.filter((l) => l.maybeRecurring);
+  if (doubtful.length > 0) {
+    out.push("", "🤔 *¿Alguno de estos lo pagás todos los meses?*");
+    for (const l of doubtful) out.push(`• ${l.description}: ${amountOf(l.amount, l.currency)}`);
+    out.push(
+      "Decime cuál y cómo lo llamás (ej. _«la mutual es la prepaga»_) y lo dejo como fijo: en los próximos resúmenes lo reconozco solo. Si ninguno, tocá *Guardar todo*.",
+    );
   }
 
   out.push(
@@ -388,7 +411,9 @@ export const draftForPrompt = (d: Draft): string => {
     totalARS: s.totalARS,
     chargesARS: s.chargesARS,
     chargesCategoryName: s.chargesCategoryName,
-    subscriptions: s.subscriptions.map((x) => x.name),
+    subscriptions: s.subscriptions.map((x) => (x.line ? `${x.name} (${x.line})` : x.name)),
+    yaSonFijos: s.lines.filter((l) => l.recurringName).map((l) => `${l.recurringName} (${l.description})`),
+    preguntoSiSeRepiten: s.lines.filter((l) => l.maybeRecurring).map((l) => `${l.description}: ${l.amount} ${l.currency}`),
     lines: s.lines.length,
   });
 };

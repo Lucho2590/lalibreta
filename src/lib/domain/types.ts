@@ -249,6 +249,11 @@ export interface RecurringExpense {
   endMonth?: string | null;
   active: boolean;
   createdAt: Timestamp;
+  /**
+   * Cómo figura en el resumen de la tarjeta (normalizeMerchant de la línea,
+   * ej. "asoc mutual"), para reconocerlo solo en los próximos resúmenes.
+   */
+  matchKey?: string | null;
 }
 
 export interface Installment {

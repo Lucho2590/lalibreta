@@ -33,7 +33,7 @@ import type { AgentPending, AgentPerson } from "../people";
 import type { Vaquita } from "@/lib/domain/vaquitas";
 import { ensureOfflineContact, loadPeopleContext } from "../people";
 import { createSplitRule, deleteSplitRule, loadSplitRules } from "../split-rules";
-import { normalizeMerchant } from "@/lib/domain/merchants";
+import { fijoForLine, normalizeMerchant } from "@/lib/domain/merchants";
 import { adminDb } from "../firebase-admin";
 import { PeopleError, respondConnection } from "../connections";
 import { respondSplit } from "../splits";
@@ -387,6 +387,11 @@ export const TOOL_DEFINITIONS: ChatCompletionFunctionTool[] = [
                   description:
                     "id de una categoría de GASTO para este renglón (compras, cuotas, suscripciones; en reintegros, la del gasto que devuelven). Usá las preferencias del usuario si el comercio figura ahí. Omitir en pagos.",
                 },
+                maybeRecurring: {
+                  type: "boolean",
+                  description:
+                    "true si este renglón PODRÍA debitarse todos los meses pero no estás seguro (prepaga, mutual, obra social, seguro, colegio, club, cuota social, alquiler, servicio con nombre raro). Se le pregunta al usuario. No lo uses en las que ya son subscription.",
+                },
               },
               required: ["description", "amount", "currency", "type"],
               additionalProperties: false,
@@ -409,6 +414,10 @@ export const TOOL_DEFINITIONS: ChatCompletionFunctionTool[] = [
                 currency: { type: "string", enum: ["ARS", "USD"] },
                 categoryId: { type: "string", description: "id de categoría de gasto" },
                 dayOfMonth: { type: "integer", description: "Día del mes en que se debita" },
+                line: {
+                  type: "string",
+                  description: 'description EXACTA del renglón de lines del que sale (ej. "HELP HBOMAX C"), para reconocerlo en los próximos resúmenes',
+                },
               },
               required: ["name", "amount", "categoryId", "dayOfMonth"],
               additionalProperties: false,
@@ -425,7 +434,7 @@ export const TOOL_DEFINITIONS: ChatCompletionFunctionTool[] = [
     function: {
       name: "update_statement_draft",
       description:
-        "Corrige el resumen de tarjeta que está esperando confirmación (otra tarjeta, otra categoría para los cargos, quitar o cambiar suscripciones, fechas, últimos 4 dígitos) sin volver a leer el documento. Solo los campos que cambian.",
+        "Corrige el resumen de tarjeta que está esperando confirmación (otra tarjeta, otra categoría para los cargos, quitar o cambiar suscripciones, fechas, últimos 4 dígitos) sin volver a leer el documento. Solo los campos que cambian. Para cuando el usuario contesta qué renglones se pagan todos los meses: markRecurring (los que sí) y notRecurring (los que no).",
       parameters: {
         type: "object",
         properties: {
@@ -438,6 +447,26 @@ export const TOOL_DEFINITIONS: ChatCompletionFunctionTool[] = [
           nextClosingDate: { type: "string" },
           nextDueDate: { type: "string" },
           chargesCategoryId: { type: "string" },
+          markRecurring: {
+            type: "array",
+            description:
+              'Renglones que el usuario dice que paga TODOS LOS MESES: se dan de alta como fijo al guardar y se reconocen solos en los próximos resúmenes. Ej.: "la mutual es la prepaga" → [{ line: "ASOC MUTUAL S ASOC MUTU", name: "Prepaga" }].',
+            items: {
+              type: "object",
+              properties: {
+                line: { type: "string", description: "Descripción del renglón tal como figura en el resumen (o una parte que lo identifique)" },
+                name: { type: "string", description: 'Cómo lo llama el usuario (ej. "Prepaga"). Si no dijo, un nombre limpio.' },
+                categoryId: { type: "string", description: "id de categoría de gasto (opcional)" },
+              },
+              required: ["line"],
+              additionalProperties: false,
+            },
+          },
+          notRecurring: {
+            type: "array",
+            description: "Renglones que el usuario dice que NO se repiten (descripción o una parte): se cargan como compra común.",
+            items: { type: "string" },
+          },
           subscriptions: {
             type: "array",
             description: "Lista COMPLETA de suscripciones a dar de alta (reemplaza la anterior; [] para ninguna)",
@@ -449,6 +478,7 @@ export const TOOL_DEFINITIONS: ChatCompletionFunctionTool[] = [
                 currency: { type: "string", enum: ["ARS", "USD"] },
                 categoryId: { type: "string" },
                 dayOfMonth: { type: "integer" },
+                line: { type: "string" },
               },
               required: ["name", "amount", "categoryId", "dayOfMonth"],
               additionalProperties: false,
@@ -568,6 +598,11 @@ export const TOOL_DEFINITIONS: ChatCompletionFunctionTool[] = [
           accountId: { type: "string", description: "Cuenta (por defecto la principal)" },
           categoryId: { type: "string", description: "Categoría del mismo tipo que kind" },
           dayOfMonth: { type: "integer", description: "Día del mes (1-31)" },
+          statementName: {
+            type: "string",
+            description:
+              'Solo si se debita en una tarjeta: cómo figura en el resumen (ej. "ASOC MUTUAL S ASOC MUTU"), para reconocerlo solo en los próximos resúmenes.',
+          },
         },
         required: ["kind", "name", "amount", "currency", "dayOfMonth"],
         additionalProperties: false,
@@ -941,6 +976,7 @@ const recurringSchema = z.object({
   accountId: optStr,
   categoryId: optStr,
   dayOfMonth: z.number().int().min(1).max(31),
+  statementName: optStr,
 });
 
 const fxSchema = z.object({
@@ -1083,6 +1119,7 @@ const statementSchema = z.object({
         installment: optStr,
         type: z.enum(LINE_TYPES),
         categoryId: optStr,
+        maybeRecurring: z.boolean().optional(),
       }),
     )
     .max(400),
@@ -1095,6 +1132,7 @@ const statementSchema = z.object({
         currency: z.enum(["ARS", "USD"]).optional(),
         categoryId: z.string().min(1),
         dayOfMonth: z.number().int().min(1).max(31),
+        line: optStr,
       }),
     )
     .max(30)
@@ -1449,6 +1487,36 @@ const fallbackExpenseCategory = (
 
 const CHARGE_TYPES = new Set(["tax", "fee", "interest"]);
 
+/** Renglones que pueden ser un débito de todos los meses (no pagos, impuestos ni reintegros). */
+const canRepeat = (l: StatementDraftLine) => ["purchase", "subscription", "other"].includes(l.type);
+
+const plainKey = (t: string) =>
+  t.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, "");
+
+/**
+ * Busca un renglón por su descripción (exacta, una parte o el mismo comercio).
+ * Devuelve -1 si no hay o si hay más de uno igual de bueno.
+ */
+const findLineIndex = (lines: StatementDraftLine[], text: string | null | undefined, skip?: Set<number>): number => {
+  const q = plainKey(text ?? "");
+  if (q.length < 3) return -1;
+  const tries: Array<(l: StatementDraftLine) => boolean> = [
+    (l) => plainKey(l.description) === q,
+    (l) => plainKey(l.description).includes(q) || (q.length >= 5 && q.includes(plainKey(l.description))),
+    (l) => normalizeMerchant(l.description) === normalizeMerchant(text ?? ""),
+  ];
+  for (const test of tries) {
+    const hits = lines.map((l, i) => (!skip?.has(i) && test(l) ? i : -1)).filter((i) => i >= 0);
+    if (hits.length === 1) return hits[0];
+    if (hits.length > 1) {
+      // Varios iguales (ej. dos débitos del mismo seguro): el primero alcanza.
+      if (new Set(hits.map((i) => plainKey(lines[i].description))).size === 1) return hits[0];
+      return -1;
+    }
+  }
+  return -1;
+};
+
 const registerStatement = (ctx: ToolContext, raw: unknown): ToolResult => {
   const parsed = statementSchema.safeParse(raw);
   if (!parsed.success) return issues(parsed.error);
@@ -1521,7 +1589,22 @@ const registerStatement = (ctx: ToolContext, raw: unknown): ToolResult => {
     type: l.type,
     // Solo categorías de gasto (los reintegros descuentan del gasto que devuelven).
     categoryId: l.categoryId && ctx.categories.some((c) => c.id === l.categoryId && c.kind === "expense") ? l.categoryId : null,
+    ...(l.maybeRecurring ? { maybeRecurring: true } : {}),
   }));
+
+  // Lo que ya es un fijo de esta tarjeta se reconoce solo ("ASOC MUTUAL…" →
+  // la prepaga): va como suscripción, no se pregunta ni se vuelve a proponer.
+  if (accountId) {
+    for (const l of lines) {
+      if (!canRepeat(l) && l.type !== "fee") continue;
+      if (l.amount <= 0 || l.installment) continue;
+      const fijo = fijoForLine(ctx.recurring, accountId, l.description);
+      if (!fijo) continue;
+      l.type = "subscription";
+      l.recurringName = fijo.name;
+      delete l.maybeRecurring;
+    }
+  }
 
   const chargesARS = round2(
     lines
@@ -1555,6 +1638,7 @@ const registerStatement = (ctx: ToolContext, raw: unknown): ToolResult => {
       .map((r) => normalize(r.name)),
   );
   const subscriptions: StatementDraft["subscriptions"] = [];
+  const usedLines = new Set<number>();
   for (const sub of args.subscriptions ?? []) {
     // Si el modelo eligió mal la categoría, usamos la más razonable en vez de
     // rechazar todo el resumen (que obligaría a releer el PDF).
@@ -1563,6 +1647,21 @@ const registerStatement = (ctx: ToolContext, raw: unknown): ToolResult => {
       fallbackExpenseCategory(ctx, chargesCategory);
     if (!cat) continue;
     if (existingFixed.has(normalize(sub.name))) continue;
+    // El renglón del que sale: así el fijo guarda cómo figura en el resumen.
+    let idx = findLineIndex(lines, sub.line, usedLines);
+    if (idx < 0) idx = findLineIndex(lines, sub.name, usedLines);
+    if (idx < 0) {
+      idx = lines.findIndex(
+        (l, i) => !usedLines.has(i) && l.type === "subscription" && l.currency === (sub.currency ?? "ARS") && Math.abs(l.amount - sub.amount) < 0.01,
+      );
+    }
+    const src = idx >= 0 ? lines[idx] : null;
+    if (src?.recurringName) continue;
+    if (src) {
+      usedLines.add(idx);
+      src.type = "subscription";
+      delete src.maybeRecurring;
+    }
     subscriptions.push({
       name: sub.name,
       amount: round2(sub.amount),
@@ -1570,7 +1669,15 @@ const registerStatement = (ctx: ToolContext, raw: unknown): ToolResult => {
       categoryId: cat.id,
       categoryName: cat.name,
       dayOfMonth: sub.dayOfMonth,
+      line: src?.description ?? null,
+      matchKey: src ? normalizeMerchant(src.description) : null,
     });
+  }
+  // Solo se pregunta por lo que puede repetirse y todavía no es suscripción.
+  for (const l of lines) {
+    if (l.maybeRecurring && (l.type === "subscription" || !canRepeat(l) || l.amount <= 0 || l.installment)) {
+      delete l.maybeRecurring;
+    }
   }
 
   const draft: StatementDraft = {
@@ -1635,6 +1742,7 @@ const updateStatementDraft = (ctx: ToolContext, raw: unknown): ToolResult => {
       installment: l.installment ?? undefined,
       type: l.type,
       categoryId: l.categoryId ?? undefined,
+      maybeRecurring: l.maybeRecurring || undefined,
     })),
     chargesCategoryId: current.chargesCategoryId ?? undefined,
     subscriptions: current.subscriptions.map((x) => ({
@@ -1643,6 +1751,7 @@ const updateStatementDraft = (ctx: ToolContext, raw: unknown): ToolResult => {
       currency: x.currency ?? "ARS",
       categoryId: x.categoryId,
       dayOfMonth: x.dayOfMonth,
+      line: x.line ?? undefined,
     })),
   };
   // Cambiar de tarjeta existente a nueva (o al revés) limpia la otra opción.
@@ -1654,7 +1763,59 @@ const updateStatementDraft = (ctx: ToolContext, raw: unknown): ToolResult => {
   // Si el usuario corrigió la tarjeta, manda su elección (no la terminación).
   if (patch.accountId || patch.newCardName) base.cardConfirmedByUser = true;
 
-  return registerStatement(ctx, { ...base, ...patch });
+  const { markRecurring, notRecurring, ...rest } = patch;
+  const merged = { ...base, ...rest } as Record<string, unknown> & {
+    lines: Array<Record<string, unknown>>;
+    subscriptions: Array<Record<string, unknown>>;
+  };
+  const doubtful = () =>
+    current.lines.filter((l) => l.maybeRecurring).map((l) => `"${l.description}"`).join(", ") || "(ninguno)";
+
+  // Lo que el usuario dice que paga todos los meses: suscripción + fijo nuevo.
+  for (const m of Array.isArray(markRecurring) ? markRecurring : []) {
+    const item = (m ?? {}) as { line?: unknown; name?: unknown; categoryId?: unknown };
+    const text = typeof item.line === "string" ? item.line : "";
+    const idx = findLineIndex(current.lines, text);
+    if (idx < 0) {
+      return { error: `No encuentro un renglón "${text}" en el resumen (o hay varios). Los dudosos son: ${doubtful()}. Usá la descripción como figura.` };
+    }
+    const l = current.lines[idx];
+    if (l.amount <= 0 || l.installment || l.type === "payment") {
+      return { error: `"${l.description}" no puede ser un fijo (es un pago, una cuota o una devolución).` };
+    }
+    const line = merged.lines[idx];
+    line.type = "subscription";
+    delete line.maybeRecurring;
+    const categoryId =
+      (typeof item.categoryId === "string" && ctx.categories.some((c) => c.id === item.categoryId && c.kind === "expense")
+        ? item.categoryId
+        : null) ??
+      l.categoryId ??
+      fallbackExpenseCategory(ctx)?.id;
+    if (!categoryId) return { error: "El usuario no tiene categorías de gasto: pedile que cree una en la app." };
+    const day = Number((l.date ?? current.closingDate).slice(8, 10)) || 1;
+    merged.subscriptions = merged.subscriptions.filter((x) => x.line !== l.description);
+    merged.subscriptions.push({
+      name: typeof item.name === "string" && item.name.trim() ? item.name.trim().slice(0, 80) : l.description.slice(0, 80),
+      amount: l.amount,
+      currency: l.currency,
+      categoryId,
+      dayOfMonth: day,
+      line: l.description,
+    });
+  }
+  // Lo que dice que NO se repite: compra común, sin preguntar más.
+  for (const t of Array.isArray(notRecurring) ? notRecurring : []) {
+    const idx = findLineIndex(current.lines, typeof t === "string" ? t : "");
+    if (idx < 0) continue;
+    const l = current.lines[idx];
+    const line = merged.lines[idx];
+    delete line.maybeRecurring;
+    if (line.type === "subscription") line.type = "purchase";
+    merged.subscriptions = merged.subscriptions.filter((x) => x.line !== l.description);
+  }
+
+  return registerStatement(ctx, merged);
 };
 
 // ---------- helpers de cuentas ----------
@@ -2003,6 +2164,7 @@ const proposeRecurring = (ctx: ToolContext, raw: unknown): ToolResult => {
     categoryName: category.name,
     dayOfMonth: args.dayOfMonth,
     startMonth: currentMonthKey(),
+    matchKey: args.statementName ? normalizeMerchant(args.statementName) : null,
     createdAt: Date.now(),
   };
   ctx.proposedDraft = draft;

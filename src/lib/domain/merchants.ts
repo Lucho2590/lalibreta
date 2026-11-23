@@ -28,3 +28,52 @@ export const normalizeMerchant = (description: string): string => {
     .filter((w) => w.length > 1 && !NOISE.has(w));
   return words.slice(0, 2).join(" ") || s.replace(/[^a-z0-9]/g, "").slice(0, 20);
 };
+
+const plainText = (s: string) =>
+  s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]/g, "");
+
+/** Lo mínimo de un fijo para reconocerlo en un renglón del resumen. */
+export interface FijoMatchInfo {
+  id: string;
+  name: string;
+  accountId: string;
+  kind: string;
+  active: boolean;
+  /** Cómo figura en el resumen (normalizeMerchant), si se dio de alta desde uno. */
+  matchKey?: string | null;
+}
+
+/**
+ * El fijo (gasto, activo, de esa tarjeta) al que corresponde un renglón del
+ * resumen: primero por cómo figura en el resumen ("ASOC MUTUAL S ASOC MUTU"
+ * → fijo "Prepaga"), después por el nombre ("HELP HBOMAX C" → "HBO Max").
+ */
+export const fijoForLine = <T extends FijoMatchInfo>(
+  fijos: readonly T[],
+  accountId: string,
+  description: string,
+): T | null => {
+  const mine = fijos.filter((f) => f.active && f.kind === "expense" && f.accountId === accountId);
+  const key = normalizeMerchant(description);
+  const byKey = mine.find((f) => f.matchKey && f.matchKey === key);
+  if (byKey) return byKey;
+  const text = plainText(description);
+  const words = description
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .split(/[^a-z0-9]+/);
+  return (
+    mine.find((f) => {
+      const name = plainText(f.name);
+      if (name.length < 3) return false;
+      // Nombres cortos solo como palabra entera: "Luz" no es "LUZURIAGA BAR".
+      return (
+        name === text ||
+        words.includes(name) ||
+        (name.length >= 5 && text.includes(name)) ||
+        (text.length >= 5 && name.includes(text))
+      );
+    }) ?? null
+  );
+};
