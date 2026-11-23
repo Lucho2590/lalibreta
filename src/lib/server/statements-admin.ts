@@ -257,7 +257,8 @@ export const saveStatementAdmin = async (
         categoryId: sub.categoryId,
         kind: "expense",
         dayOfMonth: Math.min(31, Math.max(1, sub.dayOfMonth)),
-        startMonth: draft.period,
+        // Los fijos van por mes de pago: el del vencimiento de este resumen.
+        startMonth: draft.dueDate.slice(0, 7),
         endMonth: null,
         active: true,
         // Cómo figura en el resumen: el próximo lo reconoce solo.

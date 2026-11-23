@@ -73,7 +73,8 @@ export default function FijosPage() {
       const snap = await getDocs(
         query(
           collection(db, installmentsCollectionPath(user.uid)),
-          where("billingMonth", "==", monthKey),
+          // El mes de un fijo es el mes en que se paga (con tarjeta, el del vencimiento).
+          where("paymentMonth", "==", monthKey),
         ),
       );
       const ids = new Set<string>();
