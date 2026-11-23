@@ -50,8 +50,10 @@ import { ensureOfflineContact, loadPeopleContext } from "../people";
 import { createSplit } from "../splits";
 import { applySplitRules, createSplitRule } from "../split-rules";
 import { createPersonTransfer } from "../person-transfers";
-import { createVaquita, loadVaquita, savePayment, saveExpense } from "../vaquitas";
+import { resolveLinksForNewIdentity } from "../vaquita-links";
+import { addMembers, createVaquita, deleteExpense, linkMemberByQuery, linkMember, loadOpenVaquitas, loadVaquita, savePayment, saveExpense } from "../vaquitas";
 import { myUnitNet } from "@/lib/domain/vaquitas";
+import type { PersonRef } from "@/lib/domain/people";
 import { PeopleError, lookupBookContacts } from "../connections";
 import { cleanBookContacts } from "@/lib/domain/address-book";
 import { formatPhone } from "@/lib/domain/phone";
@@ -165,6 +167,8 @@ const routeMessage = async (
       const result = await consumeLinkCode(match[1], waId, profileName);
       if (result.ok) {
         await sendText(waId, await welcomeMessage(result.uid, profileName));
+        // Si lo habían invitado a una vaquita por este WhatsApp: le llega la solicitud de quien lo sumó.
+        await resolveLinksForNewIdentity(result.uid, { waId });
       } else {
         await sendText(
           waId,
@@ -433,12 +437,13 @@ const routeMessage = async (
     (userSnap.data()?.displayName as string | undefined) ?? profileName ?? null;
   const agentName =
     (userSnap.data()?.agentName as string | undefined) ?? (await ensureAgentName(uid));
-  const [balances, sharedWithMe, myShares, rules, peopleCtx] = await Promise.all([
+  const [balances, sharedWithMe, myShares, rules, peopleCtx, vaquitas] = await Promise.all([
     getBalances(uid, accounts),
     loadSharedAccounts(uid),
     loadMyShares(uid),
     loadCategoryRules(uid),
     loadPeopleContext(uid),
+    loadOpenVaquitas(uid),
   ]);
   const catName = new Map(categories.map((c) => [c.id, c.name]));
   const categoryRules = rules
@@ -462,6 +467,7 @@ const routeMessage = async (
       pendingDraft: session.pendingDraft,
       people: peopleCtx.people,
       pending: peopleCtx.pending,
+      vaquitas,
       splitRules: peopleCtx.rules.map((r) => ({
         label: r.label,
         people: r.participants
@@ -728,8 +734,35 @@ const confirmVaquita = async (waId: string, uid: string, d: VaquitaDraft) => {
       const e = d.expense;
       await sendText(
         waId,
-        `✅ Anotado en *${d.vaquitaName}*: ${e.description} por *${formatMoney(e.amount, e.currency)}*.${await vaquitaStatusText(uid, e.vaquitaId)}`,
+        `✅ ${e.expenseId ? "Corregido en" : e.fromTransactionId ? "Pasado a" : "Anotado en"} *${d.vaquitaName}*: ${e.description} por *${formatMoney(e.amount, e.currency)}*${e.fromTransactionId ? " (sin duplicarlo en tu cuenta)" : ""}.${await vaquitaStatusText(uid, e.vaquitaId)}`,
       );
+      return;
+    }
+    if (d.op === "delete" && d.remove) {
+      await deleteExpense({ uid }, d.remove);
+      await sendText(waId, `🗑️ Listo, lo saqué de *${d.vaquitaName}* (y de las cuentas de todos).${await vaquitaStatusText(uid, d.remove.vaquitaId)}`);
+      return;
+    }
+    if (d.op === "add" && d.add) {
+      await addMembers({ uid }, { id: d.add.vaquitaId, members: d.add.members });
+      await sendText(waId, `✅ Listo, ya están en *${d.vaquitaName}*. Los que usan La Libreta la ven (o cuando acepten tu solicitud).`);
+      return;
+    }
+    if (d.op === "link" && d.link) {
+      if (d.link.q && !d.link.ref) {
+        const r = await linkMemberByQuery({ uid }, { id: d.link.vaquitaId, memberId: d.link.memberId, q: d.link.q });
+        await sendText(
+          waId,
+          r.status === "linked"
+            ? `✅ Listo: *${r.name}* ya ve *${d.vaquitaName}* y su parte va a sus gastos. Le avisé.`
+            : r.status === "requested"
+              ? `✅ Le mandé la solicitud a *${r.name}*: cuando acepte, queda vinculado a *${d.vaquitaName}*.`
+              : `✅ Queda anotado: cuando *${r.name}* se sume a La Libreta y acepte, queda vinculado a *${d.vaquitaName}*.`,
+        );
+        return;
+      }
+      const r = await linkMember({ uid }, { id: d.link.vaquitaId, memberId: d.link.memberId, ref: d.link.ref as PersonRef });
+      await sendText(waId, `✅ Listo: *${r.name}* ya ve *${d.vaquitaName}* y su parte va a sus gastos. Le avisé.`);
       return;
     }
     if (d.op === "payment" && d.payment) {

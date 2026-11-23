@@ -100,3 +100,9 @@ export const formatAmountInput = (raw: string): string => {
   if (!Number.isFinite(n)) return raw;
   return new Intl.NumberFormat("es-AR", { maximumFractionDigits: 2 }).format(n);
 };
+
+/** Hoy en YYYY-MM-DD en la hora del dispositivo (no UTC: a las 21 en Argentina ya sería mañana). */
+export const todayLocal = (): string => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};

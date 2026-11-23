@@ -1,3 +1,4 @@
+import { personMatchScore } from "./contact-info";
 import type { Currency } from "./types";
 
 /**
@@ -29,6 +30,12 @@ export interface VaquitaMember {
   uid: string | null;
   email: string | null;
   familyId: string | null;
+  /**
+   * Sin la app, pero ya se lo buscó: "request" = se le mandó la solicitud
+   * (usa La Libreta); "invite" = se lo invitó. Queda vinculado solo cuando
+   * acepta / se registra (ver lib/server/vaquita-links.ts).
+   */
+  pendingLink?: "request" | "invite" | null;
 }
 
 export interface VaquitaFamily {
@@ -74,6 +81,10 @@ export type VaquitaSplitMode = "people" | "families" | "amounts";
 export interface VaquitaLeg {
   accountId: string;
   installments: number;
+  /** Tarjeta: la compra fue con el resumen ya cerrado (va al siguiente). Lo hereda de un movimiento que se pasó a la vaquita. */
+  cardClosedAtPurchase?: boolean;
+  /** Tarjeta: resumen al que ya estaba asignado el movimiento que se pasó (vale mientras no cambie la fecha). */
+  billing?: { date: string; month: string };
 }
 
 /** vaquitas/{id}/expenses/{eid} — solo lo escribe el server. */
@@ -553,4 +564,40 @@ export const crossRate = (
   const b = r(to);
   if (!a || !b) return null;
   return Math.round((a / b) * 1e6) / 1e6;
+};
+
+// === Vincular a alguien "sin la app" ===
+
+export interface LinkablePerson {
+  ref: string;
+  name: string;
+  isApp: boolean;
+  nicknames?: string[];
+}
+
+/** Qué tan parecido es el nombre del integrante al de la persona (2 igual, 1 parecido, 0 nada). */
+export const linkScore = (member: Pick<VaquitaMember, "name">, p: LinkablePerson): 0 | 1 | 2 =>
+  Math.max(personMatchScore([p.name, ...(p.nicknames ?? [])], member.name), personMatchScore([member.name], p.name)) as 0 | 1 | 2;
+
+/** Gente de la app (conectada) que todavía no está en la vaquita: a quién se puede vincular. */
+export const linkablePeople = <P extends LinkablePerson>(v: Pick<Vaquita, "uids">, people: P[]): P[] =>
+  people.filter((p) => p.isApp && p.ref.startsWith("u:") && !v.uids.includes(p.ref.slice(2)));
+
+/**
+ * Integrantes "sin la app" que seguro son alguien que ya usa la app: el único
+ * con el mismo nombre (o, si no hay ninguno igual, el único parecido).
+ */
+export const linkSuggestions = <P extends LinkablePerson>(
+  v: Pick<Vaquita, "uids" | "members">,
+  people: P[],
+): Array<{ member: VaquitaMember; person: P }> => {
+  const pool = linkablePeople(v, people);
+  const out: Array<{ member: VaquitaMember; person: P }> = [];
+  for (const m of v.members) {
+    if (m.uid) continue;
+    const exact = pool.filter((p) => linkScore(m, p) === 2);
+    const close = exact.length ? exact : pool.filter((p) => linkScore(m, p) === 1);
+    if (close.length === 1) out.push({ member: m, person: close[0] });
+  }
+  return out;
 };

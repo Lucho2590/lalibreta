@@ -21,7 +21,7 @@ import {
 } from "@/hooks/use-data";
 import { apiFetch } from "@/lib/api";
 import { CURRENCIES, type AccountShare, type Currency, type PendingApproval } from "@/lib/domain/types";
-import { formatCurrency, formatDate, formatMoney, parseAmount } from "@/lib/format";
+import { formatCurrency, formatDate, formatMoney, parseAmount, todayLocal } from "@/lib/format";
 import type { SharedMovementsResponse } from "@/lib/domain/shared-movements";
 
 /** Cuentas que otra persona compartió conmigo, agrupadas por esa persona. */
@@ -417,7 +417,7 @@ function SubmitForm({
   share: AccountShare;
   onDone: () => void;
 }) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayLocal();
   const [amount, setAmount] = useState("");
   const [description, setDescription] = useState("");
   const [date, setDate] = useState(today);

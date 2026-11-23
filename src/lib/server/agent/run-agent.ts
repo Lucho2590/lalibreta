@@ -57,6 +57,7 @@ export const runAgent = async (
     outbox: [],
     people: prompt.people ?? [],
     pending: prompt.pending ?? [],
+    vaquitas: prompt.vaquitas ?? [],
   };
 
   const userContent: ChatCompletionContentPart[] = [

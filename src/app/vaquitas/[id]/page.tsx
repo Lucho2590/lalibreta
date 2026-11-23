@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { use, useMemo, useState } from "react";
-import { ArrowLeft, ArrowRight, ChevronRight, HandCoins, Plus, Receipt, Scale, Settings2 } from "lucide-react";
+import { ArrowLeft, ArrowRight, ChevronRight, HandCoins, Link2, Plus, Receipt, Scale, Settings2 } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -12,11 +13,14 @@ import { VaquitaSettings } from "@/components/vaquitas/settings-panel";
 import { ddmm } from "@/components/vaquitas/shared";
 import { ENTER, enterDelay } from "@/components/motion/enter";
 import { useAuth } from "@/hooks/use-auth";
+import { usePeople } from "@/hooks/use-data";
+import { apiPost, errorText } from "@/lib/api";
 import { useFxRates } from "@/hooks/use-fx-rates";
 import { useVaquita, useVaquitaExpenses, useVaquitaPayments } from "@/hooks/use-vaquitas";
 import {
   carriedShares,
   firstName,
+  linkSuggestions,
   summarizeVaquita,
   toVaquitaCurrency,
   unitOfMember,
@@ -45,6 +49,17 @@ export default function VaquitaPage({ params }: { params: Promise<{ id: string }
   const { data: payments } = useVaquitaPayments(id, !!v);
   const fx = useFxRates();
   const [sheet, setSheet] = useState<SheetState>(null);
+  const { data: people } = usePeople();
+  // Sugerencias de "este de la vaquita es tal de la app" que ya descartó (en este dispositivo).
+  const [dismissed, setDismissed] = useState<Set<string>>(() => {
+    if (typeof window === "undefined") return new Set();
+    try {
+      return new Set(JSON.parse(localStorage.getItem("vq-link-dismiss") ?? "[]") as string[]);
+    } catch {
+      return new Set();
+    }
+  });
+  const [linking, setLinking] = useState<string | null>(null);
 
   const summary = useMemo(() => (v ? summarizeVaquita(v, expenses, payments) : null), [v, expenses, payments]);
 
@@ -89,6 +104,26 @@ export default function VaquitaPage({ params }: { params: Promise<{ id: string }
   };
   const payFor = (s: Settlement) =>
     setSheet({ type: "payment", payment: null, defaults: { from: repOf(s.fromUnit), to: repOf(s.toUnit), amount: s.amount } });
+
+  const suggestions = linkSuggestions(v, people).filter((x) => !dismissed.has(`${v.id}:${x.member.id}:${x.person.ref}`));
+  const dismiss = (key: string) => {
+    const next = new Set(dismissed).add(key);
+    setDismissed(next);
+    try {
+      localStorage.setItem("vq-link-dismiss", JSON.stringify([...next]));
+    } catch {}
+  };
+  const link = async (memberId: string, ref: string, who: string) => {
+    setLinking(memberId);
+    try {
+      await apiPost("/api/vaquitas/members/link", { id: v.id, memberId, ref });
+      toast.success(`Listo: ${who} ya ve la vaquita y su parte va a sus gastos`);
+    } catch (err) {
+      toast.error(errorText(err));
+    } finally {
+      setLinking(null);
+    }
+  };
 
   const net = myUnit?.net ?? 0;
   const who = myUnit?.isFamily ? "Tu familia" : "Vos";
@@ -143,6 +178,36 @@ export default function VaquitaPage({ params }: { params: Promise<{ id: string }
           )}
         </CardContent>
       </Card>
+
+      {suggestions.map(({ member: m, person: p }) => {
+        const key = `${v.id}:${m.id}:${p.ref}`;
+        return (
+          <div key={key} className={cn("space-y-2 rounded-2xl border border-brand/30 bg-brand/5 p-3", ENTER)}>
+            <div className="flex items-start gap-2 text-sm">
+              <Link2 className="mt-0.5 size-4 shrink-0 text-brand" />
+              {m.name.trim().toLowerCase() === p.name.trim().toLowerCase() ? (
+                <span>
+                  <span className="font-medium">{p.name}</span> ya usa La Libreta. ¿Es el mismo de la vaquita? Si lo vinculás, la ve y su
+                  parte va a sus gastos.
+                </span>
+              ) : (
+                <span>
+                  ¿<span className="font-medium">{m.name}</span> de la vaquita es <span className="font-medium">{p.name}</span>? Ya usa La
+                  Libreta: si lo vinculás, la ve y su parte va a sus gastos.
+                </span>
+              )}
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button size="sm" variant="ghost" onClick={() => dismiss(key)}>
+                No es
+              </Button>
+              <Button size="sm" className="bg-brand-grad text-white" disabled={linking === m.id} onClick={() => link(m.id, p.ref, firstName(p.name))}>
+                {linking === m.id ? "Vinculando…" : "Vincular"}
+              </Button>
+            </div>
+          </div>
+        );
+      })}
 
       {!closed && (
         <div className="grid grid-cols-2 gap-2">
@@ -295,7 +360,7 @@ export default function VaquitaPage({ params }: { params: Promise<{ id: string }
               {sheet?.type === "expense"
                 ? sheet.expense
                   ? "Editar gasto"
-                  : "Nuevo gasto"
+                  : `Gasto en ${v.name}`
                 : sheet?.type === "payment"
                   ? sheet.payment
                     ? "Pago"

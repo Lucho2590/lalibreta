@@ -391,6 +391,10 @@ export const getCardStatement = async (
 };
 
 export interface RecentTransaction {
+  /** Id del movimiento (para pasarlo a una vaquita: fromTransactionId). */
+  id: string;
+  /** Ya es de una vaquita (no se puede pasar de nuevo). */
+  vaquita?: boolean;
   date: Date;
   kind: string;
   description: string;
@@ -450,6 +454,8 @@ export const listRecentTransactions = async (
     const first = firstInstallment.get(d.id);
     const onCard = creditIds.has(t.accountId as string) && t.kind !== "transfer";
     return {
+      id: d.id,
+      ...(t.vaquitaId ? { vaquita: true } : {}),
       ...(first?.paymentMonth ? { shownInMonth: String(first.paymentMonth) } : {}),
       ...(onCard && first?.billingDate ? { dueDate: (first.billingDate as Timestamp).toDate() } : {}),
       date: (t.purchaseDate as Timestamp).toDate(),

@@ -30,6 +30,7 @@ import { VAQUITA_TOOLS, VAQUITA_TOOL_NAMES, runVaquitaTool } from "./vaquitas-to
 import { loadActor, loadTreeFor } from "../lists";
 import { canEdit, myRole, nodePath } from "@/lib/domain/list-model";
 import type { AgentPending, AgentPerson } from "../people";
+import type { Vaquita } from "@/lib/domain/vaquitas";
 import { ensureOfflineContact, loadPeopleContext } from "../people";
 import { createSplitRule, deleteSplitRule, loadSplitRules } from "../split-rules";
 import { normalizeMerchant } from "@/lib/domain/merchants";
@@ -87,7 +88,18 @@ export interface ToolContext {
   people: AgentPerson[];
   /** Lo que le mandaron y tiene que responder. */
   pending: AgentPending[];
+  /** Vaquitas abiertas: sus integrantes pueden no estar en Personas. */
+  vaquitas?: Vaquita[];
 }
+
+/** Vaquita abierta donde hay alguien que se llama así (para no mandarlo a contactos). */
+const vaquitaOfMember = (ctx: ToolContext, q: string): { vaquita: string; member: string } | null => {
+  for (const v of ctx.vaquitas ?? []) {
+    const m = v.members.find((x) => x.uid !== ctx.uid && personMatchScore([x.name], q) > 0);
+    if (m) return { vaquita: v.name, member: m.name };
+  }
+  return null;
+};
 
 const ACCOUNT_TYPES = ["cash", "debit", "credit", "checking", "savings", "digital", "reserve"] as const;
 const LINE_TYPES = [
@@ -748,7 +760,7 @@ export const TOOL_DEFINITIONS: ChatCompletionFunctionTool[] = [
     function: {
       name: "list_recent_transactions",
       description:
-        "Últimos movimientos YA GUARDADOS, del más nuevo al más viejo. Es la fuente de verdad para saber si algo quedó guardado. shownInMonth es el mes en que aparece en la app (con tarjeta, el del vencimiento del resumen: dueDate).",
+        "Últimos movimientos YA GUARDADOS, del más nuevo al más viejo. Es la fuente de verdad para saber si algo quedó guardado. shownInMonth es el mes en que aparece en la app (con tarjeta, el del vencimiento del resumen: dueDate). id sirve para pasar un gasto ya cargado a una vaquita (propose_vaquita_expense con fromTransactionId); vaquita: true = ya es de una vaquita.",
       parameters: {
         type: "object",
         properties: {
@@ -1002,7 +1014,15 @@ const resolveAgentPerson = (ctx: ToolContext, person?: string, newName?: string)
   if (person) {
     // A veces el modelo manda el nombre o el apodo en vez del ref.
     const p = ctx.people.find((x) => x.ref === person) ?? personByName(ctx, person);
-    if (!p) return { error: `"${person}" no está en Personas. Si usa la app, pedile su email o su WhatsApp y conectalos (contact_info connect); si no, usá newName.` };
+    if (!p) {
+      const vq = vaquitaOfMember(ctx, person);
+      if (vq) {
+        return {
+          error: `"${person}" no está en Personas, pero ${vq.member} es de la vaquita «${vq.vaquita}». Si es un gasto o un pago de la vaquita, usá propose_vaquita_expense / propose_vaquita_payment (no hace falta agregarlo a contactos). Si no, preguntale.`,
+        };
+      }
+      return { error: `"${person}" no está en Personas. Si usa la app, pedile su email o su WhatsApp y conectalos (contact_info connect); si no, usá newName.` };
+    }
     return { ref: p.ref as PersonRef | null, name: p.name, isApp: p.isApp, newName: null as string | null };
   }
   if (newName) {

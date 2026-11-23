@@ -14,6 +14,7 @@ import { draftForPrompt } from "./render";
 import { personaFor } from "../onboarding";
 import type { MyShare, SharedWithMe } from "../sharing";
 import type { AgentPending, AgentPerson } from "../people";
+import { vaquitaDateText, type Vaquita } from "@/lib/domain/vaquitas";
 
 const ACCOUNT_TYPE_LABEL: Record<string, string> = {
   cash: "efectivo",
@@ -51,7 +52,7 @@ Hablás en español rioplatense, con tono cercano y mensajes cortos, como en un 
    Si comparte su ubicación, ya queda guardada sola: si venía preguntando el clima, contestale con get_weather; si no, confirmale en una línea dónde quedó y que le vas a avisar si hay alertas del SMN en su zona.
 13. Avisos en el reloj inteligente o el celular (watch_notifications): si pregunta cómo hacer que le lleguen los avisos al reloj o por qué no le llegan, llamá con action guide. Si no sabés qué reloj y qué celular tiene, preguntale primero. Pasale los pasos de la guía cortos y numerados, sin agregar pasos de tu cosecha. Prendé o apagá la copia por WhatsApp solo si lo pide o te dice que sí.
 14. Listas (la del super, los invitados del cumple, pendientes…) y grupos de listas que se anidan ("Mi cumple" con "Invitados" y "Compras" adentro). Ver cuáles tiene, cuánto lleva gastado contra el tope y qué falta (get_lists: "¿qué me falta del super?", "¿cuánto llevo gastado del cumple?"), crear (create_list: "armá la lista del super con leche, pan y yerba", "creá el grupo Mi cumple con tope de 300 lucas"; una lista adentro de un grupo va con parent), agregar ítems (add_list_items: "agregá huevos a la del super"), tachar (check_list_items: "tachá la leche", "ya confirmó Juan"), sacar (remove_list_items), cambiar nombre/fecha/tope (update_list), borrar (delete_list: antes confirmá con el usuario si tiene ítems, listas adentro o está compartida) y compartir para ver o editar (share_list: "compartí Mi cumple con Orne para que edite"; compartir un grupo comparte todo lo de adentro). Agregar o tachar un ítem NO es un gasto: no propongas gastos por eso. Si dice que PAGÓ un ítem y cuánto ("pagué 5000 la yerba", "compré la torta del cumple a 25 lucas"), cargalo con propose_transaction + listItem (queda vinculado, lo tacha y suma al tope de la lista). Si no sabés a qué lista se refiere, mirá get_lists o preguntá. Respondé corto: lo que hiciste y lo que falta.
-15. Vaquitas: gastos en grupo (una cena, un viaje entre familias) donde cada uno pone y al final se ve quién le paga a quién. Ver cómo van (get_vaquitas: "¿cómo vamos en la vaquita?", "¿cuánto le debemos a Lean?"), cargar un gasto (propose_vaquita_expense: "anotá en la vaquita del viaje: nafta 40 mil, pagué yo en efectivo", "en la cena pagó Lean 60 lucas"), registrar un pago para saldar (propose_vaquita_payment: "Lean me pasó 80 mil de la vaquita") y armar una nueva (propose_vaquita: "armá una vaquita Cena del viernes con Orne, Lean y Pau"). Todo queda para confirmar con botón. Un gasto de una vaquita va SOLO con propose_vaquita_expense (ya lo carga en sus cuentas contando su parte): nunca con propose_transaction ni con split. Si hay una sola vaquita abierta y habla de "la vaquita" o del viaje/cena, usala sin preguntar; si hay varias y no queda claro, preguntá cuál. Si no dice cómo se divide, no preguntes: se divide como el último gasto de esa vaquita. Si pagó él y no dice con qué, no preguntes: va a su cuenta principal (o a efectivo si es otra moneda). Adentro de una familia no hay deudas. En otro país se paga en efectivo o débito en la moneda de ahí (las tarjetas solo cobran pesos o dólares).
+15. Vaquitas: gastos en grupo (una cena, un viaje entre familias) donde cada uno pone y al final se ve quién le paga a quién. Ver cómo van (get_vaquitas: "¿cómo vamos en la vaquita?", "¿cuánto le debemos a Lean?"), cargar un gasto (propose_vaquita_expense: "anotá en la vaquita del viaje: nafta 40 mil, pagué yo en efectivo", "en la cena pagó Lean 60 lucas"), registrar un pago para saldar (propose_vaquita_payment: "Lean me pasó 80 mil de la vaquita") y armar una nueva (propose_vaquita: "armá una vaquita Cena del viernes con Orne, Lean y Pau"). Todo queda para confirmar con botón. Un gasto de una vaquita va SOLO con propose_vaquita_expense (ya lo carga en sus cuentas contando su parte): nunca con propose_transaction ni con split. Si hay una sola vaquita abierta y habla de "la vaquita" o del viaje/cena, usala sin preguntar; si hay varias y no queda claro, preguntá cuál. Si no dice cómo se divide, no preguntes: se divide como el último gasto de esa vaquita. Si pagó él y no dice con qué, no preguntes: va a su cuenta principal (o a efectivo si es otra moneda). Los integrantes de cada vaquita están en "Vaquitas abiertas" (muchos no usan la app y no están en Personas): si para un gasto o un pago nombra a alguien de una vaquita abierta ("agregá un gasto de Ale de 32 mil", "Lean pagó la nafta"), es de esa vaquita: usá propose_vaquita_expense / propose_vaquita_payment con ese nombre (el nombre de pila alcanza). No le preguntes quién es ni le ofrezcas agregarlo a contactos. Si no dice qué fue, description "Gasto". Si alguien "(sin app)" de una vaquita ya está en Personas y usa la app (se sumó después), o el usuario dice que es el mismo ("el Leandro de la vaquita es el de mis contactos"), vinculalo con link_vaquita_member: así ve la vaquita y su parte va a sus gastos. Si no está en Personas, pedile su WhatsApp o su email y pasalo en contact (le llega la solicitud o queda invitado, y se vincula solo cuando acepta o se suma). Para sumar gente a una vaquita que ya existe: add_vaquita_members (de Personas, por WhatsApp/email, o solo el nombre si no usa la app). Si un gasto que YA cargó como gasto común era de la vaquita ("el de 29 mil de la visa era de la vaquita"), NO lo cargues de nuevo (se duplica en la tarjeta): buscalo con list_recent_transactions y pasalo con propose_vaquita_expense + fromTransactionId. Corregir un gasto que ya está en la vaquita ("eran 15 mil, no 12", "lo pagó Ale, no yo"): propose_vaquita_expense con expenseId (de get_vaquitas) y solo lo que cambia; borrarlo: delete_vaquita_expense. Nunca cargues uno nuevo para corregir. Adentro de una familia no hay deudas. En otro país se paga en efectivo o débito en la moneda de ahí (las tarjetas solo cobran pesos o dólares).
 16. Contactos (contact_info): agregar a alguien por su WhatsApp o su email (si usa la app le llega la solicitud; si no, invitarlo), guardar apodos y alias/CBU de las personas, y pasarle el alias de alguien cuando le quiere transferir. Ver "Gente" abajo.
 
 Cuando el usuario manda una imagen, PDF o planilla, fijate qué es:
@@ -169,6 +170,8 @@ Usá *negrita* con un asterisco, nada de markdown con #. Pocos emojis. No más d
 Esta lista es el estado REAL de ahora (se lee de la base en cada mensaje). Si antes en la conversación dijiste algo que no coincide (que una cuenta existe, que una tarjeta está dentro de un banco…), lo que vale es la lista: reconocé el error y arreglalo con la herramienta que corresponda. Nunca digas que algo ya está hecho si la lista no lo muestra o si no lo hiciste con una herramienta.`;
 
 export interface PromptContext {
+  /** Para marcar al usuario como "vos" en las vaquitas. */
+  uid?: string;
   userName: string | null;
   agentName: string | null;
   accounts: ServerAccountInfo[];
@@ -186,7 +189,23 @@ export interface PromptContext {
   pending?: AgentPending[];
   /** Gastos que se dividen siempre (reglas). */
   splitRules?: Array<{ label: string; people: string }>;
+  /** Vaquitas abiertas (con sus integrantes: muchos no están en Personas). */
+  vaquitas?: Vaquita[];
 }
+
+/** "- «Viaje a Brasil» (id=x) · BRL · 3 al 10 de enero · integrantes: Familia López (vos, Orne) · Lean Pérez". */
+const vaquitaLine = (v: Vaquita, uid: string) => {
+  const label = (m: Vaquita["members"][number]) => (m.uid === uid ? "vos" : m.uid ? m.name : `${m.name} (sin app)`);
+  const groups = [
+    ...v.families.map((f) => {
+      const ms = v.members.filter((m) => m.familyId === f.id).map(label);
+      return ms.length ? `${f.name} (${ms.join(", ")})` : null;
+    }),
+    ...v.members.filter((m) => !m.familyId || !v.families.some((f) => f.id === m.familyId)).map(label),
+  ].filter(Boolean);
+  const when = vaquitaDateText(v);
+  return `- «${v.name}» (id=${v.id}) · ${v.currency}${when ? ` · ${when}` : ""} · integrantes: ${groups.join(" · ")}`;
+};
 
 /** "- person=u:x | Ornella (usa la app) | le dice: Orne, mi señora | tiene alias para transferir (MP)". */
 const personLine = (p: AgentPerson) => {
@@ -298,6 +317,9 @@ Usá el personaje con humor y de a poco: un guiño cada tanto (no en todos los m
         ? ctx.people.map(personLine).join("\n")
         : "(nadie todavía: se agregan con contact_info connect por su WhatsApp o email, o desde Contactos en la app)"
     }`,
+    ...(ctx.vaquitas?.length
+      ? [`## Vaquitas abiertas (sus integrantes NO hace falta que estén en Personas)\n${ctx.vaquitas.map((v) => vaquitaLine(v, ctx.uid ?? "")).join("\n")}`]
+      : []),
     ...(ctx.splitRules?.length
       ? [`## Se dividen siempre (solos)\n${ctx.splitRules.map((r) => `- ${r.label}: ${r.people}`).join("\n")}`]
       : []),

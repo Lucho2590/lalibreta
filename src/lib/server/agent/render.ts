@@ -328,7 +328,7 @@ export const renderDraft = (d: Draft): string => {
       return renderPersonTransfer(d as PersonTransferDraft);
     case "vaquita": {
       const v = d as VaquitaDraft;
-      return [v.title, "", ...v.lines, "", v.op === "create" ? "¿La armo?" : "¿Lo anoto?"].join("\n");
+      return [v.title, "", ...v.lines, "", v.op === "create" ? "¿La armo?" : v.op === "link" ? "¿Lo vinculo?" : v.op === "add" ? "¿Los sumo?" : v.op === "delete" ? "¿Lo borro?" : v.expense?.expenseId ? "¿Lo corrijo?" : "¿Lo anoto?"].join("\n");
     }
     default:
       return renderTransaction(d as TransactionDraft);

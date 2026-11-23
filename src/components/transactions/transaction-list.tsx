@@ -30,6 +30,7 @@ import { otherUid, personRefFromAccountId, profileName } from "@/lib/domain/peop
 import { apiPost, errorText } from "@/lib/api";
 import { isVirtualAccountId } from "@/lib/domain/people";
 import { SplitExistingSheet } from "@/components/people/split-existing";
+import { MoveToVaquitaSheet } from "@/components/vaquitas/move-to-vaquita";
 import { EditTransactionSheet } from "./edit-transaction-sheet";
 
 interface Props {
@@ -57,6 +58,7 @@ export function TransactionList({
   const { data: categories } = useCategories();
   const { data: vaquitas } = useVaquitas();
   const vaquitaName = useMemo(() => new Map(vaquitas.map((v) => [v.id, v.name])), [vaquitas]);
+  const hasOpenVaquita = vaquitas.some((v) => v.status !== "closed");
 
   const accountMap = useMemo(() => new Map(accounts.map((a) => [a.id, a])), [accounts]);
   const categoryMap = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories]);
@@ -83,6 +85,8 @@ export function TransactionList({
   const [splitting, setSplitting] = useState<Installment | null>(null);
   // Gasto/ingreso que se está editando.
   const [editing, setEditing] = useState<Installment | null>(null);
+  // Gasto ya cargado que se pasa a una vaquita.
+  const [moving, setMoving] = useState<Installment | null>(null);
   const toggle = (id: string) =>
     setOpen((prev) => {
       const next = new Set(prev);
@@ -249,6 +253,18 @@ export function TransactionList({
         !it.splitId &&
         !it.vaquitaId &&
         !isVirtualAccountId(it.accountId);
+      // Pasar a una vaquita un gasto mío ya cargado (no dividido, no fijo, de una cuenta mía).
+      const canMove =
+        hasOpenVaquita &&
+        it.kind === "expense" &&
+        !splitInfo &&
+        !it.splitId &&
+        !it.p2pTransferId &&
+        !it.vaquitaId &&
+        !it.recurringId &&
+        !it.createdByName &&
+        accountMap.has(it.accountId) &&
+        !isVirtualAccountId(it.accountId);
 
       const pill = "whitespace-nowrap rounded-full px-2 py-0.5 text-[10px] font-medium";
       const badges = [
@@ -399,6 +415,18 @@ export function TransactionList({
                   <Users className="size-4" />
                 </Button>
               )}
+              {canMove && (
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="text-muted-foreground"
+                  onClick={() => setMoving(it)}
+                  aria-label="Pasar a una vaquita"
+                  title="Pasar a una vaquita"
+                >
+                  <PiggyBank className="size-4" />
+                </Button>
+              )}
               <Button
                 size="icon"
                 variant="ghost"
@@ -436,7 +464,12 @@ export function TransactionList({
                     <Users className="mr-2 size-4" /> Dividir con otras personas
                   </DropdownMenuItem>
                 )}
-                {(canEdit || canSplit) && <DropdownMenuSeparator />}
+                {canMove && (
+                  <DropdownMenuItem onClick={() => setMoving(it)}>
+                    <PiggyBank className="mr-2 size-4" /> Pasar a una vaquita
+                  </DropdownMenuItem>
+                )}
+                {(canEdit || canSplit || canMove) && <DropdownMenuSeparator />}
                 <DropdownMenuItem onClick={() => remove(it)} className="text-destructive">
                   <Trash2 className="mr-2 size-4" /> Eliminar
                 </DropdownMenuItem>
@@ -478,6 +511,7 @@ export function TransactionList({
   return (
     <div className="space-y-2">
       <SplitExistingSheet key={splitting?.id ?? "none"} item={splitting} onClose={() => setSplitting(null)} />
+      <MoveToVaquitaSheet key={moving?.id ?? "none-move"} item={moving} onClose={() => setMoving(null)} />
       <EditTransactionSheet
         key={editing?.id ?? "none-edit"}
         item={editing}
