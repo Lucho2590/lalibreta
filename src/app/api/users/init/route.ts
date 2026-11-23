@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { adminDb } from "@/lib/server/firebase-admin";
 import { ensureAgentName, seedDefaultCategories } from "@/lib/server/onboarding";
+import { resolveLinksForNewIdentity } from "@/lib/server/vaquita-links";
 import {
   UnauthorizedError,
   getAuthedUser,
@@ -41,6 +42,8 @@ export async function POST(req: Request) {
       updatedAt: FieldValue.serverTimestamp(),
     });
     await setupNewUser(user.uid);
+    // Si lo habían invitado a una vaquita por este email: le llega la solicitud de quien lo sumó.
+    await resolveLinksForNewIdentity(user.uid, { email: emailNormalized });
     return NextResponse.json({ created: true });
   }
 

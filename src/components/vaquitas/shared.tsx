@@ -5,12 +5,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { CURRENCIES, type Currency } from "@/lib/domain/types";
-import { currencySymbol } from "@/lib/format";
+import { currencySymbol, todayLocal } from "@/lib/format";
 
-export const todayLocal = () => {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-};
+export { todayLocal } from "@/lib/format";
 export const num = (n: number) => new Intl.NumberFormat("es-AR", { maximumFractionDigits: 2 }).format(n);
 export const ddmm = (ymd: string) => ymd.split("-").reverse().slice(0, 2).join("/");
 

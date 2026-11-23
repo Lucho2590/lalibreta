@@ -47,6 +47,12 @@ export const getConnection = async (a: string, b: string): Promise<Connection | 
   return snap.exists ? ({ id: snap.id, ...snap.data() } as Connection) : null;
 };
 
+/** Integrantes de vaquitas que esperaban esta conexión para vincularse (import dinámico: vaquitas importa este módulo). */
+const resolveVaquitaLinks = async (a: string, b: string) => {
+  const { resolveLinksForConnection } = await import("./vaquita-links");
+  await resolveLinksForConnection(a, b);
+};
+
 /** ¿Están conectados (aceptada)? Es el chequeo que vale, no el linkedUid del contacto. */
 export const areConnected = async (a: string, b: string) => (await getConnection(a, b))?.status === "accepted";
 
@@ -182,6 +188,7 @@ export const requestConnectionTo = async (
   const myName = profileName(mine);
   if (result === "accepted") {
     await linkContacts({ uid: me.uid, profile: mine }, { uid: otherId, profile: theirs });
+    await resolveVaquitaLinks(me.uid, otherId);
     await notify(otherId, {
       kind: "connection-response",
       title: `${myName} aceptó tu solicitud`,
@@ -222,6 +229,7 @@ export const respondConnection = async (me: { uid: string }, id: string, accept:
   const myName = profileName(c.profiles[me.uid]);
   if (accept) {
     await linkContacts({ uid: me.uid, profile: c.profiles[me.uid] }, { uid: other, profile: c.profiles[other] });
+    await resolveVaquitaLinks(me.uid, other);
   }
   await notify(other, {
     kind: "connection-response",

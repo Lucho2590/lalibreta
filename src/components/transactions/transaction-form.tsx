@@ -20,7 +20,7 @@ import { useAccounts, useCategories } from "@/hooks/use-data";
 import { useAuth } from "@/hooks/use-auth";
 import { createTransactionWithInstallments } from "@/lib/domain/installments";
 import { computeFirstBillingMonth } from "@/lib/domain/cycles";
-import { currencyOptionLabel, formatAmountInput, formatMonth, parseAmount } from "@/lib/format";
+import { currencyOptionLabel, formatAmountInput, formatMonth, parseAmount, todayLocal } from "@/lib/format";
 import type { Currency, TransactionKind } from "@/lib/domain/types";
 import { accountCurrencies } from "@/lib/domain/types";
 import { ExchangeForm } from "./exchange-form";
@@ -186,7 +186,7 @@ function MovementForm({
   });
   const [currency, setCurrency] = useState<Currency>(initial?.currency ?? "ARS");
 
-  const today = useMemo(() => new Date().toISOString().slice(0, 10), []);
+  const today = useMemo(() => todayLocal(), []);
   const resolver = zodResolver(schema as never) as unknown as Resolver<FormValues>;
   const form = useForm<FormValues>({
     resolver,

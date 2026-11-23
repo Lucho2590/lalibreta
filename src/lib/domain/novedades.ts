@@ -37,6 +37,17 @@ export interface Novedad {
 /** De la más nueva a la más vieja. */
 export const NOVEDADES: Novedad[] = [
   {
+    id: "vaquitas-pasar-gasto",
+    // Un día después de la de resúmenes: quien ya la vio también ve esta.
+    date: "2026-11-24",
+    icon: "vaquitas",
+    title: "Pasá un gasto a una vaquita",
+    body: "¿Lo cargaste como gasto común y era de la vaquita? En Movimientos tocá «Pasar a una vaquita»: queda en la misma tarjeta o cuenta, sin duplicarse, y en tus gastos cuenta solo tu parte. Además, cargar un gasto en la vaquita es más corto: primero quién pagó, después el monto, y listo. Y si alguien de la vaquita se sumó después a La Libreta, vinculalo (la app te lo sugiere): ve la vaquita y su parte va a sus gastos. Tu agente ya conoce a todos los de tus vaquitas, aunque no estén en tus contactos, y por WhatsApp también suma gente, corrige o borra gastos de la vaquita.",
+    whatsapp: "en la vaquita, Ale pagó 32 mil del súper",
+    href: "/movimientos",
+    cta: "Ver movimientos",
+  },
+  {
     id: "resumen-celu",
     // Un día después de las de hoy: quien ya las vio también ve esta.
     date: "2026-11-23",
