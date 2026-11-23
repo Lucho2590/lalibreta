@@ -57,7 +57,14 @@ export const applySplitRules = async (
     const tx = (await adminDb().doc(`users/${uid}/transactions/${txId}`).get()).data();
     if (!tx || tx.kind !== "expense" || isPersonAccountId(tx.accountId as string)) continue;
     const key = normalizeMerchant(String(tx.description ?? ""));
-    const rule = list.find((r) => r.key === key);
+    let rule = list.find((r) => r.key === key);
+    // Un fijo aplicado se llama como el fijo ("Sancor Salud"), pero la regla
+    // puede estar por cómo figura en el resumen ("asoc mutual").
+    if (!rule && tx.recurringId) {
+      const rec = (await adminDb().doc(`users/${uid}/recurring/${tx.recurringId}`).get()).data();
+      const matchKey = typeof rec?.matchKey === "string" ? rec.matchKey : "";
+      if (matchKey) rule = list.find((r) => r.key === matchKey);
+    }
     if (!rule) continue;
     if ((await activeSplitIdsForTx(uid, txId)).length > 0) continue;
     try {

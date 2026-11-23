@@ -5,13 +5,14 @@ import {
   where,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase/client";
-import type { Account, RecurringExpense } from "./types";
-import { monthKey } from "./types";
+import type { Account, CardCycle, RecurringExpense } from "./types";
+import { monthKey, paymentMonthOf } from "./types";
 import { apiPost } from "@/lib/api";
 import {
   createTransactionWithInstallments,
   installmentsCollectionPath,
 } from "./installments";
+import { addMonths, computeFirstBillingMonth, getOrBuildCycle } from "./cycles";
 
 export const recurringCollectionPath = (uid: string): string =>
   `users/${uid}/recurring`;
@@ -35,6 +36,11 @@ export const isInRange = (
   return true;
 };
 
+/**
+ * El mes de un fijo es el mes en que se PAGA, como en el resto de la app: un
+ * fijo con tarjeta "de diciembre" es el que viene en el resumen que vence en
+ * diciembre (comprado en noviembre).
+ */
 export const isAppliedToMonth = async (
   uid: string,
   recurringId: string,
@@ -46,10 +52,46 @@ export const isAppliedToMonth = async (
     query(
       collection(db, installmentsCollectionPath(uid)),
       where("recurringId", "==", recurringId),
-      where("billingMonth", "==", target),
+      where("paymentMonth", "==", target),
     ),
   );
   return !snap.empty;
+};
+
+/**
+ * Fecha de compra para que un fijo con tarjeta caiga en el resumen que se
+ * paga en year/month: el día del fijo en el mes del cierre de ese resumen (o
+ * en el anterior, si el día es después del cierre). Si la tarjeta no tiene
+ * ese resumen cerca, el día del fijo en ese mes (como antes).
+ */
+export const cardPurchaseDateFor = async (
+  uid: string,
+  account: Account,
+  day: number,
+  year: number,
+  month: number,
+  /** Para probarlo sin Firestore. */
+  cycleFor: (year: number, month: number) => Promise<CardCycle> = (y, m) => getOrBuildCycle(uid, account, y, m),
+): Promise<Date> => {
+  const target = monthKey(year, month);
+  for (const back of [1, 0, 2]) {
+    const b = addMonths(year, month, -back);
+    const cycle = await cycleFor(b.year, b.month);
+    if (paymentMonthOf(cycle.dueDate.toDate()) !== target) continue;
+    const prev = addMonths(b.year, b.month, -1);
+    const closingDay = cycle.closingDate.toDate().getDate();
+    const options = [
+      buildBillingDate(b.year, b.month, day),
+      buildBillingDate(prev.year, prev.month, day),
+      buildBillingDate(b.year, b.month, closingDay),
+    ];
+    const fits = options.find((d) => {
+      const f = computeFirstBillingMonth(account, d, false);
+      return f.year === b.year && f.month === b.month;
+    });
+    if (fits) return fits;
+  }
+  return buildBillingDate(year, month, day);
 };
 
 export const applyRecurringToMonth = async (
@@ -63,7 +105,10 @@ export const applyRecurringToMonth = async (
   if (!isInRange(recurring, year, month)) return "skipped";
   if (await isAppliedToMonth(uid, recurring.id, year, month)) return "skipped";
 
-  const purchaseDate = buildBillingDate(year, month, recurring.dayOfMonth);
+  const purchaseDate =
+    account.type === "credit"
+      ? await cardPurchaseDateFor(uid, account, recurring.dayOfMonth, year, month)
+      : buildBillingDate(year, month, recurring.dayOfMonth);
 
   const txId = await createTransactionWithInstallments(uid, account, {
     accountId: recurring.accountId,

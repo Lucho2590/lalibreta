@@ -26,7 +26,7 @@ import { transactionsCollectionPath, updateTransaction } from "@/lib/domain/inst
 import { normalizeMerchant } from "@/lib/domain/merchants";
 import { recurringCollectionPath } from "@/lib/domain/recurring";
 import type { Currency, Installment, Transaction } from "@/lib/domain/types";
-import { accountCurrencies } from "@/lib/domain/types";
+import { accountCurrencies, monthOf } from "@/lib/domain/types";
 import type { SplitTxInfo } from "@/lib/domain/debts";
 import { currencyOptionLabel, formatAmountInput, formatMoney, parseAmount } from "@/lib/format";
 
@@ -125,7 +125,8 @@ export function EditTransactionSheet({
           categoryId,
           kind,
           dayOfMonth: Number(date.slice(8, 10)) || 1,
-          startMonth: item.billingMonth,
+          // Los fijos van por mes de pago (con tarjeta, el del vencimiento).
+          startMonth: monthOf(item),
           endMonth: null,
           active: true,
           matchKey: account.type === "credit" && tx.description ? normalizeMerchant(tx.description) : null,

@@ -78,7 +78,7 @@ export function RecurringForm({
       query(
         collection(db, installmentsCollectionPath(user.uid)),
         where("recurringId", "==", initial.id),
-        where("billingMonth", "==", viewMonth),
+        where("paymentMonth", "==", viewMonth),
       ),
     ).then((snap) => setAppliedTxId((snap.docs[0]?.data().transactionId as string | undefined) ?? null));
   }, [user, initial, viewMonth]);
