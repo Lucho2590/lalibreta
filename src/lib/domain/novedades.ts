@@ -38,6 +38,16 @@ export interface Novedad {
 /** De la más nueva a la más vieja. */
 export const NOVEDADES: Novedad[] = [
   {
+    id: "agenda-compartir",
+    date: "2026-11-27",
+    icon: "agenda",
+    title: "Compartí una actividad cuando quieras",
+    body: "En la agenda, tocá ⋮ en una actividad tuya y elegí «Compartir»: sumá a alguien de tus contactos o por email (o sacalo de la lista). Le llega la invitación y, si acepta, la ve en su agenda. Por WhatsApp también: tu agente ya puede sumar gente a algo que agendaste antes.",
+    whatsapp: "compartí la cena del sábado con Orne",
+    href: "/agenda",
+    cta: "Ver la agenda",
+  },
+  {
     id: "fijos-del-resumen",
     // Un día después de la anterior: quien ya la vio también ve esta.
     date: "2026-11-25",

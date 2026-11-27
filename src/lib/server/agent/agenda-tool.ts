@@ -85,7 +85,7 @@ export const AGENDA_TOOLS: ChatCompletionFunctionTool[] = [
     function: {
       name: "update_activity",
       description:
-        "Cambia una actividad que organiza el usuario (día, hora, lugar, nombre). Se guarda directo y a los invitados les llega un aviso con lo que cambió. Pasá solo lo que cambia.",
+        "Cambia una actividad que organiza el usuario (día, hora, lugar, nombre) o con quién la comparte. Se guarda directo: a los invitados les llega un aviso con lo que cambió, a los nuevos la invitación y a los que se sacan, que ya no están. Pasá solo lo que cambia.",
       parameters: {
         type: "object",
         properties: {
@@ -95,6 +95,16 @@ export const AGENDA_TOOLS: ChatCompletionFunctionTool[] = [
           time: { type: "string", description: "HH:mm (24 h)" },
           allDay: { type: "boolean", description: "true para sacarle la hora (todo el día)" },
           location: { type: "string" },
+          addPeople: {
+            type: "array",
+            items: { type: "string" },
+            description: "Compartirla con más gente: nombres de sus contactos de la app o emails",
+          },
+          removePeople: {
+            type: "array",
+            items: { type: "string" },
+            description: "Sacar invitados: nombres o emails como figuran en get_agenda",
+          },
         },
         required: ["activityId"],
         additionalProperties: false,
@@ -149,6 +159,8 @@ const updateSchema = z.object({
   time: optStr.refine((v) => !v || /^([01]\d|2[0-3]):[0-5]\d$/.test(v), "time debe ser HH:mm"),
   allDay: z.boolean().optional(),
   location: optStr,
+  addPeople: z.array(z.string()).max(20).optional(),
+  removePeople: z.array(z.string()).max(20).optional(),
 });
 
 const cancelSchema = z.object({ activityId: z.string().min(1) });
@@ -345,6 +357,27 @@ export const runAgendaTool = async (
     if (!snap.exists) return { error: "Esa actividad ya no existe" };
     const a = { id: snap.id, ...snap.data() } as Activity;
     if (a.ownerUid !== uid) return { error: "La organiza otra persona: solo ella la puede cambiar" };
+    let invitees: Invitee[] = a.participants.filter((x) => x.status !== "owner");
+    const removed: string[] = [];
+    for (const raw of p.removePeople ?? []) {
+      const q = norm(raw);
+      if (!q) continue;
+      const exact = invitees.filter((x) => x.email.toLowerCase() === q || norm(participantName(x)) === q);
+      const hits = exact.length ? exact : invitees.filter((x) => norm(participantName(x)).includes(q));
+      if (hits.length === 0) return { error: `"${raw}" no está invitado a "${a.title}"` };
+      if (hits.length > 1) return { error: `"${raw}" coincide con varios invitados: ${hits.map(participantName).join(", ")}. Preguntale cuál.` };
+      removed.push(participantName(hits[0]));
+      invitees = invitees.filter((x) => x !== hits[0]);
+    }
+    if (p.addPeople?.length) {
+      const people = await resolvePeople(uid, p.addPeople);
+      if ("error" in people) return people;
+      const ownerEmail = a.ownerEmail.toLowerCase();
+      for (const inv of people.ok) {
+        if (inv.email === ownerEmail || invitees.some((x) => x.email.toLowerCase() === inv.email)) continue;
+        invitees.push(inv);
+      }
+    }
     try {
       const r = await updateActivityAdmin(
         uid,
@@ -358,9 +391,14 @@ export const runAgendaTool = async (
           estimatedAmount: a.estimatedAmount ?? null,
           currency: a.currency ?? null,
         },
-        a.participants.filter((x) => x.status !== "owner"),
+        invitees,
       );
-      return { ok: true, notifiedInvitees: r.notifiedChange };
+      return {
+        ok: true,
+        notifiedInvitees: r.notifiedChange,
+        ...(r.invited ? { invited: r.invited } : {}),
+        ...(removed.length ? { removed } : {}),
+      };
     } catch (err) {
       if (err instanceof ActivityError) return { error: err.message };
       throw err;
