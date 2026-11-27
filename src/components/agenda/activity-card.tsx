@@ -1,6 +1,6 @@
 "use client";
 
-import { CalendarPlus, Check, MapPin, MoreVertical, Pencil, Receipt, Split, Trash2, Unlink, UserMinus, Users } from "lucide-react";
+import { CalendarPlus, Check, MapPin, MoreVertical, Pencil, Receipt, Split, Trash2, Unlink, UserMinus, UserPlus, Users } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -20,6 +20,8 @@ import { getCalendarFeed, singleEventIcsUrl } from "@/lib/agenda/calendar-feed-c
 export interface ActivityCardActions {
   onRespond: (a: Activity, response: "accepted" | "rejected") => void;
   onEdit: (a: Activity) => void;
+  /** Sumar o sacar gente (solo el dueño). */
+  onShare: (a: Activity) => void;
   onDelete: (a: Activity) => void;
   /** split=true: "lo pagué yo y lo divido con los que van". */
   onAddExpense: (a: Activity, split: boolean) => void;
@@ -91,9 +93,14 @@ export function ActivityCard({
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
                   {isOwner && (
-                    <DropdownMenuItem onClick={() => actions.onEdit(a)}>
-                      <Pencil className="mr-2 size-4" /> Editar
-                    </DropdownMenuItem>
+                    <>
+                      <DropdownMenuItem onClick={() => actions.onShare(a)}>
+                        <UserPlus className="mr-2 size-4" /> Compartir
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => actions.onEdit(a)}>
+                        <Pencil className="mr-2 size-4" /> Editar
+                      </DropdownMenuItem>
+                    </>
                   )}
                   {going && (
                     <>

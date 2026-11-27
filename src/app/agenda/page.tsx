@@ -27,6 +27,7 @@ import {
 } from "@/lib/domain/activities";
 import { ActivityCard, type ActivityCardActions } from "@/components/agenda/activity-card";
 import { ActivityForm } from "@/components/agenda/activity-form";
+import { ShareActivityForm } from "@/components/agenda/share-activity-form";
 import { TransactionForm } from "@/components/transactions/transaction-form";
 
 type Mine = { activity: Activity; me: ActivityParticipant };
@@ -52,6 +53,7 @@ export default function AgendaPage() {
   };
   const [pickedDay, setPickedDay] = useState<string | null>(null);
   const [syncOpen, setSyncOpen] = useState(false);
+  const [shareFor, setShareFor] = useState<Activity | null>(null);
   const [expenseFor, setExpenseFor] = useState<{ activity: Activity; split: boolean } | null>(null);
 
   const mine = useMemo<Mine[]>(
@@ -92,6 +94,7 @@ export default function AgendaPage() {
       }
     },
     onEdit: (activity) => setFormFor({ activity }),
+    onShare: (activity) => setShareFor(activity),
     onDelete: async (a) => {
       const invited = a.participants.filter((p) => p.status === "pending" || p.status === "accepted").length;
       const msg = invited
@@ -336,6 +339,19 @@ export default function AgendaPage() {
                 defaultDate={formFor.date}
                 onDone={() => setFormFor(null)}
               />
+            )}
+          </div>
+        </SheetContent>
+      </Sheet>
+
+      <Sheet open={!!shareFor} onOpenChange={(o) => !o && setShareFor(null)}>
+        <SheetContent side="bottom" className="sheet-md-modal max-h-[92vh] overflow-y-auto p-0">
+          <SheetHeader className="px-5 pt-5">
+            <SheetTitle>Compartir</SheetTitle>
+          </SheetHeader>
+          <div className="px-5 pb-6 pt-2">
+            {shareFor && (
+              <ShareActivityForm key={shareFor.id} activity={shareFor} onDone={() => setShareFor(null)} />
             )}
           </div>
         </SheetContent>
