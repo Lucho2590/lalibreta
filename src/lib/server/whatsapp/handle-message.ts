@@ -17,7 +17,7 @@ import {
   toServerAccount,
 } from "../queries-admin";
 import { currentMonthKey, dateFromYMD, formatShortDateAR } from "../time";
-import { ensureAgentName } from "../onboarding";
+import { agentHandoffMessage, claimAgentHandoff, ensureAgentName } from "../onboarding";
 import { runAgent, type AgentInput } from "../agent/run-agent";
 import { draftButtons, pendingDatesText, renderDraft } from "../agent/render";
 import { transcribeAudio } from "../agent/openai";
@@ -207,6 +207,17 @@ const routeMessage = async (
   if (IGNORED_TYPES.has(message.type)) return;
 
   const session = await loadSession(waId, uid);
+
+  // Le cambiaron el agente: antes que nada, el nuevo cuenta qué pasó con el
+  // anterior y se presenta. Queda en el historial para que sepa que ya lo dijo.
+  const handoff = await claimAgentHandoff(uid);
+  if (handoff) {
+    const notice = agentHandoffMessage(handoff.from, handoff.to);
+    await sendText(waId, notice);
+    const turn: ChatTurn = { role: "assistant", content: notice };
+    await saveSession(waId, session, [turn]);
+    session.history = [...session.history, turn];
+  }
 
   // Invitación a una cuenta compartida (reenviada o "unirme 123456"): se
   // resuelve directo, sin pasar por el agente.
@@ -506,7 +517,12 @@ const routeMessage = async (
 
 /** Primer mensaje después de vincular: presentación del agente y primer paso. */
 const welcomeMessage = async (uid: string, profileName: string | null): Promise<string> => {
-  const [agentName, accounts] = await Promise.all([ensureAgentName(uid), loadAccounts(uid)]);
+  const [agentName, accounts] = await Promise.all([
+    ensureAgentName(uid),
+    loadAccounts(uid),
+    // Acá ya se presenta de cero: no hace falta despedir a uno que no conoció por WhatsApp.
+    claimAgentHandoff(uid),
+  ]);
   const hola = `¡Hola${profileName ? `, ${profileName.split(" ")[0]}` : ""}! 🎉 Soy *${agentName}*, tu agente de cuentas. Tu WhatsApp quedó vinculado.`;
   if (accounts.length === 0) {
     return `${hola}\n\nPara arrancar, contame cuál es tu *cuenta principal* (donde cobrás), en qué moneda y cuánto tenés hoy. Por ejemplo:\n• "mi cuenta principal es el Banco Galicia, ahí cobro. Tengo 850000 pesos"\n(si también tenés dólares, sumalo: "…y 500 dólares")\n\nDespués sumamos el resto: "agregá Efectivo y Mercado Pago", "la Visa Galicia es del Galicia", etc.`;

@@ -158,12 +158,23 @@ export const runAdminAction = async (
     }
     case "new-agent": {
       const ref = adminDb().collection("users").doc(uid);
-      const current = (await ref.get()).data()?.agentName as string | undefined;
+      const data = (await ref.get()).data();
+      const current = data?.agentName as string | undefined;
       const options = AGENT_PERSONAS.map((p) => p.name).filter((n) => n !== current);
       const name = agentName && AGENT_PERSONAS.some((p) => p.name === agentName)
         ? agentName
         : options[Math.floor(Math.random() * options.length)];
-      await ref.set({ agentName: name, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+      // En el próximo mensaje el nuevo cuenta por qué se fue el anterior y se
+      // presenta. Si ya había un aviso pendiente, se despide al que el usuario conoce.
+      const from = (data?.agentHandoffFrom as string | undefined) ?? current;
+      await ref.set(
+        {
+          agentName: name,
+          agentHandoffFrom: from && from !== name ? from : FieldValue.delete(),
+          updatedAt: FieldValue.serverTimestamp(),
+        },
+        { merge: true },
+      );
       // Sin la charla vieja, para que no siga hablando como el personaje anterior.
       await resetMemory(uid);
       return { ok: true, message: `Nuevo agente: ${name}.` };
